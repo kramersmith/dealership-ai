@@ -1,9 +1,12 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import JWTError, jwt  # type: ignore[import-untyped]
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 ALGORITHM = "HS256"
 
@@ -32,4 +35,5 @@ def decode_access_token(token: str) -> dict | None:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except JWTError:
+        logger.warning("Failed to decode access token")
         return None

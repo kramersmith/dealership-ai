@@ -9,8 +9,8 @@ export default function Index() {
   }
 
   if (role === 'dealer') {
-    return <Redirect href="/(dealer)/simulations" />
+    return <Redirect href="/(app)/simulations" />
   }
 
-  return <Redirect href="/(buyer)/chat" />
+  return <Redirect href="/(app)/chat" />
 }

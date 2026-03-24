@@ -1,15 +1,15 @@
 # AI Car Buying App — Project Notes
 
-## Last updated: March 23, 2026
+## Last updated: March 24, 2026
 
 ---
 
 ## Concept
-Two completely separate AI-powered smartphone apps for the car buying experience:
-- **Customer app** — helps buyers understand deals, spot unauthorized charges, avoid manipulation, and negotiate effectively. Consumer subscription.
-- **Dealer app** — helps salespeople handle objections in real time, capture customer intelligence, and close deals. Dealer subscription.
+A unified AI-powered smartphone app for the car buying experience, with role-based access for two user types:
+- **Buyer experience** — helps buyers understand deals, spot unauthorized charges, avoid manipulation, and negotiate effectively. Consumer subscription.
+- **Dealer experience** — helps salespeople handle objections in real time, capture customer intelligence, and close deals. Dealer subscription.
 
-**These are independent products with no individual data sharing.** A buyer's conversation, strategy, walk-away price, and deal data are never visible to the dealership, and vice versa. The only cross-pollination is anonymized aggregate analytics (e.g. market-level trends). Marketed to each side as a way to get a leg up on the other.
+Users select their role at registration ("Buying" or "Selling"). The app shows role-appropriate screens via RoleGuard components. **There is no individual data sharing between roles.** A buyer's conversation, strategy, walk-away price, and deal data are never visible to the dealership, and vice versa. The only cross-pollination is anonymized aggregate analytics (e.g. market-level trends). Marketed to each side as a way to get a leg up on the other.
 
 Core differentiator: **real-time, in-person, showroom-floor AI**. No competitor does this. All existing tools are post-deal, VoIP-based, or contact-center-focused.
 
@@ -285,9 +285,9 @@ The AI should get smarter over time based on real deal outcomes. This is also a 
 
 ## Business Model
 
-### Two separate products
-- **Customer app** — buyer-side features (Deal Decoder, F&I Scanner, competitive comparisons, etc.). Consumer subscription.
-- **Dealer app** — salesperson/manager-side features (Objection Coach, Intel Logger, Manager Tools, etc.). Dealer subscription.
+### Two role-based experiences in one app
+- **Buyer experience** — buyer-side features (Deal Decoder, F&I Scanner, competitive comparisons, etc.). Consumer subscription.
+- **Dealer experience** — salesperson/manager-side features (Objection Coach, Intel Logger, Manager Tools, etc.). Dealer subscription.
 - Marketed to each side as a way to get a leg up on the other — creates natural demand from both directions
 
 ### Liability

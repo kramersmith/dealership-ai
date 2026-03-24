@@ -29,12 +29,12 @@ On the dealer side, 75% of salespeople know only one closing technique. Coaching
 
 Dealership AI is a real-time AI co-pilot that turns information asymmetry into buyer advantage, while giving salespeople scalable AI training to improve their skills.
 
-Two independent smartphone apps serve opposite sides of the transaction:
+A single smartphone app serves both sides of the transaction with role-based access:
 
-- **Buyer app** — an AI advisor that helps buyers understand deals, spot unauthorized charges, and negotiate with confidence, right from the showroom floor.
-- **Dealer app** — AI-powered training simulations where salespeople practice against realistic customer scenarios to sharpen objection handling and close rates.
+- **Buyer experience** — an AI advisor that helps buyers understand deals, spot unauthorized charges, and negotiate with confidence, right from the showroom floor.
+- **Dealer experience** — AI-powered training simulations where salespeople practice against realistic customer scenarios to sharpen objection handling and close rates.
 
-These are separate products with no individual data sharing. A buyer's conversation, strategy, and deal data are never visible to the dealership, and vice versa.
+Users select their role ("Buying" or "Selling") at registration, which determines the screens and features available to them. There is no individual data sharing between roles. A buyer's conversation, strategy, and deal data are never visible to the dealership, and vice versa.
 
 ### Founder Validation
 
@@ -146,7 +146,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 ### Journey 5: Training Simulation (Salesperson)
 
-1. Salesperson opens the dealer app and browses available training scenarios.
+1. Salesperson opens the app (with a dealer role account) and browses available training scenarios.
 2. Selects a scenario (e.g., "Buyer says the dealer across town offered $2k less" or "Handle the interest rate objection").
 3. AI plays a realistic customer with a hidden persona, budget, and objections.
 4. Salesperson practices the conversation in chat.

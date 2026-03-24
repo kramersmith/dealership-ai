@@ -38,9 +38,9 @@ export default function LoginScreen() {
     const state = useAuthStore.getState()
     if (!state.isAuthenticated) return
     if (state.role === 'dealer') {
-      router.replace('/(dealer)/simulations')
+      router.replace('/(app)/simulations')
     } else {
-      router.replace('/(buyer)/chat')
+      router.replace('/(app)/chat')
     }
   }
 

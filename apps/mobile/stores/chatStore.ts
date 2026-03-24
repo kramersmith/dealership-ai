@@ -8,13 +8,14 @@ interface ChatState {
   messages: Message[]
   sessions: Session[]
   isLoading: boolean
+  isCreatingSession: boolean
   isSending: boolean
   sendError: string | null
 
   loadSessions: () => Promise<void>
   loadMessages: (sessionId: string) => Promise<void>
   setActiveSession: (sessionId: string) => Promise<void>
-  createSession: (type: 'buyer_chat' | 'dealer_sim', title?: string) => Promise<Session>
+  createSession: (type: 'buyer_chat' | 'dealer_sim', title?: string) => Promise<Session | null>
   deleteSession: (sessionId: string) => Promise<void>
   sendMessage: (content: string, imageUri?: string) => Promise<void>
   clearSendError: () => void
@@ -25,6 +26,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   sessions: [],
   isLoading: false,
+  isCreatingSession: false,
   isSending: false,
   sendError: null,
 
@@ -65,23 +67,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   createSession: async (type, title) => {
-    const session = await api.createSession(type, title)
-    set((state) => ({
-      sessions: [session, ...state.sessions],
-      activeSessionId: session.id,
-      messages: [],
-    }))
-    useDealStore.getState().resetDealState(session.id)
-    return session
+    if (get().isCreatingSession) return null
+    set({ isCreatingSession: true })
+    try {
+      const session = await api.createSession(type, title)
+      set((state) => ({
+        sessions: [session, ...state.sessions],
+        activeSessionId: session.id,
+        messages: [],
+        isCreatingSession: false,
+      }))
+      useDealStore.getState().resetDealState(session.id)
+      return session
+    } catch (err) {
+      console.error('[chatStore] createSession failed:', err instanceof Error ? err.message : err)
+      set({ isCreatingSession: false })
+      throw err
+    }
   },
 
   deleteSession: async (sessionId) => {
-    await api.deleteSession(sessionId)
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.id !== sessionId),
-      activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
-      messages: state.activeSessionId === sessionId ? [] : state.messages,
-    }))
+    try {
+      await api.deleteSession(sessionId)
+      set((state) => ({
+        sessions: state.sessions.filter((s) => s.id !== sessionId),
+        activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
+        messages: state.activeSessionId === sessionId ? [] : state.messages,
+      }))
+    } catch (err) {
+      console.error('[chatStore] deleteSession failed:', err instanceof Error ? err.message : err)
+      throw err
+    }
   },
 
   sendMessage: async (content, imageUri) => {

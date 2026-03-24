@@ -23,9 +23,9 @@ export default function RegisterScreen() {
     const state = useAuthStore.getState()
     if (!state.isAuthenticated) return
     if (role === 'dealer') {
-      router.replace('/(dealer)/simulations')
+      router.replace('/(app)/simulations')
     } else {
-      router.replace('/(buyer)/chat')
+      router.replace('/(app)/chat')
     }
   }
 
@@ -34,8 +34,8 @@ export default function RegisterScreen() {
       <YStack flex={1} justifyContent="center" padding="$7" backgroundColor="$background" gap="$5">
         <YStack gap="$2" marginBottom="$4">
           <H2 color="$color" fontWeight="700">Create Account</H2>
-          <Text color="$colorSecondary" fontSize={16}>
-            Choose your side
+          <Text color="$placeholderColor" fontSize={16}>
+            Are you buying or selling?
           </Text>
         </YStack>
 
@@ -64,7 +64,7 @@ export default function RegisterScreen() {
             pressStyle={{ opacity: 0.85, scale: 0.98 }}
           >
             <Button.Text color={role === 'buyer' ? 'white' : '$color'} fontWeight="600">
-              Buyer
+              Buying
             </Button.Text>
           </Button>
           <Button
@@ -77,7 +77,7 @@ export default function RegisterScreen() {
             pressStyle={{ opacity: 0.85, scale: 0.98 }}
           >
             <Button.Text color={role === 'dealer' ? 'white' : '$color'} fontWeight="600">
-              Dealer
+              Selling
             </Button.Text>
           </Button>
         </XStack>
@@ -122,7 +122,7 @@ export default function RegisterScreen() {
           style={{ minHeight: 44, justifyContent: 'center', alignItems: 'center' }}
         >
           <XStack gap="$2">
-            <Text color="$colorSecondary">Already have an account?</Text>
+            <Text color="$placeholderColor">Already have an account?</Text>
             <Text color={colors.brand} fontWeight="600">
               Sign In
           </Text>

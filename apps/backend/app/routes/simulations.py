@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.deps import get_current_user
-from app.models.enums import Difficulty
+from app.models.enums import Difficulty, UserRole
 from app.models.user import User
 from app.schemas.simulation import ScenarioResponse
 
@@ -82,4 +82,9 @@ SCENARIOS = [
 
 @router.get("/scenarios", response_model=list[ScenarioResponse])
 def list_scenarios(user: User = Depends(get_current_user)):
+    if user.role != UserRole.DEALER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only dealers can access training scenarios",
+        )
     return SCENARIOS

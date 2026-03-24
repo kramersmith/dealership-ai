@@ -38,14 +38,14 @@ export function HamburgerMenu() {
   })
 
   const buyerItems: MenuItem[] = [
-    { label: 'Chat', Icon: MessageSquare, route: '/(buyer)/chat' },
-    { label: 'Sessions', Icon: List, route: '/(buyer)/sessions' },
-    { label: 'Settings', Icon: Settings, route: '/(buyer)/settings' },
+    { label: 'Chat', Icon: MessageSquare, route: '/(app)/chat' },
+    { label: 'Sessions', Icon: List, route: '/(app)/sessions' },
+    { label: 'Settings', Icon: Settings, route: '/(app)/settings' },
   ]
 
   const dealerItems: MenuItem[] = [
-    { label: 'Training', Icon: Swords, route: '/(dealer)/simulations' },
-    { label: 'Settings', Icon: Settings, route: '/(dealer)/settings' },
+    { label: 'Training', Icon: Swords, route: '/(app)/simulations' },
+    { label: 'Settings', Icon: Settings, route: '/(app)/settings' },
   ]
 
   const items = role === 'dealer' ? dealerItems : buyerItems

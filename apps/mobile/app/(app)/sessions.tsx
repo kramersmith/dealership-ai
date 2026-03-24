@@ -1,24 +1,28 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { FlatList, TouchableOpacity, Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
-import { ThemedSafeArea } from '@/components/shared'
+import { ThemedSafeArea, AppCard, HamburgerMenu, LoadingIndicator, RoleGuard } from '@/components/shared'
 import { useRouter } from 'expo-router'
 import { MessageSquare, Plus, Trash2 } from '@tamagui/lucide-icons'
 import type { Session } from '@/lib/types'
 import { useChatStore } from '@/stores/chatStore'
 import { colors } from '@/lib/colors'
-import { AppCard, HamburgerMenu, LoadingIndicator } from '@/components/shared'
 import { useFadeIn, useSlideIn } from '@/hooks/useAnimatedValue'
+
+const MS_PER_HOUR = 1000 * 60 * 60
+const MS_PER_DAY = MS_PER_HOUR * 24
+const HOURS_PER_DAY = 24
+const DAYS_PER_WEEK = 7
 
 function formatDate(dateStr: string) {
   const date = new Date(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  const diffHours = Math.floor(diffMs / MS_PER_HOUR)
+  const diffDays = Math.floor(diffMs / MS_PER_DAY)
   if (diffHours < 1) return 'Just now'
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
+  if (diffHours < HOURS_PER_DAY) return `${diffHours}h ago`
+  if (diffDays < DAYS_PER_WEEK) return `${diffDays}d ago`
   return date.toLocaleDateString()
 }
 
@@ -86,62 +90,86 @@ export default function SessionsScreen() {
   }, [])
 
   const handleSelect = async (sessionId: string) => {
-    await setActiveSession(sessionId)
-    router.push('/(buyer)/chat')
+    try {
+      await setActiveSession(sessionId)
+      router.push('/(app)/chat')
+    } catch {
+      // Error already logged in chatStore
+    }
   }
 
+  const isCreating = useRef(false)
+
   const handleNew = async () => {
-    await createSession('buyer_chat', 'New Deal')
-    router.push('/(buyer)/chat')
+    if (isCreating.current) return
+    isCreating.current = true
+    try {
+      await createSession('buyer_chat', 'New Deal')
+      router.push('/(app)/chat')
+    } catch {
+      // Error already logged in chatStore
+    } finally {
+      isCreating.current = false
+    }
+  }
+
+  const handleDelete = async (sessionId: string) => {
+    try {
+      await deleteSession(sessionId)
+    } catch {
+      // Error already logged in chatStore
+    }
   }
 
   return (
-    <ThemedSafeArea edges={['top']}>
-      <YStack flex={1} backgroundColor="$background">
-        {/* Header */}
-        <XStack
-          paddingHorizontal="$4"
-          paddingVertical="$3"
-          alignItems="center"
-          justifyContent="space-between"
-          borderBottomWidth={1}
-          borderBottomColor="$borderColor"
-          backgroundColor="$backgroundStrong"
-        >
-          <HamburgerMenu />
-          <Text fontSize={18} fontWeight="700" color="$color">
-            Sessions
-          </Text>
-          <TouchableOpacity
-            onPress={handleNew}
-            activeOpacity={0.6}
-            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+    <RoleGuard role="buyer">
+      <ThemedSafeArea edges={['top']}>
+        <YStack flex={1} backgroundColor="$background">
+          {/* Header */}
+          <XStack
+            paddingHorizontal="$4"
+            paddingVertical="$3"
+            alignItems="center"
+            justifyContent="space-between"
+            borderBottomWidth={1}
+            borderBottomColor="$borderColor"
+            backgroundColor="$backgroundStrong"
           >
-            <Plus size={22} color={colors.brand} />
-          </TouchableOpacity>
-        </XStack>
+            <HamburgerMenu />
+            <Text fontSize={18} fontWeight="700" color="$color">
+              Sessions
+            </Text>
+            <TouchableOpacity
+              onPress={handleNew}
+              activeOpacity={0.6}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Plus size={22} color={colors.brand} />
+            </TouchableOpacity>
+          </XStack>
 
-        {isLoading ? (
-          <LoadingIndicator message="Loading sessions..." />
-        ) : sessions.length === 0 ? (
-          <EmptySessionsState />
-        ) : (
-          <FlatList
-            data={sessions}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={{ padding: 16 }}
-            ItemSeparatorComponent={() => <YStack height={12} />}
-            renderItem={({ item, index }) => (
-              <SessionCard
-                item={item}
-                index={index}
-                onSelect={handleSelect}
-                onDelete={deleteSession}
-              />
-            )}
-          />
-        )}
-      </YStack>
-    </ThemedSafeArea>
+          {isLoading ? (
+            <LoadingIndicator message="Loading sessions..." />
+          ) : sessions.length === 0 ? (
+            <EmptySessionsState />
+          ) : (
+            <FlatList
+              data={sessions}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={{ padding: 16 }}
+              ItemSeparatorComponent={() => <YStack height={12} />}
+              renderItem={({ item, index }) => (
+                <SessionCard
+                  item={item}
+                  index={index}
+                  onSelect={handleSelect}
+                  onDelete={handleDelete}
+                />
+              )}
+            />
+          )}
+        </YStack>
+      </ThemedSafeArea>
+    </RoleGuard>
   )
 }

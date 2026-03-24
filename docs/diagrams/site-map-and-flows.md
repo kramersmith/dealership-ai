@@ -17,66 +17,61 @@
 
 ## Site Map
 
-All routes use Expo Router file-based routing. The root `index` screen acts as an auth gate and role-based redirect.
+All routes use Expo Router file-based routing. The root `index` screen acts as an auth gate and role-based redirect. All authenticated screens live under a single `(app)` route group, with `RoleGuard` components on individual screens enforcing role-based access.
 
 ```mermaid
 flowchart TD
     ROOT["/ (index)"] --> AUTH_CHECK{Authenticated?}
 
     AUTH_CHECK -- No --> LOGIN["/(auth)/login"]
-    AUTH_CHECK -- "Yes, role=buyer" --> BUYER_CHAT["/(buyer)/chat"]
-    AUTH_CHECK -- "Yes, role=dealer" --> DEALER_SIMS["/(dealer)/simulations"]
+    AUTH_CHECK -- "Yes, role=buyer" --> APP_CHAT["/(app)/chat"]
+    AUTH_CHECK -- "Yes, role=dealer" --> APP_SIMS["/(app)/simulations"]
 
     LOGIN --> REGISTER["/(auth)/register"]
     REGISTER --> LOGIN
 
-    LOGIN -- "Login as buyer" --> BUYER_CHAT
-    LOGIN -- "Login as dealer" --> DEALER_SIMS
-    REGISTER -- "Register as buyer" --> BUYER_CHAT
-    REGISTER -- "Register as dealer" --> DEALER_SIMS
+    LOGIN -- "Login as buyer" --> APP_CHAT
+    LOGIN -- "Login as dealer" --> APP_SIMS
+    REGISTER -- "Register (Buying)" --> APP_CHAT
+    REGISTER -- "Register (Selling)" --> APP_SIMS
 
     subgraph AUTH ["(auth) — Unauthenticated"]
         LOGIN
         REGISTER
     end
 
-    subgraph BUYER ["(buyer) — Buyer Role"]
-        BUYER_CHAT["/(buyer)/chat\nAI Chat + Dashboard"]
-        BUYER_SESSIONS["/(buyer)/sessions\nSession History"]
-        BUYER_SETTINGS["/(buyer)/settings\nSettings"]
+    subgraph APP ["(app) — Authenticated (AuthGuard)"]
+        APP_CHAT["/(app)/chat\nAI Chat + Dashboard\n(RoleGuard: buyer)"]
+        APP_SESSIONS["/(app)/sessions\nSession History\n(RoleGuard: buyer)"]
+        APP_SIMS["/(app)/simulations\nScenario List\n(RoleGuard: dealer)"]
+        APP_SIM_ID["/(app)/sim/[id]\nSimulation Chat\n(RoleGuard: dealer)"]
+        APP_SETTINGS["/(app)/settings\nSettings (shared)"]
     end
 
-    subgraph DEALER ["(dealer) — Dealer Role"]
-        DEALER_SIMS["/(dealer)/simulations\nScenario List"]
-        DEALER_SIM_ID["/(dealer)/sim/[id]\nSimulation Chat"]
-        DEALER_SETTINGS["/(dealer)/settings\nSettings"]
-    end
+    APP_CHAT <--> APP_SESSIONS
+    APP_CHAT <--> APP_SETTINGS
+    APP_SESSIONS --> APP_CHAT
 
-    BUYER_CHAT <--> BUYER_SESSIONS
-    BUYER_CHAT <--> BUYER_SETTINGS
-    BUYER_SESSIONS --> BUYER_CHAT
-
-    DEALER_SIMS --> DEALER_SIM_ID
-    DEALER_SIM_ID --> DEALER_SIMS
-    DEALER_SIMS <--> DEALER_SETTINGS
+    APP_SIMS --> APP_SIM_ID
+    APP_SIM_ID --> APP_SIMS
+    APP_SIMS <--> APP_SETTINGS
 ```
 
 ---
 
 ## Tab/Screen Structure by Role
 
-| Route | Screen | Buyer | Dealer | Description |
-|---|---|:---:|:---:|---|
-| `/(auth)/login` | Login | -- | -- | Email/password login with quick sign-in buttons |
-| `/(auth)/register` | Register | -- | -- | Account creation with role selection (buyer/dealer) |
-| `/(buyer)/chat` | Chat | Yes | -- | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist) |
-| `/(buyer)/sessions` | Sessions | Yes | -- | List of past chat sessions; select to resume or delete |
-| `/(buyer)/settings` | Settings | Yes | -- | App settings (theme toggle, logout) |
-| `/(dealer)/simulations` | Simulations | -- | Yes | Browse AI training scenarios; start a new simulation |
-| `/(dealer)/sim/[id]` | Simulation Chat | -- | Yes | Live chat session for a selected training scenario |
-| `/(dealer)/settings` | Settings | -- | Yes | App settings (theme toggle, logout) |
+| Route | Screen | Buyer | Dealer | Guard | Description |
+|---|---|:---:|:---:|---|---|
+| `/(auth)/login` | Login | -- | -- | None | Email/password login with quick sign-in buttons |
+| `/(auth)/register` | Register | -- | -- | None | Account creation with "Buying"/"Selling" role selection |
+| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist) |
+| `/(app)/sessions` | Sessions | Yes | -- | RoleGuard(buyer) | List of past chat sessions; select to resume or delete |
+| `/(app)/simulations` | Simulations | -- | Yes | RoleGuard(dealer) | Browse AI training scenarios; start a new simulation |
+| `/(app)/sim/[id]` | Simulation Chat | -- | Yes | RoleGuard(dealer) | Live chat session for a selected training scenario |
+| `/(app)/settings` | Settings | Yes | Yes | None (shared) | App settings (theme toggle, logout) |
 
-Both buyer and dealer route groups have auth guards that redirect to `/(auth)/login` if the user is not authenticated.
+The `(app)` route group has an `AuthGuard` that redirects to `/(auth)/login` if the user is not authenticated. Individual screens use `RoleGuard` to enforce role-based access and redirect mismatched users to their default screen.
 
 ---
 
@@ -128,7 +123,7 @@ flowchart TD
 
     SIMS --> |Load scenarios| LIST[Scenario List]
     LIST --> |Tap scenario| START[Start Simulation]
-    START --> |Creates session,\nnavigates to sim| SIM_CHAT["Simulation Chat\n/(dealer)/sim/[id]"]
+    START --> |Creates session,\nnavigates to sim| SIM_CHAT["Simulation Chat\n/(app)/sim/[id]"]
 
     SIM_CHAT --> |Send message| AI[AI Customer Response]
     AI --> SIM_CHAT
@@ -153,12 +148,12 @@ flowchart TD
     LOGIN --> |Quick sign-in button| VALIDATE
     LOGIN --> |"Don't have an account?"| REGISTER[Register Screen]
 
-    REGISTER --> |Select role\nbuyer or dealer| CREATE[Create Account]
+    REGISTER --> |"Buying" or "Selling"\nrole selection| CREATE[Create Account]
     REGISTER --> |"Already have an account?"| LOGIN
 
     CREATE --> ROLE_CHECK
     VALIDATE --> ROLE_CHECK
 
-    ROLE_CHECK -- buyer --> BUYER["/(buyer)/chat"]
-    ROLE_CHECK -- dealer --> DEALER["/(dealer)/simulations"]
+    ROLE_CHECK -- buyer --> BUYER["/(app)/chat"]
+    ROLE_CHECK -- dealer --> DEALER["/(app)/simulations"]
 ```

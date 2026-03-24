@@ -126,6 +126,8 @@ async def send_message(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    logger.info("Chat message received: session_id=%s, user_id=%s", session_id, user.id)
+
     # Save user message
     user_msg = Message(
         session_id=session_id,

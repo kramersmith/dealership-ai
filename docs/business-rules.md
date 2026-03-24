@@ -218,7 +218,14 @@ Each scenario has:
 | `buyer` | Default role. Access to buyer chat sessions and deal analysis. |
 | `dealer` | Access to dealer training simulations. |
 
-Role is set at signup and defaults to `buyer` if not specified.
+Role is selected at registration via "Buying" / "Selling" buttons (mapping to `buyer` / `dealer`) and defaults to `buyer` if not specified. Role switching is available only in development mode (`__DEV__`).
+
+### Role Enforcement
+
+- **Session creation**: The backend enforces that buyers can only create `buyer_chat` sessions and dealers can only create `dealer_sim` sessions. Mismatched requests return `403 Forbidden`.
+- **Simulation access**: Only dealers can access the `/api/simulations/scenarios` endpoint. Buyers receive `403 Forbidden`.
+- **Linked session ownership**: When linking sessions, the backend verifies all linked session IDs belong to the current user. Linking to another user's session returns `403 Forbidden`.
+- **Frontend role guards**: The `RoleGuard` component redirects users to their role-appropriate default screen if they attempt to access a screen meant for the other role.
 
 ### JWT Tokens
 

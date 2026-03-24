@@ -1,12 +1,20 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.dialects.sqlite import JSON
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import SessionType
+
+if TYPE_CHECKING:
+    from app.models.deal_state import DealState
+    from app.models.message import Message
+    from app.models.simulation import Simulation
 
 
 class ChatSession(Base):
@@ -29,4 +37,18 @@ class ChatSession(Base):
     updated_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    # Relationships — cascade deletes so child rows are removed automatically.
+    # passive_deletes is intentionally False (the default) because the FK columns
+    # do not declare ON DELETE CASCADE at the DB level; SQLAlchemy must emit the
+    # child DELETEs itself when db.delete(session) is called.
+    messages: Mapped[list["Message"]] = relationship(
+        "Message", cascade="all, delete-orphan"
+    )
+    deal_state: Mapped["DealState | None"] = relationship(
+        "DealState", cascade="all, delete-orphan", uselist=False
+    )
+    simulation: Mapped["Simulation | None"] = relationship(
+        "Simulation", cascade="all, delete-orphan", uselist=False
     )

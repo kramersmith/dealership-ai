@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Dealership AI is two separate AI-powered smartphone apps for the car buying experience — a buyer app and a dealer app. Monorepo with a FastAPI backend and React Native (Expo) frontend. This is a **pre-production first version** — not yet launched.
+Dealership AI is a single AI-powered smartphone app for the car buying experience with role-based features. Monorepo with a FastAPI backend and React Native (Expo) frontend. This is a **pre-production first version** — not yet launched.
 
-- **Buyer app** — helps buyers understand deals, spot unauthorized charges, negotiate effectively
-- **Dealer app** — AI training simulations where salespeople practice against AI customer scenarios
+- **Buyer features** — helps buyers understand deals, spot unauthorized charges, negotiate effectively
+- **Dealer features** — AI training simulations where salespeople practice against AI customer scenarios
 - **Backend** — FastAPI with Claude API integration, SSE streaming, JWT auth
 
 ## Development Philosophy
@@ -72,14 +72,16 @@ Key patterns:
 
 React Native + Expo + Tamagui + Zustand:
 
-- **Screens** (`app/`) — Expo Router file-based routing with `(buyer)` and `(dealer)` route groups
+- **Screens** (`app/`) — Expo Router file-based routing with a single `(app)` route group (role-gated screens)
 - **Components** (`components/`) — Chat (bubbles, input, voice), Dashboard (phase, numbers, scorecard, vehicle, checklist, timer, quick actions), Shared (cards, buttons, pills, menu)
 - **Stores** (`stores/`) — Zustand: auth, chat, deal, simulation, theme
 - **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls with event-based SSE parsing and optimistic rollback), useScreenWidth (responsive breakpoint)
 - **API** (`lib/`) — API client connecting to the FastAPI backend (no mock layer)
 
 Key patterns:
-- AuthGuard component (`components/shared/AuthGuard.tsx`) protects buyer and dealer route groups
+- AuthGuard component (`components/shared/AuthGuard.tsx`) protects the `(app)` route group
+- RoleGuard component (`components/shared/RoleGuard.tsx`) gates individual screens by role (buyer/dealer)
+- Role is set at registration and cannot be changed in production (role switching is dev-only via `__DEV__`)
 - Quick sign-in buttons on login screen for seed users (dev only via `__DEV__`)
 - Facebook dark mode color palette with light mode support
 - All colors centralized in `lib/colors.ts` — no hardcoded hex in components

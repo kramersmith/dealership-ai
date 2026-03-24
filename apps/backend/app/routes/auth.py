@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -6,6 +8,8 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.enums import UserRole
 from app.models.user import User
 from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -29,6 +33,7 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
     db.refresh(user)
 
     token = create_access_token(data={"sub": user.id})
+    logger.info("User signed up: user_id=%s, role=%s", user.id, user.role)
     return TokenResponse(access_token=token, user_id=user.id, role=UserRole(user.role))
 
 
@@ -36,7 +41,9 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.hashed_password):
+        logger.warning("Failed login attempt for email: %s", body.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token(data={"sub": user.id})
+    logger.info("User logged in: user_id=%s", user.id)
     return TokenResponse(access_token=token, user_id=user.id, role=UserRole(user.role))

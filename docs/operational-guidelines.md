@@ -55,7 +55,7 @@ When deploying:
 - Tokens signed with `SECRET_KEY`
 - Default expiry: 8 hours
 - All routes except `/api/auth/*` and `/health` require authentication
-- Frontend uses AuthGuard component on buyer/dealer route groups
+- Frontend uses AuthGuard component on the unified `(app)` route group, with RoleGuard on individual screens for role-based access
 
 ### Seed Users (Development Only)
 

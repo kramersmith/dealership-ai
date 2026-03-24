@@ -19,13 +19,19 @@ export const useSimulationStore = create<SimulationState>((set) => ({
     try {
       const scenarios = await api.getScenarios()
       set({ scenarios, isLoading: false })
-    } catch {
+    } catch (err) {
+      console.error('[simulationStore] loadScenarios failed:', err instanceof Error ? err.message : err)
       set({ isLoading: false })
     }
   },
 
   startSimulation: async (scenarioId) => {
-    const session = await api.startSimulation(scenarioId)
-    return session.id
+    try {
+      const session = await api.startSimulation(scenarioId)
+      return session.id
+    } catch (err) {
+      console.error('[simulationStore] startSimulation failed:', err instanceof Error ? err.message : err)
+      throw err
+    }
   },
 }))

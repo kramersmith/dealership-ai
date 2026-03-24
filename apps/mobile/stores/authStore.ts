@@ -65,7 +65,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   setRole: (role) => {
-    set({ role })
+    if (__DEV__) {
+      set({ role })
+    }
   },
 
   clearError: () => {

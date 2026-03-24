@@ -268,6 +268,10 @@ async def stream_chat(
                     try:
                         tool_data = json.loads(current_tool_input)
                     except json.JSONDecodeError:
+                        logger.warning(
+                            "Malformed tool input JSON for tool %s, using empty dict",
+                            current_tool_name,
+                        )
                         tool_data = {}
 
                     tool_call = {"name": current_tool_name, "args": tool_data}

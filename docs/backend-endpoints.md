@@ -163,6 +163,12 @@ Create a new chat session. Also creates an empty deal state linked to the sessio
 }
 ```
 
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `403` | Role mismatch (e.g., buyer trying to create dealer_sim session) |
+
 ---
 
 ### GET /api/sessions/{session_id}
@@ -241,13 +247,14 @@ Update a session's title or linked sessions. Only updates fields that are provid
 
 | Status | Detail |
 |---|---|
+| `403` | Cannot link to sessions you do not own |
 | `404` | Session not found |
 
 ---
 
 ### DELETE /api/sessions/{session_id}
 
-Delete a session. Only deletes sessions owned by the authenticated user.
+Delete a session and all related data (messages, deal state, simulation) via cascade. Only deletes sessions owned by the authenticated user.
 
 **Auth required:** Yes
 
@@ -496,3 +503,9 @@ The `ai_persona` object structure:
 | `challenges` | array of strings | Specific negotiation challenges |
 
 Current available scenarios: `scenario-1` (Price Negotiation, medium), `scenario-2` (Trade-In Pushback, easy), `scenario-3` (F&I Gauntlet, hard), `scenario-4` (The Walk-Away, hard).
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `403` | Only dealers can access training scenarios |

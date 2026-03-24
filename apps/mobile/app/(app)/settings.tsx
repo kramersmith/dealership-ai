@@ -1,12 +1,11 @@
 import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
-import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { ArrowLeftRight, LogOut, Sun, Moon } from '@tamagui/lucide-icons'
 import { colors } from '@/lib/colors'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
-import { AppCard, HamburgerMenu } from '@/components/shared'
+import { AppCard, HamburgerMenu, ThemedSafeArea } from '@/components/shared'
 
 export default function SettingsScreen() {
   const router = useRouter()
@@ -17,9 +16,9 @@ export default function SettingsScreen() {
     const newRole = role === 'buyer' ? 'dealer' : 'buyer'
     setRole(newRole)
     if (newRole === 'dealer') {
-      router.replace('/(dealer)/simulations')
+      router.replace('/(app)/simulations')
     } else {
-      router.replace('/(buyer)/chat')
+      router.replace('/(app)/chat')
     }
   }
 
@@ -29,7 +28,7 @@ export default function SettingsScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+    <ThemedSafeArea edges={['top']}>
       <YStack flex={1} backgroundColor="$background">
         <XStack
           paddingHorizontal="$4"
@@ -44,7 +43,7 @@ export default function SettingsScreen() {
           <Text fontSize={18} fontWeight="700" color="$color">
             Settings
           </Text>
-          <XStack width={40} />
+          <XStack width={44} />
         </XStack>
 
         <YStack padding="$4" gap="$5">
@@ -79,21 +78,23 @@ export default function SettingsScreen() {
               Account
             </Text>
 
-            <TouchableOpacity onPress={handleSwitchRole} activeOpacity={0.7}>
-              <AppCard>
-                <XStack alignItems="center" gap="$3">
-                  <ArrowLeftRight size={20} color={colors.brand} />
-                  <YStack flex={1}>
-                    <Text fontSize={15} fontWeight="600" color="$color">
-                      Switch to {role === 'buyer' ? 'Dealer' : 'Buyer'} Mode
-                    </Text>
-                    <Text fontSize={13} color="$placeholderColor">
-                      Currently in {role === 'buyer' ? 'Buyer' : 'Dealer'} mode
-                    </Text>
-                  </YStack>
-                </XStack>
-              </AppCard>
-            </TouchableOpacity>
+            {__DEV__ && (
+              <TouchableOpacity onPress={handleSwitchRole} activeOpacity={0.7}>
+                <AppCard>
+                  <XStack alignItems="center" gap="$3">
+                    <ArrowLeftRight size={20} color={colors.brand} />
+                    <YStack flex={1}>
+                      <Text fontSize={15} fontWeight="600" color="$color">
+                        Switch to {role === 'buyer' ? 'Dealer' : 'Buyer'} Mode
+                      </Text>
+                      <Text fontSize={13} color="$placeholderColor">
+                        Currently in {role === 'buyer' ? 'Buyer' : 'Dealer'} mode
+                      </Text>
+                    </YStack>
+                  </XStack>
+                </AppCard>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity onPress={handleLogout} activeOpacity={0.7}>
               <AppCard>
@@ -108,6 +109,6 @@ export default function SettingsScreen() {
           </YStack>
         </YStack>
       </YStack>
-    </SafeAreaView>
+    </ThemedSafeArea>
   )
 }

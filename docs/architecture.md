@@ -1,7 +1,7 @@
 # Dealership AI MVP — Technical Architecture Plan
 
 ## Context
-Greenfield build of two AI-powered smartphone apps (buyer + dealer) for the car buying experience. Solo developer, tight budget, targeting iOS/Android/web. Stack: React Native (Expo) → FastAPI → Claude API (claude-sonnet-4-6) → PostgreSQL.
+Greenfield build of a unified AI-powered smartphone app for the car buying experience, serving both buyers and dealers within a single app with role-based access. Solo developer, tight budget, targeting iOS/Android/web. Stack: React Native (Expo) → FastAPI → Claude API (claude-sonnet-4-6) → PostgreSQL.
 
 The key architectural challenge: the persistent UI (dashboard, scorecard, checklist, vehicle card) must update automatically from the LLM conversation. When a user says "they're offering $34k", the numbers dashboard updates live.
 
@@ -19,24 +19,22 @@ dealership-ai/
 ├── apps/
 │   ├── mobile/                  # Expo app (iOS + Android + Web)
 │   │   ├── app/                 # Expo Router file-based routing
-│   │   │   ├── (buyer)/         # Buyer tab group (AuthGuard protected)
-│   │   │   │   ├── _layout.tsx  # AuthGuard wrapper for buyer routes
-│   │   │   │   ├── chat.tsx     # Main chat screen
-│   │   │   │   ├── sessions.tsx # Session list
-│   │   │   │   └── settings.tsx
-│   │   │   ├── (dealer)/        # Dealer tab group (AuthGuard protected)
-│   │   │   │   ├── _layout.tsx  # AuthGuard wrapper for dealer routes
-│   │   │   │   ├── simulations.tsx
-│   │   │   │   └── sim/[id].tsx
+│   │   │   ├── (app)/           # Unified route group (AuthGuard protected)
+│   │   │   │   ├── _layout.tsx  # AuthGuard wrapper for all app routes
+│   │   │   │   ├── chat.tsx     # Main chat screen (buyer, RoleGuard)
+│   │   │   │   ├── sessions.tsx # Session list (buyer, RoleGuard)
+│   │   │   │   ├── simulations.tsx # Scenario list (dealer, RoleGuard)
+│   │   │   │   ├── sim/[id].tsx # Simulation chat (dealer, RoleGuard)
+│   │   │   │   └── settings.tsx # Shared settings
 │   │   │   ├── (auth)/
 │   │   │   │   ├── login.tsx    # Login with quick sign-in buttons (__DEV__ only)
-│   │   │   │   └── register.tsx
+│   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
 │   │   │   ├── chat/            # ChatBubble, ChatInput, VoiceButton
 │   │   │   ├── dashboard/       # DealPhase, NumbersDash, Checklist,
 │   │   │   │                    # VehicleCard, Scorecard, Timer
-│   │   │   └── shared/          # Button, Card, Modal, AuthGuard
+│   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
 │   │   │   └── useScreenWidth.ts # Responsive breakpoint hook
@@ -58,7 +56,7 @@ dealership-ai/
 │       │       ├── claude.py    # Claude API + tool definitions + SSE streaming
 │       │       └── simulation.py # Dealer training AI logic
 │       ├── alembic/             # DB migrations
-│       └── tests/               # Including test_seed.py
+│       └── tests/               # Including test_seed.py, test_sessions.py
 │
 ├── docs/                        # All documentation
 └── .claude/skills/              # Claude Code skills (pre-commit, update-docs)
@@ -70,7 +68,7 @@ dealership-ai/
 
 **users** — (id, email, hashed_password, role [UserRole enum: buyer/dealer], display_name, created_at)
 
-**chat_sessions** — (id, user_id, title, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps)
+**chat_sessions** — (id, user_id, title, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, and simulation.
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 

@@ -21,7 +21,7 @@
 
 ## 1. Overview
 
-Dealership AI is a monorepo containing two AI-powered smartphone applications for the car buying experience: a **buyer app** that helps consumers understand deals, spot unauthorized charges, and negotiate effectively, and a **dealer app** that provides AI training simulations where salespeople practice against AI customer personas.
+Dealership AI is a monorepo containing a unified AI-powered smartphone application for the car buying experience, with role-based access for two user types: a **buyer experience** that helps consumers understand deals, spot unauthorized charges, and negotiate effectively, and a **dealer experience** that provides AI training simulations where salespeople practice against AI customer personas. Both experiences live within a single app, with the user's role (selected at registration) determining which screens are accessible.
 
 ### Tech Stack
 
@@ -120,9 +120,13 @@ graph TB
 
 ### Access Control Rules
 
-- Role is set at signup and stored on the `users` record (`buyer` or `dealer`).
+- Role is set at signup (user selects "Buying" or "Selling" during registration) and stored on the `users` record (`buyer` or `dealer`).
 - All session, message, deal, and chat endpoints enforce **user-scoped access**: a user can only read/modify their own sessions (`ChatSession.user_id == current_user.id`).
+- **Role enforcement on session creation**: buyers can only create `buyer_chat` sessions; dealers can only create `dealer_sim` sessions. Returns `403 Forbidden` on mismatch.
+- **Role enforcement on simulations**: only dealers can access the `/api/simulations/scenarios` endpoint. Returns `403 Forbidden` for buyers.
+- **Linked session ownership validation**: when updating `linked_session_ids`, the backend verifies all linked sessions belong to the current user. Returns `403 Forbidden` if any linked session is not owned.
 - There is no admin role in the current version.
+- Role switching is available only in development mode (`__DEV__`).
 - Session type is determined at creation: `buyer_chat` for buyers, `dealer_sim` for dealers.
 
 ---
@@ -455,9 +459,9 @@ erDiagram
 ### Key Relationships
 
 - **User -> ChatSession**: One-to-many. A user owns many sessions.
-- **ChatSession -> Message**: One-to-many. A session contains an ordered sequence of messages.
-- **ChatSession -> DealState**: One-to-one. Each session has exactly one deal state (created when the session is created).
-- **ChatSession -> Simulation**: One-to-one. A dealer_sim session has one simulation record.
+- **ChatSession -> Message**: One-to-many. A session contains an ordered sequence of messages. **Cascade delete**: messages are deleted when the session is deleted.
+- **ChatSession -> DealState**: One-to-one. Each session has exactly one deal state (created when the session is created). **Cascade delete**: deal state is deleted when the session is deleted.
+- **ChatSession -> Simulation**: One-to-one. A dealer_sim session has one simulation record. **Cascade delete**: simulation is deleted when the session is deleted.
 
 ### ID Strategy
 
@@ -504,11 +508,15 @@ The FastAPI application uses an `asynccontextmanager` lifespan handler (not the 
 
 Seeding is idempotent (skips existing users) and only runs in development mode.
 
-### Frontend Auth Guards
+### Frontend Auth Guards and Role Guards
 
-The `AuthGuard` component (`components/shared/AuthGuard.tsx`) wraps the `(buyer)` and `(dealer)` route group layouts. It checks for an authenticated user in the auth store and redirects to the login screen if no valid session exists. This ensures all app routes (except auth screens) require authentication.
+The `AuthGuard` component (`components/shared/AuthGuard.tsx`) wraps the unified `(app)` route group layout. It checks for an authenticated user in the auth store and redirects to the login screen if no valid session exists. This ensures all app routes (except auth screens) require authentication.
+
+The `RoleGuard` component (`components/shared/RoleGuard.tsx`) is used within individual screens to enforce role-based access. If the user's role does not match the required role, `RoleGuard` redirects to the appropriate default screen for their actual role (e.g., a buyer trying to access simulations is redirected to chat). This replaces the previous architecture of separate `(buyer)` and `(dealer)` route groups.
 
 The login screen displays quick sign-in buttons for the seed user accounts when running in development mode (`__DEV__`).
+
+The registration screen asks "Are you buying or selling?" and presents "Buying" and "Selling" buttons for role selection.
 
 ### Backend Enums
 
