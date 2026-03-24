@@ -36,7 +36,11 @@ export default function SimulationChatScreen() {
             borderBottomColor="$borderColor"
             backgroundColor="$backgroundStrong"
           >
-            <TouchableOpacity onPress={() => router.back()}>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              activeOpacity={0.6}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
               <ArrowLeft size={22} color="$color" />
             </TouchableOpacity>
             <YStack flex={1}>

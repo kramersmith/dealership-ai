@@ -1,13 +1,31 @@
 import { useRef, useEffect } from 'react'
-import { FlatList } from 'react-native'
+import { FlatList, Animated } from 'react-native'
 import { YStack, Text, Spinner } from 'tamagui'
 import type { Message } from '@/lib/types'
 import { colors } from '@/lib/colors'
+import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { ChatBubble } from './ChatBubble'
 
 interface ChatMessageListProps {
   messages: Message[]
   isSending: boolean
+}
+
+function EmptyState() {
+  const opacity = useFadeIn(500)
+
+  return (
+    <Animated.View style={{ flex: 1, opacity }}>
+      <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
+        <Text fontSize={18} fontWeight="700" color="$color" textAlign="center">
+          Ready to help with your deal
+        </Text>
+        <Text fontSize={14} color="$placeholderColor" textAlign="center" lineHeight={22}>
+          Tell me about the vehicle you're looking at — year, make, model, and price — and I'll set up your dashboard.
+        </Text>
+      </YStack>
+    </Animated.View>
+  )
 }
 
 export function ChatMessageList({ messages, isSending }: ChatMessageListProps) {
@@ -22,16 +40,7 @@ export function ChatMessageList({ messages, isSending }: ChatMessageListProps) {
   }, [messages.length])
 
   if (messages.length === 0 && !isSending) {
-    return (
-      <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
-        <Text fontSize={18} fontWeight="700" color="$color" textAlign="center">
-          Ready to help with your deal
-        </Text>
-        <Text fontSize={14} color="$placeholderColor" textAlign="center" lineHeight={22}>
-          Tell me about the vehicle you're looking at — year, make, model, and price — and I'll set up your dashboard.
-        </Text>
-      </YStack>
-    )
+    return <EmptyState />
   }
 
   return (

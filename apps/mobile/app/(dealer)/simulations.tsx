@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { FlatList } from 'react-native'
+import { FlatList, Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { ThemedSafeArea } from '@/components/shared'
 import { useRouter } from 'expo-router'
@@ -8,6 +8,19 @@ import { useSimulationStore } from '@/stores/simulationStore'
 import { useChatStore } from '@/stores/chatStore'
 import { HamburgerMenu, LoadingIndicator } from '@/components/shared'
 import { ScenarioCard } from '@/components/simulation'
+import { useFadeIn, useSlideIn } from '@/hooks/useAnimatedValue'
+
+function EmptySimulationsState() {
+  const opacity = useFadeIn(500)
+  return (
+    <Animated.View style={{ flex: 1, opacity }}>
+      <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
+        <Swords size={48} color="$borderColor" />
+        <Text fontSize={16} fontWeight="600" color="$color">No scenarios available</Text>
+      </YStack>
+    </Animated.View>
+  )
+}
 
 export default function SimulationsScreen() {
   const router = useRouter()
@@ -47,19 +60,24 @@ export default function SimulationsScreen() {
         {isLoading ? (
           <LoadingIndicator message="Loading scenarios..." />
         ) : scenarios.length === 0 ? (
-          <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
-            <Swords size={48} color="$borderColor" />
-            <Text fontSize={16} fontWeight="600" color="$color">No scenarios available</Text>
-          </YStack>
+          <EmptySimulationsState />
         ) : (
           <FlatList
             data={scenarios}
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ padding: 16 }}
             ItemSeparatorComponent={() => <YStack height={12} />}
-            renderItem={({ item }) => (
-              <ScenarioCard scenario={item} onStart={handleStart} />
-            )}
+            renderItem={({ item, index }) => {
+              const AnimatedCard = () => {
+                const { opacity, translateY } = useSlideIn(250, index * 80)
+                return (
+                  <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+                    <ScenarioCard scenario={item} onStart={handleStart} />
+                  </Animated.View>
+                )
+              }
+              return <AnimatedCard />
+            }}
           />
         )}
       </YStack>

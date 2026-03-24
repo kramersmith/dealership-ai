@@ -15,4 +15,6 @@ export const colors = {
   dangerBorderDark: '#7F1D1D',
   warningSurfaceDark: '#3B2F08',
   warningBorderDark: '#78350F',
+  // Overlay
+  overlay: 'rgba(0,0,0,0.6)',
 } as const

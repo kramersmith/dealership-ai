@@ -1,3 +1,6 @@
+import { useRef, useEffect } from 'react'
+import { Animated, Platform } from 'react-native'
+const useNative = Platform.OS !== 'web'
 import { XStack, YStack, Text } from 'tamagui'
 import type { DealNumbers } from '@/lib/types'
 import { formatCurrency, formatPercent } from '@/lib/utils'
@@ -15,6 +18,19 @@ interface NumberCellProps {
 }
 
 function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
+  const flash = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    if (value !== '—') {
+      flash.setValue(1)
+      Animated.timing(flash, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: useNative,
+      }).start()
+    }
+  }, [value])
+
   const valueColor =
     highlight === 'good' ? colors.positive :
     highlight === 'bad' ? colors.danger :
@@ -25,9 +41,11 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
       <Text fontSize={11} color="$placeholderColor" fontWeight="500" numberOfLines={1}>
         {label}
       </Text>
-      <Text fontSize={17} fontWeight="700" color={valueColor ?? '$color'} numberOfLines={1}>
-        {value}
-      </Text>
+      <Animated.View style={{ opacity: Animated.subtract(1, Animated.multiply(flash, 0.3)) }}>
+        <Text fontSize={17} fontWeight="700" color={valueColor ?? '$color'} numberOfLines={1}>
+          {value}
+        </Text>
+      </Animated.View>
     </YStack>
   )
 }
