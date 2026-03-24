@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class DealStateResponse(BaseModel):
     session_id: str
     phase: str
+    buyer_context: str
     msrp: float | None
     invoice_price: float | None
     their_offer: float | None

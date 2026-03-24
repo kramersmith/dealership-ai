@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  BuyerContext,
   DealState,
   DealPhase,
   DealNumbers,
@@ -8,7 +9,7 @@ import type {
   ChecklistItem,
   ToolCall,
 } from '@/lib/types'
-import { EMPTY_DEAL_NUMBERS, EMPTY_SCORECARD } from '@/lib/constants'
+import { DEFAULT_BUYER_CONTEXT, EMPTY_DEAL_NUMBERS, EMPTY_SCORECARD } from '@/lib/constants'
 import { api } from '@/lib/api'
 
 interface DealStore {
@@ -16,7 +17,7 @@ interface DealStore {
   isLoading: boolean
 
   loadDealState: (sessionId: string) => Promise<void>
-  resetDealState: (sessionId: string) => void
+  resetDealState: (sessionId: string, buyerContext?: BuyerContext) => void
   applyToolCall: (toolCall: ToolCall) => void
 
   // Direct setters for checklist interaction
@@ -38,11 +39,12 @@ export const useDealStore = create<DealStore>((set, get) => ({
     }
   },
 
-  resetDealState: (sessionId) => {
+  resetDealState: (sessionId, buyerContext = DEFAULT_BUYER_CONTEXT) => {
     set({
       dealState: {
         sessionId,
         phase: 'research',
+        buyerContext,
         numbers: { ...EMPTY_DEAL_NUMBERS },
         vehicle: null,
         scorecard: { ...EMPTY_SCORECARD },
@@ -128,6 +130,16 @@ export const useDealStore = create<DealStore>((set, get) => ({
         const items = toolCall.args.items as ChecklistItem[]
         set({
           dealState: { ...dealState, checklist: items },
+        })
+        break
+      }
+
+      case 'update_buyer_context': {
+        set({
+          dealState: {
+            ...dealState,
+            buyerContext: toolCall.args.buyer_context as BuyerContext,
+          },
         })
         break
       }

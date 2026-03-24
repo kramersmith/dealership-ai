@@ -1,4 +1,15 @@
-import type { DealPhase } from './types'
+import type { BuyerContext, DealPhase } from './types'
+
+// ─── Buyer Context ───
+
+export const DEFAULT_BUYER_CONTEXT: BuyerContext = 'researching'
+
+/** Widget display order per buyer context (timer is always first, handled separately). */
+export const WIDGET_ORDER_BY_CONTEXT: Record<BuyerContext, string[]> = {
+  researching: ['vehicle', 'numbers', 'scorecard', 'checklist'],
+  reviewing_deal: ['numbers', 'scorecard', 'vehicle', 'checklist'],
+  at_dealership: ['scorecard', 'numbers', 'vehicle', 'checklist'],
+}
 
 export const DEAL_PHASES: { key: DealPhase; label: string }[] = [
   { key: 'research', label: 'Research' },
@@ -36,9 +47,3 @@ export const EMPTY_SCORECARD = {
   fees: null,
   overall: null,
 } as const
-
-export const QUICK_ACTIONS = [
-  { id: 'what_to_say', label: 'What Do I Say?', icon: 'MessageSquare' },
-  { id: 'should_i_walk', label: 'Should I Walk?', icon: 'DoorOpen' },
-  { id: 'whats_missing', label: 'What Am I Forgetting?', icon: 'CircleHelp' },
-] as const

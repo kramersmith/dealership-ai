@@ -32,6 +32,12 @@ class ScoreStatus(StrEnum):
     GREEN = "green"
 
 
+class BuyerContext(StrEnum):
+    RESEARCHING = "researching"
+    REVIEWING_DEAL = "reviewing_deal"
+    AT_DEALERSHIP = "at_dealership"
+
+
 class Difficulty(StrEnum):
     EASY = "easy"
     MEDIUM = "medium"

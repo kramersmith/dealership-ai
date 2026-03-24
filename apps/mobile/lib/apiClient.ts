@@ -1,4 +1,5 @@
-import type { ApiService, Session, Message, DealState, Scenario, ToolCall } from './types'
+import type { ApiService, BuyerContext, Session, Message, DealState, Scenario, ToolCall } from './types'
+import { DEFAULT_BUYER_CONTEXT } from './constants'
 
 const API_BASE = 'http://localhost:8001/api'
 
@@ -67,10 +68,16 @@ class ApiClient implements ApiService {
     return sessions.map(mapSession)
   }
 
-  async createSession(type: 'buyer_chat' | 'dealer_sim', title?: string): Promise<Session> {
+  async createSession(
+    type: 'buyer_chat' | 'dealer_sim',
+    title?: string,
+    buyerContext?: BuyerContext
+  ): Promise<Session> {
+    const body: Record<string, string | undefined> = { session_type: type, title }
+    if (buyerContext) body.buyer_context = buyerContext
     const s = await request<any>('/sessions', {
       method: 'POST',
-      body: JSON.stringify({ session_type: type, title }),
+      body: JSON.stringify(body),
     })
     return mapSession(s)
   }
@@ -179,6 +186,7 @@ class ApiClient implements ApiService {
     return {
       sessionId: ds.session_id,
       phase: ds.phase,
+      buyerContext: ds.buyer_context || DEFAULT_BUYER_CONTEXT,
       numbers: {
         msrp: ds.msrp,
         invoicePrice: ds.invoice_price,

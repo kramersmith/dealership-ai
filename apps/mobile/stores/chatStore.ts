@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Message, Session } from '@/lib/types'
+import type { BuyerContext, Message, Session } from '@/lib/types'
 import { api } from '@/lib/api'
 import { useDealStore } from './dealStore'
 
@@ -11,12 +11,21 @@ interface ChatState {
   isCreatingSession: boolean
   isSending: boolean
   sendError: string | null
+  /** True when createSession just set the activeSessionId — prevents
+   *  useChat's useEffect from redundantly calling setActiveSession and
+   *  wiping optimistic messages or greeting messages. */
+  _sessionJustCreated: boolean
 
   loadSessions: () => Promise<void>
   loadMessages: (sessionId: string) => Promise<void>
   setActiveSession: (sessionId: string) => Promise<void>
-  createSession: (type: 'buyer_chat' | 'dealer_sim', title?: string) => Promise<Session | null>
+  createSession: (
+    type: 'buyer_chat' | 'dealer_sim',
+    title?: string,
+    buyerContext?: BuyerContext
+  ) => Promise<Session | null>
   deleteSession: (sessionId: string) => Promise<void>
+  addGreeting: (content: string) => void
   sendMessage: (content: string, imageUri?: string) => Promise<void>
   clearSendError: () => void
 }
@@ -29,6 +38,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isCreatingSession: false,
   isSending: false,
   sendError: null,
+  _sessionJustCreated: false,
 
   loadSessions: async () => {
     set({ isLoading: true })
@@ -53,7 +63,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActiveSession: async (sessionId) => {
-    set({ activeSessionId: sessionId, messages: [], isLoading: true })
+    // Skip if createSession just populated this session's state — calling
+    // setActiveSession would wipe optimistic messages and greeting messages.
+    if (get()._sessionJustCreated && get().activeSessionId === sessionId) {
+      set({ _sessionJustCreated: false })
+      return
+    }
+
+    set({ activeSessionId: sessionId, messages: [], isLoading: true, _sessionJustCreated: false })
     try {
       const [messages] = await Promise.all([
         api.getMessages(sessionId),
@@ -69,18 +86,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createSession: async (type, title) => {
+  createSession: async (type, title, buyerContext) => {
     if (get().isCreatingSession) return null
     set({ isCreatingSession: true })
     try {
-      const session = await api.createSession(type, title)
+      const session = await api.createSession(type, title, buyerContext)
       set((state) => ({
         sessions: [session, ...state.sessions],
         activeSessionId: session.id,
         messages: [],
         isCreatingSession: false,
+        _sessionJustCreated: true,
       }))
-      useDealStore.getState().resetDealState(session.id)
+      useDealStore.getState().resetDealState(session.id, buyerContext)
       return session
     } catch (err) {
       console.error('[chatStore] createSession failed:', err instanceof Error ? err.message : err)
@@ -101,6 +119,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       console.error('[chatStore] deleteSession failed:', err instanceof Error ? err.message : err)
       throw err
     }
+  },
+
+  addGreeting: (content) => {
+    const { activeSessionId } = get()
+    if (!activeSessionId) return
+    const greetingMessage: Message = {
+      id: Math.random().toString(36).substring(2),
+      sessionId: activeSessionId,
+      role: 'assistant',
+      content,
+      createdAt: new Date().toISOString(),
+    }
+    set((state) => ({
+      messages: [...state.messages, greetingMessage],
+    }))
   },
 
   sendMessage: async (content, imageUri) => {

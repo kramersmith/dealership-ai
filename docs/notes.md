@@ -35,14 +35,18 @@ The chat is for back-and-forth; the surrounding UI keeps the customer grounded a
 - **Active checklist** — phase-appropriate to-do items that update as you progress. Pre-visit: got pre-approval? checked market value? At dealer: inspected vehicle? test drove? got OTD sheet? F&I: declined add-ons? verified APR? numbers match verbal agreement? Items check off as you go.
 - **Vehicle card** — the vehicle you're looking at: year, make, model, trim, mileage, price. Risk flags from CARFAX/vehicle analysis. Market comparison. Swap between vehicles if comparing multiple.
 - **Negotiation scorecard** — their starting price → current offer → your target as a visual progress bar. Rate: offered vs. expected. Simple red/yellow/green status on price, rate, and terms.
-- **Quick action buttons** — "Analyze this photo" (snap deal sheet or contract), "What do I say?" (script for current situation), "Should I walk?" (instant recommendation), "Call for backup" (escalate to detailed analysis).
+- **Quick action buttons** — context-aware actions that change based on buyer context. Researching: "Compare Prices", "New or Used?", "What's My Budget?". Reviewing deal: "Check This Price", "Hidden Fees?", "Should I Walk?". At dealership: "What Do I Say?", "Should I Walk?", "They're Pressuring Me". Data-driven via `ACTIONS_BY_CONTEXT` mapping.
 - **Timer / awareness cues** — how long you've been at the dealership (awareness, not pressure). Reminder if you've been waiting a long time ("they may be using wait time as a tactic").
 
 Design principle: **everything the customer needs to stay rational and informed should be visible without asking for it.**
 
-### Onboarding — two entry points
-- **Prep mode** — user starts the night before or days ahead. Full research flow: enter vehicle details, analyze CARFAX, build a game plan, get pre-approval guidance, set target/walk-away prices. All context carries into the dealership visit.
-- **"I'm here now" mode** — user opens the app in the dealership parking lot. Fast-start flow: enter the vehicle and price, get an instant assessment and quick checklist, jump straight into negotiation support. Minimal setup, maximum immediate value.
+### Onboarding — buyer context selection (BUILT)
+When starting a new chat, the buyer sees three situation cards (WelcomePrompts component):
+- **"Researching"** — comparing cars and prices from home. AI is educational and thorough. Dashboard prioritizes vehicle card and numbers.
+- **"Have a deal to review"** — buyer has a quote or offer. AI is analytical and direct. Dashboard prioritizes numbers and scorecard.
+- **"At the dealership"** — buyer is there right now. AI is brief and tactical with ready-to-use scripts. Dashboard prioritizes scorecard and numbers.
+
+The buyer can skip the cards entirely by typing or uploading directly (defaults to "researching"). Each context gets a hardcoded greeting message (no LLM call), context-specific quick actions, and a system prompt preamble that shapes the AI's tone. The AI can change the context mid-conversation via the `update_buyer_context` tool if the buyer's situation changes.
 
 ### Notifications and follow-up
 - When a dealer calls or texts after a walk-away, the app should surface a push notification with context: where the deal left off, suggested response, and current recommendation (accept/counter/decline).

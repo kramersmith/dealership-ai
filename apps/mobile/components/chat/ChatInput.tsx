@@ -8,9 +8,10 @@ import { VoiceButton } from './VoiceButton'
 interface ChatInputProps {
   onSend: (content: string, imageUri?: string) => void
   disabled?: boolean
+  placeholder?: string
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   const [text, setText] = useState('')
 
   const handleSend = () => {
@@ -65,7 +66,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
       <Input
         flex={1}
         size="$4"
-        placeholder="Message..."
+        placeholder={placeholder ?? 'Message...'}
         value={text}
         onChangeText={setText}
         onSubmitEditing={handleSend}

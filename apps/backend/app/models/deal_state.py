@@ -6,7 +6,7 @@ from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import DealPhase
+from app.models.enums import BuyerContext, DealPhase
 
 
 class DealState(Base):
@@ -19,9 +19,12 @@ class DealState(Base):
         String, ForeignKey("chat_sessions.id"), nullable=False, unique=True, index=True
     )
 
-    # Phase
+    # Phase and context
     phase: Mapped[str] = mapped_column(
         String, nullable=False, default=DealPhase.RESEARCH
+    )
+    buyer_context: Mapped[str] = mapped_column(
+        String, nullable=False, default=BuyerContext.RESEARCHING
     )
 
     # Numbers

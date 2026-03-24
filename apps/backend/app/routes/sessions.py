@@ -60,8 +60,11 @@ def create_session(
     db.add(session)
     db.flush()
 
-    # Create empty deal state for this session
-    deal_state = DealState(session_id=session.id)
+    # Create deal state for this session with optional buyer context
+    deal_state = DealState(
+        session_id=session.id,
+        **({"buyer_context": body.buyer_context} if body.buyer_context else {}),
+    )
     db.add(deal_state)
     db.commit()
     db.refresh(session)

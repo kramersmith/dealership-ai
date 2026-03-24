@@ -31,7 +31,7 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble, ChatInput, VoiceButton
+│   │   │   ├── chat/            # ChatBubble, ChatInput, VoiceButton, WelcomePrompts
 │   │   │   ├── dashboard/       # DealPhase, NumbersDash, Checklist,
 │   │   │   │                    # VehicleCard, Scorecard, Timer
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
@@ -42,6 +42,7 @@ dealership-ai/
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend
 │   │       ├── colors.ts        # Centralized color palette
+│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases
 │   │       └── types.ts
 │   │
 │   └── backend/                 # FastAPI backend
@@ -73,6 +74,7 @@ dealership-ai/
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 
 **deal_states** — one mutable row per session, the persistent UI state:
+- Buyer context: BuyerContext enum (researching, reviewing_deal, at_dealership) — set at session creation, updatable mid-conversation
 - Phase: DealPhase enum (research → initial_contact → test_drive → negotiation → financing → closing)
 - Numbers: msrp, invoice_price, their_offer, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
 - Vehicle: year, make, model, trim, vin, mileage, color
@@ -93,6 +95,7 @@ All domain values use Python `StrEnum` for type safety:
 | `MessageRole` | `user`, `assistant`, `system` |
 | `DealPhase` | `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
 | `ScoreStatus` | `red`, `yellow`, `green` |
+| `BuyerContext` | `researching`, `reviewing_deal`, `at_dealership` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 
 ### Seed Users (Development Only)
@@ -133,21 +136,29 @@ POST   /simulations/{id}/complete     # End + score
 
 ## Core Architecture: Claude Tool Use → Dashboard Updates
 
-**5 tools registered with every Claude call:**
+**6 tools registered with every Claude call:**
 1. `update_deal_numbers` — prices, payments, rates (all fields optional, only update what changed)
 2. `update_deal_phase` — progression through deal phases
 3. `update_scorecard` — red/yellow/green ratings
 4. `set_vehicle` — year, make, model, trim, vin, mileage
 5. `update_checklist` — array of {label, done} items
+6. `update_buyer_context` — change the buyer's situational context mid-conversation (researching, reviewing_deal, at_dealership)
 
 **Streaming flow:**
 1. Client POSTs message
-2. Backend loads history + linked session context, calls Claude with tools
+2. Backend loads history + linked session context, calls Claude with tools (system prompt includes a context-aware preamble based on the session's `buyer_context`)
 3. Claude streams text + tool_use blocks
 4. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
 5. Backend persists messages and executes tool calls (UPDATE deal_states)
 6. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render
 7. On send failure, optimistic messages are rolled back from the chat store
+
+**New session flow (buyer):**
+1. Chat screen shows WelcomePrompts — three situation cards: "Researching", "Have a deal to review", "At the dealership"
+2. User taps a card (or skips by typing/uploading directly, which defaults to `researching`)
+3. Frontend calls `POST /api/sessions` with the selected `buyer_context`
+4. A hardcoded greeting message (per context) is injected client-side — no LLM call needed
+5. Quick actions, dashboard panel ordering, and system prompt preamble all adapt to the selected context
 
 **Photo analysis:** Client uploads image → sends URL to backend → Claude vision extracts all numbers/details → calls multiple tools → dashboard populates in one shot.
 

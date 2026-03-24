@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03
+Last updated: 2026-03-24
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -132,7 +132,7 @@ List all sessions for the authenticated user, ordered by most recently updated.
 
 ### POST /api/sessions
 
-Create a new chat session. Also creates an empty deal state linked to the session.
+Create a new chat session. Also creates a deal state linked to the session, optionally initialized with a buyer context.
 
 **Auth required:** Yes
 
@@ -141,7 +141,8 @@ Create a new chat session. Also creates an empty deal state linked to the sessio
 ```json
 {
   "session_type": "buyer_chat",
-  "title": "string | null"
+  "title": "string | null",
+  "buyer_context": "researching | reviewing_deal | at_dealership | null"
 }
 ```
 
@@ -149,6 +150,7 @@ Create a new chat session. Also creates an empty deal state linked to the sessio
 |---|---|---|---|---|
 | `session_type` | string | No | `"buyer_chat"` | `"buyer_chat"` or `"dealer_sim"` |
 | `title` | string | No | Auto-generated | Defaults to "New Deal" for buyer_chat, "New Simulation" for dealer_sim |
+| `buyer_context` | string | No | `"researching"` | Buyer's situational context: `"researching"`, `"reviewing_deal"`, or `"at_dealership"` |
 
 **Response:** `201 Created`
 
@@ -418,6 +420,7 @@ Get the current deal state for a session.
 {
   "session_id": "uuid",
   "phase": "research",
+  "buyer_context": "researching",
   "msrp": null,
   "invoice_price": null,
   "their_offer": null,

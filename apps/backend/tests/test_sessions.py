@@ -1,6 +1,6 @@
 from app.core.security import create_access_token, hash_password
 from app.models.deal_state import DealState
-from app.models.enums import MessageRole, SessionType, UserRole
+from app.models.enums import BuyerContext, MessageRole, SessionType, UserRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
@@ -105,3 +105,71 @@ def test_delete_session_cannot_delete_other_users_session(client, db):
     assert (
         db.query(ChatSession).filter(ChatSession.id == session_id).first() is not None
     )
+
+
+# --- buyer_context tests ---
+
+
+def test_create_session_with_buyer_context(client, db):
+    """Creating a session with an explicit buyer_context stores it on the deal state."""
+    _user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={
+            "session_type": SessionType.BUYER_CHAT,
+            "buyer_context": BuyerContext.AT_DEALERSHIP,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
+    assert deal_state is not None
+    assert deal_state.buyer_context == BuyerContext.AT_DEALERSHIP
+
+
+def test_create_session_without_buyer_context_defaults_to_researching(client, db):
+    """When buyer_context is omitted, the deal state defaults to 'researching'."""
+    _user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
+    assert deal_state is not None
+    assert deal_state.buyer_context == BuyerContext.RESEARCHING
+
+
+def test_deal_state_response_includes_buyer_context(client, db):
+    """The GET /api/deals/:session_id response includes buyer_context."""
+    _user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    # Create a session with a specific buyer_context
+    resp = client.post(
+        "/api/sessions",
+        json={
+            "session_type": SessionType.BUYER_CHAT,
+            "buyer_context": BuyerContext.REVIEWING_DEAL,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    # Fetch the deal state via the API
+    resp = client.get(f"/api/deal/{session_id}", headers=headers)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert "buyer_context" in data
+    assert data["buyer_context"] == BuyerContext.REVIEWING_DEAL

@@ -1,37 +1,35 @@
-import { useCallback, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { ThemedSafeArea, LoadingIndicator, HamburgerMenu, RoleGuard } from '@/components/shared'
 import { Plus } from '@tamagui/lucide-icons'
 import { colors } from '@/lib/colors'
+import { DEFAULT_BUYER_CONTEXT } from '@/lib/constants'
+import type { BuyerContext } from '@/lib/types'
 import { useChatStore } from '@/stores/chatStore'
 import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { DashboardPanel, QuickActions } from '@/components/dashboard'
-import { ChatMessageList, ChatInput } from '@/components/chat'
-import { useFocusEffect } from 'expo-router'
+import { ChatMessageList, ChatInput, WelcomePrompts } from '@/components/chat'
+
+const GREETING_MESSAGES: Record<BuyerContext, string> = {
+  researching:
+    'What car are you looking at? Tell me the year, make, and model ' +
+    "and I'll help you understand fair pricing and what to watch for.",
+  reviewing_deal:
+    'Tell me the numbers \u2014 MSRP, their offer, monthly payment, APR \u2014 ' +
+    "or snap a photo of the deal sheet. I'll break down what's fair " +
+    'and what to push back on.',
+  at_dealership:
+    'I\u2019m here to help. What\u2019s happening right now? Tell me what they ' +
+    'just said or offered, and I\u2019ll tell you exactly how to respond.',
+}
 
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
   const createSession = useChatStore((state) => state.createSession)
   const { isDesktop } = useScreenWidth()
   const isCreating = useRef(false)
-  const [createFailed, setCreateFailed] = useState(false)
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!activeSessionId && !isCreating.current && !createFailed) {
-        isCreating.current = true
-        createSession('buyer_chat', 'New Deal')
-          .catch(() => {
-            setCreateFailed(true)
-          })
-          .finally(() => {
-            isCreating.current = false
-          })
-      }
-    }, [activeSessionId, createFailed])
-  )
 
   const {
     messages,
@@ -42,6 +40,54 @@ export default function ChatScreen() {
     handleQuickAction,
     toggleChecklistItem,
   } = useChat(activeSessionId)
+
+  const addGreeting = useChatStore((state) => state.addGreeting)
+
+  // Create session with a buyer context (from card tap)
+  const handleContextSelect = async (context: BuyerContext) => {
+    if (isCreating.current) return
+    isCreating.current = true
+
+    try {
+      const session = await createSession('buyer_chat', 'New Deal', context)
+      if (session) {
+        addGreeting(GREETING_MESSAGES[context])
+      }
+    } catch {
+      // Error already logged in chatStore
+    } finally {
+      isCreating.current = false
+    }
+  }
+
+  // Create session without context (user typed or uploaded directly)
+  const handleDirectSend = async (content: string, imageUri?: string) => {
+    if (!activeSessionId) {
+      if (isCreating.current) return
+      isCreating.current = true
+
+      try {
+        const session = await createSession('buyer_chat', 'New Deal')
+        if (session) {
+          await send(content, imageUri)
+        }
+      } catch {
+        // Error already logged in chatStore
+      } finally {
+        isCreating.current = false
+      }
+    } else {
+      await send(content, imageUri)
+    }
+  }
+
+  // New session button (+) — resets to welcome state
+  const handleNewSession = () => {
+    if (isCreating.current) return
+    useChatStore.setState({ activeSessionId: null, messages: [], _sessionJustCreated: false })
+  }
+
+  const showWelcome = !activeSessionId && !isLoading
 
   if (isLoading && messages.length === 0) {
     return (
@@ -68,14 +114,7 @@ export default function ChatScreen() {
         Deal Assistant
       </Text>
       <TouchableOpacity
-        onPress={() => {
-          if (isCreating.current) return
-          isCreating.current = true
-          setCreateFailed(false)
-          createSession('buyer_chat', 'New Deal').finally(() => {
-            isCreating.current = false
-          })
-        }}
+        onPress={handleNewSession}
         activeOpacity={0.6}
         style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
       >
@@ -86,13 +125,28 @@ export default function ChatScreen() {
 
   const chatColumn = (
     <YStack flex={1}>
-      <YStack flex={1}>
-        <ChatMessageList messages={messages} isSending={isSending} />
-      </YStack>
-      <YStack paddingHorizontal="$4">
-        <QuickActions onAction={handleQuickAction} />
-      </YStack>
-      <ChatInput onSend={send} disabled={isSending} />
+      {showWelcome ? (
+        <YStack flex={1} justifyContent="center">
+          <WelcomePrompts onSelect={handleContextSelect} />
+        </YStack>
+      ) : (
+        <YStack flex={1}>
+          <ChatMessageList messages={messages} isSending={isSending} />
+        </YStack>
+      )}
+      {!showWelcome && (
+        <YStack paddingHorizontal="$4">
+          <QuickActions
+            buyerContext={dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT}
+            onAction={handleQuickAction}
+          />
+        </YStack>
+      )}
+      <ChatInput
+        onSend={handleDirectSend}
+        disabled={isSending}
+        placeholder={showWelcome ? 'Or just tell me what\u2019s going on' : undefined}
+      />
     </YStack>
   )
 
@@ -106,7 +160,7 @@ export default function ChatScreen() {
 
             <XStack flex={1}>
               {/* Left: Dashboard sidebar */}
-              {dealState && (
+              {dealState && !showWelcome && (
                 <YStack
                   width={360}
                   borderRightWidth={1}
@@ -145,12 +199,12 @@ export default function ChatScreen() {
             {header}
 
             {/* Dashboard Panel (collapsible on mobile) */}
-            {dealState && (
+            {dealState && !showWelcome && (
               <DashboardPanel dealState={dealState} onToggleChecklist={toggleChecklistItem} />
             )}
 
             {/* Divider */}
-            <YStack height={1} backgroundColor="$borderColor" />
+            {!showWelcome && <YStack height={1} backgroundColor="$borderColor" />}
 
             {/* Chat */}
             {chatColumn}

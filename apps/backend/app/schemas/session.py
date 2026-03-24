@@ -2,12 +2,13 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.models.enums import SessionType
+from app.models.enums import BuyerContext, SessionType
 
 
 class SessionCreate(BaseModel):
     session_type: SessionType = SessionType.BUYER_CHAT
     title: str | None = None
+    buyer_context: BuyerContext | None = None
 
 
 class SessionUpdate(BaseModel):

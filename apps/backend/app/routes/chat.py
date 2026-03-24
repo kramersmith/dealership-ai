@@ -8,7 +8,7 @@ from starlette.responses import StreamingResponse
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
-from app.models.enums import MessageRole
+from app.models.enums import BuyerContext, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
@@ -72,11 +72,24 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
         if "items" in tool_data:
             deal_state.checklist = tool_data["items"]
 
+    elif tool_name == "update_buyer_context":
+        if "buyer_context" in tool_data:
+            try:
+                validated = BuyerContext(tool_data["buyer_context"])
+            except ValueError:
+                logger.warning(
+                    "Invalid buyer_context from tool call: %s",
+                    tool_data["buyer_context"],
+                )
+                return
+            deal_state.buyer_context = validated
+
 
 def _deal_state_to_dict(ds: DealState) -> dict:
     """Convert deal state to dict for system prompt context."""
     return {
         "phase": ds.phase,
+        "buyer_context": ds.buyer_context,
         "numbers": {
             "msrp": ds.msrp,
             "invoice_price": ds.invoice_price,

@@ -3,6 +3,7 @@ import { ScrollView, TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { ChevronDown, ChevronUp } from '@tamagui/lucide-icons'
 import type { DealState } from '@/lib/types'
+import { DEFAULT_BUYER_CONTEXT, WIDGET_ORDER_BY_CONTEXT } from '@/lib/constants'
 import { DealPhaseIndicator } from './DealPhaseIndicator'
 import { NumbersDashboard } from './NumbersDashboard'
 import { NegotiationScorecard } from './NegotiationScorecard'
@@ -37,19 +38,53 @@ export function DashboardPanel({
     dealState.checklist.length > 0 ||
     dealState.timerStartedAt
 
+  // Build widgets in order determined by buyer context
+  const widgets: { key: string; element: React.ReactNode }[] = []
+
+  // Timer always first if active
+  if (dealState.timerStartedAt) {
+    widgets.push({
+      key: 'timer',
+      element: <DealershipTimer startedAt={dealState.timerStartedAt} />,
+    })
+  }
+
+  const widgetMap: Record<string, { key: string; element: React.ReactNode } | null> = {
+    vehicle: dealState.vehicle
+      ? { key: 'vehicle', element: <VehicleCard vehicle={dealState.vehicle} /> }
+      : null,
+    numbers: hasNumbers
+      ? { key: 'numbers', element: <NumbersDashboard numbers={dealState.numbers} /> }
+      : null,
+    scorecard: hasScorecard
+      ? {
+          key: 'scorecard',
+          element: (
+            <NegotiationScorecard scorecard={dealState.scorecard} numbers={dealState.numbers} />
+          ),
+        }
+      : null,
+    checklist: {
+      key: 'checklist',
+      element: <Checklist items={dealState.checklist} onToggle={onToggleChecklist} />,
+    },
+  }
+
+  // Order based on buyer context (data-driven via WIDGET_ORDER_BY_CONTEXT)
+  const order =
+    WIDGET_ORDER_BY_CONTEXT[dealState.buyerContext] ??
+    WIDGET_ORDER_BY_CONTEXT[DEFAULT_BUYER_CONTEXT]
+
+  for (const widgetKey of order) {
+    const widget = widgetMap[widgetKey]
+    if (widget) widgets.push(widget)
+  }
+
   const dashboardWidgets = (
     <YStack paddingHorizontal="$4" gap="$3" paddingVertical="$3">
-      {dealState.timerStartedAt && <DealershipTimer startedAt={dealState.timerStartedAt} />}
-
-      {dealState.vehicle && <VehicleCard vehicle={dealState.vehicle} />}
-
-      {hasNumbers && <NumbersDashboard numbers={dealState.numbers} />}
-
-      {hasScorecard && (
-        <NegotiationScorecard scorecard={dealState.scorecard} numbers={dealState.numbers} />
-      )}
-
-      <Checklist items={dealState.checklist} onToggle={onToggleChecklist} />
+      {widgets.map((widget) => (
+        <YStack key={widget.key}>{widget.element}</YStack>
+      ))}
     </YStack>
   )
 

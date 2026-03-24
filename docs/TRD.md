@@ -97,8 +97,8 @@ graph TB
 1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL).
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
-4. Backend constructs a system prompt with deal state context and linked session context.
-5. Backend opens a streaming connection to the Claude API with 5 tool definitions.
+4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, and linked session context.
+5. Backend opens a streaming connection to the Claude API with 6 tool definitions.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays each chunk as an SSE event to the client:
   - `event: text` -- conversation text chunks
@@ -184,7 +184,7 @@ graph TB
 | `POST`   | `/api/auth/signup`                | No   | Create account, return token        |
 | `POST`   | `/api/auth/login`                 | No   | Authenticate, return token          |
 | `GET`    | `/api/sessions`                   | Yes  | List user's sessions                |
-| `POST`   | `/api/sessions`                   | Yes  | Create session + empty deal state   |
+| `POST`   | `/api/sessions`                   | Yes  | Create session + deal state (with optional buyer_context) |
 | `GET`    | `/api/sessions/{session_id}`      | Yes  | Get single session                  |
 | `PATCH`  | `/api/sessions/{session_id}`      | Yes  | Update title or linked sessions     |
 | `DELETE` | `/api/sessions/{session_id}`      | Yes  | Delete session                      |
@@ -246,7 +246,7 @@ Scorecard dimensions: **price**, **financing**, **trade_in**, **fees**, **overal
 
 ### Claude Tool Definitions
 
-The AI advisor uses 5 tools to drive the frontend dashboard in real time:
+The AI advisor uses 6 tools to drive the frontend dashboard in real time:
 
 
 | Tool                  | Purpose                                    | Required Fields                  |
@@ -256,6 +256,7 @@ The AI advisor uses 5 tools to drive the frontend dashboard in real time:
 | `update_scorecard`    | Set red/yellow/green ratings               | None (all optional)              |
 | `set_vehicle`         | Set or update the vehicle under discussion | `make`, `model`                  |
 | `update_checklist`    | Update buyer's action item checklist       | `items` (array of {label, done}) |
+| `update_buyer_context` | Change buyer's situational context mid-conversation | `buyer_context` |
 
 
 ### Session Linking
@@ -320,6 +321,7 @@ erDiagram
         string id PK
         string session_id FK "unique"
         string phase "research...closing"
+        string buyer_context "researching | reviewing_deal | at_dealership"
         float msrp
         float invoice_price
         float their_offer
@@ -412,6 +414,7 @@ erDiagram
 | `id`               | String   | PK, default UUID                        |                             |
 | `session_id`       | String   | FK -> chat_sessions.id, Unique, Indexed | One deal state per session  |
 | `phase`            | String   | Not Null, default "research"            | See deal phases             |
+| `buyer_context`    | String   | Not Null, default "researching"         | `researching`, `reviewing_deal`, or `at_dealership` |
 | `msrp`             | Float    | Nullable                                |                             |
 | `invoice_price`    | Float    | Nullable                                |                             |
 | `their_offer`      | Float    | Nullable                                |                             |
@@ -478,7 +481,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | -------------- | ---------------------- |
 | Model          | `claude-sonnet-4-6`    |
 | Max tokens     | 1024 (configurable)    |
-| Tool use       | 5 tool definitions     |
+| Tool use       | 6 tool definitions     |
 | Streaming      | Yes (messages.stream)  |
 | Image input    | Supported (URL-based)  |
 | Client library | `anthropic` Python SDK |
@@ -529,6 +532,7 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 | `MessageRole` | `user`, `assistant`, `system` |
 | `DealPhase` | `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
 | `ScoreStatus` | `red`, `yellow`, `green` |
+| `BuyerContext` | `researching`, `reviewing_deal`, `at_dealership` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 
 ### Frontend Error Handling

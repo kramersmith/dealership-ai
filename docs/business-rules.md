@@ -1,16 +1,52 @@
 # Business Rules
 
-Last updated: 2026-03
+Last updated: 2026-03-24
 
 ## Table of Contents
 
-1. [Deal Phases](#deal-phases)
-2. [Deal Scoring](#deal-scoring)
-3. [Chat Sessions](#chat-sessions)
-4. [AI Tool Definitions](#ai-tool-definitions)
-5. [Simulations](#simulations)
-6. [Authentication](#authentication)
-7. [Claude API](#claude-api)
+1. [Buyer Context](#buyer-context)
+2. [Deal Phases](#deal-phases)
+3. [Deal Scoring](#deal-scoring)
+4. [Chat Sessions](#chat-sessions)
+5. [AI Tool Definitions](#ai-tool-definitions)
+6. [Simulations](#simulations)
+7. [Authentication](#authentication)
+8. [Claude API](#claude-api)
+
+---
+
+## Buyer Context
+
+Every buyer session has a **buyer context** that describes the buyer's current situation. This context is set when the session is created (via the WelcomePrompts situation cards) and can be updated mid-conversation by the AI via the `update_buyer_context` tool.
+
+| Context | Description | System Prompt Tone |
+|---|---|---|
+| `researching` | Default. Buyer is researching from home, comparing options. | Educational and thorough |
+| `reviewing_deal` | Buyer has a quote or offer to analyze. | Analytical and direct — focus on numbers |
+| `at_dealership` | Buyer is physically at the dealership right now. | Brief and tactical — ready-to-use scripts, short responses |
+
+### Context-Driven Behavior
+
+Buyer context affects three frontend behaviors:
+
+1. **Dashboard panel ordering** — Widgets reorder to surface the most relevant information first:
+   - Researching: Vehicle, Numbers, Scorecard, Checklist
+   - Reviewing Deal: Numbers, Scorecard, Vehicle, Checklist
+   - At Dealership: Scorecard, Numbers, Vehicle, Checklist
+
+2. **Quick actions** — Action buttons change per context:
+   - Researching: "Compare Prices", "New or Used?", "What's My Budget?"
+   - Reviewing Deal: "Check This Price", "Hidden Fees?", "Should I Walk?"
+   - At Dealership: "What Do I Say?", "Should I Walk?", "They're Pressuring Me"
+
+3. **Greeting message** — When a session is created with a context, a hardcoded greeting message is shown immediately (no LLM call). The greeting sets expectations for the conversation.
+
+### Session Creation with Context
+
+When the buyer starts a new chat:
+1. WelcomePrompts shows three situation cards
+2. Tapping a card creates a session with that `buyer_context` and shows a context-specific greeting
+3. The buyer can skip the cards entirely by typing or uploading directly (defaults to `researching`)
 
 ---
 
@@ -92,7 +128,7 @@ Each message stores:
 
 ## AI Tool Definitions
 
-The AI has 5 tools that drive the frontend dashboard. Tools are called proactively by the AI during conversation -- the user does not need to request them.
+The AI has 6 tools that drive the frontend dashboard. Tools are called proactively by the AI during conversation -- the user does not need to request them.
 
 ### 1. `update_deal_numbers`
 
@@ -173,6 +209,18 @@ Updates the buyer's checklist of things to verify or do at the dealership.
 | `items` | array | Yes | Array of checklist items, each with `label` (string) and `done` (boolean) |
 
 **Trigger:** When the AI gives advice about what to check or do. Replaces the entire checklist on each call.
+
+### 6. `update_buyer_context`
+
+Updates the buyer's situational context when it changes mid-conversation. For example, if the buyer mentions they just arrived at the dealership, or that they received a quote to review.
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `buyer_context` | string | Yes | One of: `researching`, `reviewing_deal`, `at_dealership` |
+
+**Trigger:** When the buyer's situation changes (e.g., "I just got to the dealer", "I have a quote to look at"). Changing the context updates the dashboard panel ordering, quick actions, and system prompt preamble for subsequent messages.
 
 ### Tool Application Order
 

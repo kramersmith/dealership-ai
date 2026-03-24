@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03
+**Last updated:** 2026-03-24
 
 ---
 
@@ -109,8 +109,8 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 ### Journey 1: Pre-Visit Preparation (Buyer)
 
-1. Buyer opens the app and starts a new chat session.
-2. Tells the AI what vehicle they are considering, their budget, and financing situation.
+1. Buyer opens the app and sees three situation cards: "Researching", "Have a deal to review", "At the dealership". Selects "Researching" (or skips by typing directly).
+2. A context-appropriate greeting appears instantly (no LLM call). Tells the AI what vehicle they are considering, their budget, and financing situation.
 3. AI populates the vehicle card and sets target/walk-away prices on the dashboard.
 4. AI generates a pre-visit checklist: get pre-approval, check market value, review vehicle history, prepare questions.
 5. Buyer reviews the game plan and checklist. Dashboard shows deal phase as "Researching."
@@ -118,8 +118,8 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 ### Journey 2: At the Dealership (Buyer)
 
-1. Buyer arrives at the dealership and opens their existing session (or starts a new "I'm here now" session).
-2. Dashboard phase updates to "At Dealership." Checklist updates with on-site items.
+1. Buyer arrives at the dealership and opens their existing session (or starts a new session and selects "At the dealership" from the welcome prompts).
+2. Dashboard reorders to prioritize scorecard and numbers. Quick actions show dealership-specific options ("What Do I Say?", "Should I Walk?", "They're Pressuring Me"). Checklist updates with on-site items.
 3. Buyer chats with the AI as the deal progresses: "They're offering $34,000" or "The rate they quoted is 7.5%."
 4. AI automatically updates the numbers dashboard, scorecard (green/yellow/red), and checklist via tool calls.
 5. Buyer uses quick actions: "What do I say?", "Should I walk?", or "Analyze this photo."
@@ -178,12 +178,13 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 - Automatically calls tools to update the persistent dashboard when deal information changes
 - Maintains conversation history within a session (last 20 messages sent to Claude)
 - Voice input via device speech-to-text
+- Context-aware system prompt preambles adapt AI tone and advice style based on buyer context (researching, reviewing a deal, at the dealership)
 
 #### 4.2 Persistent Dashboard (Buyer)
 
 **Description:** A set of dashboard components that display the current state of the deal alongside the chat. Updated automatically by the AI through structured tool calls, so the buyer always sees their deal status without having to ask.
 
-**Implementation status:** Built. All dashboard components implemented with collapsible panel, responsive desktop sidebar layout at 768px+ breakpoints.
+**Implementation status:** Built. All dashboard components implemented with collapsible panel, responsive desktop sidebar layout at 768px+ breakpoints. Dashboard panel ordering and quick actions adapt to the buyer's situational context.
 
 **Components:**
 
@@ -195,7 +196,15 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 | Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality | `update_scorecard` |
 | Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |
 | Dealership Timer | Tracks time at the dealership; surfaces awareness cues about wait-time tactics | N/A (client-side) |
-| Quick Actions | Pre-built prompts: "Analyze this photo", "What do I say?", "Should I walk?" | N/A (sends chat message) |
+| Quick Actions | Context-aware prompts that change per buyer context (e.g., "Compare Prices" for researching, "Should I Walk?" for at dealership) | N/A (sends chat message) |
+
+**Dashboard panel ordering by buyer context:**
+
+| Context | Widget order (after timer) |
+|---------|---------------------------|
+| Researching | Vehicle, Numbers, Scorecard, Checklist |
+| Reviewing Deal | Numbers, Scorecard, Vehicle, Checklist |
+| At Dealership | Scorecard, Numbers, Vehicle, Checklist |
 
 #### 4.3 Session Management (Buyer)
 
@@ -204,10 +213,11 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 **Implementation status:** Built. Session list screen, new session creation, session switching, session deletion.
 
 **Key behaviors:**
-- Each session has its own deal state (dashboard, messages, vehicle)
+- Each session has its own deal state (dashboard, messages, vehicle) and buyer context
 - Sessions persist across app closures
 - Sessions can be linked to share context (e.g., researching the same vehicle at two dealers)
 - Title auto-generated or user-editable
+- Buyer context (researching, reviewing deal, at dealership) is set at session creation and can be updated mid-conversation by the AI via `update_buyer_context` tool
 
 #### 4.4 Deal Decoder (Buyer)
 
@@ -254,7 +264,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 **Implementation status:** Built. Auth, sessions, chat (SSE streaming), deals, and simulations routes all implemented.
 
 **Key details:**
-- Claude API integration with 5 tool definitions driving the dashboard
+- Claude API integration with 6 tool definitions driving the dashboard (including `update_buyer_context` for mid-conversation context changes)
 - SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `done` events
 - SQLite for local development, PostgreSQL via Docker for production
 - Alembic database migrations
@@ -322,7 +332,7 @@ These capabilities are explicitly excluded from the current MVP. They require ad
 |---------|-------------|
 | **Record and analyze mode** | Buyer records dealership conversation from their phone. AI processes audio to extract verbal price agreements, F&I disclosures, add-on pitches, pressure tactics, and contradictions with paperwork. Requires consent flow implementation. |
 | **Dealer app launch** | Training simulations available to dealer subscribers. Scenario library expansion. Team management for sales managers. |
-| **Onboarding flows** | Two entry points: "Prep mode" (night-before research flow) and "I'm here now" (fast-start at the dealership). |
+| **Onboarding flows** | ~~Two entry points: "Prep mode" and "I'm here now".~~ **Shipped in Phase 1** as buyer context selection (WelcomePrompts with three situation cards). |
 | **Post-deal features** | Contract review (photo upload of final contract, AI cross-checks against verbal agreements), post-purchase checklist, refinance timing reminders. |
 | **Analytics foundation** | Begin tracking deal outcomes, tactic effectiveness, and pattern recognition for AI improvement. |
 

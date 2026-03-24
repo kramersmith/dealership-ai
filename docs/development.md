@@ -194,6 +194,8 @@ Docker Compose runs:
 - **backend** on port 8001
 - **PostgreSQL** on port 5433 (avoids conflict with other projects)
 
+The frontend includes an `.npmrc` with `legacy-peer-deps=true` for Docker build compatibility.
+
 ### Seed Users
 
 When `ENV=development` (the default), the backend automatically seeds two test users on startup via the lifespan handler:

@@ -1,6 +1,6 @@
 # Site Map and User Flows
 
-**Last updated:** 2026-03
+**Last updated:** 2026-03-24
 
 ---
 
@@ -65,7 +65,7 @@ flowchart TD
 |---|---|:---:|:---:|---|---|
 | `/(auth)/login` | Login | -- | -- | None | Email/password login with quick sign-in buttons |
 | `/(auth)/register` | Register | -- | -- | None | Account creation with "Buying"/"Selling" role selection |
-| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist) |
+| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist); WelcomePrompts for new sessions with buyer context selection |
 | `/(app)/sessions` | Sessions | Yes | -- | RoleGuard(buyer) | List of past chat sessions; select to resume or delete |
 | `/(app)/simulations` | Simulations | -- | Yes | RoleGuard(dealer) | Browse AI training scenarios; start a new simulation |
 | `/(app)/sim/[id]` | Simulation Chat | -- | Yes | RoleGuard(dealer) | Live chat session for a selected training scenario |
@@ -89,7 +89,9 @@ flowchart TD
 
     LOGIN --> |Sign in| CHAT[Chat Screen]
 
-    CHAT --> |Auto-creates session\nif none active| AI[Send Message to AI]
+    CHAT --> |No active session| WELCOME[WelcomePrompts\n3 situation cards]
+    WELCOME --> |Tap card or type directly| SESSION_CREATE[Create Session\nwith buyer_context]
+    SESSION_CREATE --> |Hardcoded greeting| AI[Send Message to AI]
     AI --> |AI responds via SSE| STREAM[Stream Response]
     STREAM --> |text events| BUBBLES[Chat Bubbles Update]
     STREAM --> |tool_result events| DASHBOARD[Dashboard Updates]

@@ -1,3 +1,7 @@
+// ─── Buyer Context ───
+
+export type BuyerContext = 'researching' | 'reviewing_deal' | 'at_dealership'
+
 // ─── Deal Phases ───
 
 export type DealPhase =
@@ -60,6 +64,7 @@ export interface ChecklistItem {
 export interface DealState {
   sessionId: string
   phase: DealPhase
+  buyerContext: BuyerContext
   numbers: DealNumbers
   vehicle: Vehicle | null
   scorecard: Scorecard
@@ -76,6 +81,7 @@ export interface ToolCall {
     | 'update_scorecard'
     | 'set_vehicle'
     | 'update_checklist'
+    | 'update_buyer_context'
   args: Record<string, any>
 }
 
@@ -128,7 +134,11 @@ export interface ApiService {
 
   // Sessions
   getSessions(): Promise<Session[]>
-  createSession(type: 'buyer_chat' | 'dealer_sim', title?: string): Promise<Session>
+  createSession(
+    type: 'buyer_chat' | 'dealer_sim',
+    title?: string,
+    buyerContext?: BuyerContext
+  ): Promise<Session>
   linkSessions(sessionId: string, linkedIds: string[]): Promise<void>
   deleteSession(sessionId: string): Promise<void>
 

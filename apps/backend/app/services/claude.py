@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 import anthropic
 
 from app.core.config import settings
-from app.models.enums import DealPhase, ScoreStatus
+from app.models.enums import BuyerContext, DealPhase, ScoreStatus
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,45 @@ DEAL_TOOLS = [
             "required": ["items"],
         },
     },
+    {
+        "name": "update_buyer_context",
+        "description": (
+            "Update the buyer's situational context when it changes. For example, if the buyer "
+            "mentions they just arrived at the dealership, or that they received a quote to review."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "buyer_context": {
+                    "type": "string",
+                    "enum": [c.value for c in BuyerContext],
+                    "description": (
+                        "researching: buyer is researching from home. "
+                        "reviewing_deal: buyer has a quote or offer to analyze. "
+                        "at_dealership: buyer is physically at the dealership right now."
+                    ),
+                },
+            },
+            "required": ["buyer_context"],
+        },
+    },
 ]
+
+CONTEXT_PREAMBLES = {
+    BuyerContext.RESEARCHING: (
+        "The buyer is researching from home. Be educational and thorough. "
+        "Help them compare options, understand fair pricing, and prepare for the dealership."
+    ),
+    BuyerContext.REVIEWING_DEAL: (
+        "The buyer has a deal or quote to review. Be analytical and direct. "
+        "Focus on the numbers — what's fair, what's hidden, what to push back on."
+    ),
+    BuyerContext.AT_DEALERSHIP: (
+        "The buyer is at the dealership RIGHT NOW. Be brief and tactical. "
+        "Give ready-to-use scripts they can say word-for-word. Short responses only — "
+        "they may be glancing at their phone. Tell them exactly what to say and when to walk away."
+    ),
+}
 
 SYSTEM_PROMPT = """You are a car buying advisor helping a buyer get the best deal at a dealership. You are direct, concise, and tactical — not verbose.
 
@@ -159,6 +197,7 @@ IMPORTANT — Tool usage:
 - Whenever the user mentions a vehicle (year, make, model), call set_vehicle
 - Whenever financial numbers are discussed (price, offer, APR, payment), call update_deal_numbers
 - When the conversation indicates a phase change (arriving at dealer, test driving, negotiating, in F&I, signing), call update_deal_phase
+- When the buyer's situation changes (e.g., they arrive at the dealership, or mention having a quote), call update_buyer_context
 - After assessing the deal quality, call update_scorecard with red/yellow/green ratings
 - When you give advice about what to check/do, call update_checklist with relevant items
 - Call tools proactively — don't wait to be asked
@@ -173,6 +212,14 @@ Keep responses concise — car advice doesn't need essays. Use short paragraphs 
 def build_system_prompt(
     deal_state_dict: dict | None, linked_messages: list[dict] | None = None
 ) -> str:
+    # Inject buyer context preamble
+    context_preamble = ""
+    if deal_state_dict:
+        buyer_context = deal_state_dict.get("buyer_context", BuyerContext.RESEARCHING)
+        preamble = CONTEXT_PREAMBLES.get(BuyerContext(buyer_context))
+        if preamble:
+            context_preamble = f"\nBuyer situation: {preamble}"
+
     deal_context = ""
     if deal_state_dict:
         deal_context = f"\nCurrent deal state:\n```json\n{json.dumps(deal_state_dict, indent=2, default=str)}\n```"
@@ -185,7 +232,7 @@ def build_system_prompt(
         linked_context = "\nPrevious conversation context:\n" + "\n".join(summaries)
 
     return SYSTEM_PROMPT.format(
-        deal_state_context=deal_context,
+        deal_state_context=context_preamble + deal_context,
         linked_context=linked_context,
     )
 
