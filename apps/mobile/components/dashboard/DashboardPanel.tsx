@@ -13,10 +13,12 @@ import { DealershipTimer } from './DealershipTimer'
 interface DashboardPanelProps {
   dealState: DealState
   onToggleChecklist: (index: number) => void
+  mode?: 'mobile' | 'sidebar'
 }
 
-export function DashboardPanel({ dealState, onToggleChecklist }: DashboardPanelProps) {
+export function DashboardPanel({ dealState, onToggleChecklist, mode = 'mobile' }: DashboardPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true)
+  const isSidebar = mode === 'sidebar'
 
   const toggle = useCallback(() => {
     setIsExpanded((prev) => !prev)
@@ -26,6 +28,47 @@ export function DashboardPanel({ dealState, onToggleChecklist }: DashboardPanelP
   const hasScorecard = Object.values(dealState.scorecard).some((v) => v !== null)
   const hasContent = dealState.vehicle || hasNumbers || hasScorecard || dealState.checklist.length > 0 || dealState.timerStartedAt
 
+  const dashboardWidgets = (
+    <YStack paddingHorizontal="$4" gap="$3" paddingVertical="$3">
+      {dealState.timerStartedAt && (
+        <DealershipTimer startedAt={dealState.timerStartedAt} />
+      )}
+
+      {dealState.vehicle && (
+        <VehicleCard vehicle={dealState.vehicle} />
+      )}
+
+      {hasNumbers && (
+        <NumbersDashboard numbers={dealState.numbers} />
+      )}
+
+      {hasScorecard && (
+        <NegotiationScorecard
+          scorecard={dealState.scorecard}
+          numbers={dealState.numbers}
+        />
+      )}
+
+      <Checklist
+        items={dealState.checklist}
+        onToggle={onToggleChecklist}
+      />
+    </YStack>
+  )
+
+  // Sidebar mode (desktop): always expanded, no toggle, no max height
+  if (isSidebar) {
+    return (
+      <YStack flex={1}>
+        <YStack paddingHorizontal="$4" paddingTop="$3" paddingBottom="$2">
+          <DealPhaseIndicator currentPhase={dealState.phase} />
+        </YStack>
+        {dashboardWidgets}
+      </YStack>
+    )
+  }
+
+  // Mobile mode: collapsible with max height
   return (
     <YStack>
       {/* Phase indicator always visible */}
@@ -63,31 +106,7 @@ export function DashboardPanel({ dealState, onToggleChecklist }: DashboardPanelP
           style={{ maxHeight: 400 }}
           showsVerticalScrollIndicator={false}
         >
-          <YStack paddingHorizontal="$4" gap="$3" paddingBottom="$2">
-            {dealState.timerStartedAt && (
-              <DealershipTimer startedAt={dealState.timerStartedAt} />
-            )}
-
-            {dealState.vehicle && (
-              <VehicleCard vehicle={dealState.vehicle} />
-            )}
-
-            {hasNumbers && (
-              <NumbersDashboard numbers={dealState.numbers} />
-            )}
-
-            {hasScorecard && (
-              <NegotiationScorecard
-                scorecard={dealState.scorecard}
-                numbers={dealState.numbers}
-              />
-            )}
-
-            <Checklist
-              items={dealState.checklist}
-              onToggle={onToggleChecklist}
-            />
-          </YStack>
+          {dashboardWidgets}
         </ScrollView>
       )}
     </YStack>

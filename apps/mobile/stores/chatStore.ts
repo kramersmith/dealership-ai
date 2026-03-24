@@ -105,9 +105,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       // Process tool calls → update dashboard
       if (assistantMessage.toolCalls) {
-        const dealStore = useDealStore.getState()
         for (const toolCall of assistantMessage.toolCalls) {
-          dealStore.applyToolCall(toolCall)
+          useDealStore.getState().applyToolCall(toolCall)
         }
       }
 
