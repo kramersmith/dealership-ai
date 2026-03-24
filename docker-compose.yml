@@ -1,4 +1,17 @@
 services:
+  frontend:
+    build:
+      context: ./apps/mobile
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./apps/mobile:/app
+      - /app/node_modules
+    environment:
+      - EXPO_USE_METRO_WORKSPACE_ROOT=1
+    depends_on:
+      - backend
+
   backend:
     build:
       context: ./apps/backend
@@ -9,7 +22,8 @@ services:
     env_file:
       - ./apps/backend/.env
     environment:
-      - DATABASE_URL=postgresql+psycopg://dealership:dealership@db:5433/dealership
+      - DATABASE_URL=postgresql+psycopg://dealership:dealership@db:5432/dealership
+      # SECURITY: Override SECRET_KEY with a strong random value for production
       - SECRET_KEY=change-me
       - CORS_ORIGINS=["http://localhost:8081","http://localhost:19006"]
     command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
@@ -20,6 +34,7 @@ services:
     image: postgres:15
     environment:
       POSTGRES_USER: dealership
+      # SECURITY: Override with a strong password for production
       POSTGRES_PASSWORD: dealership
       POSTGRES_DB: dealership
     ports:

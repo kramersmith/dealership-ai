@@ -3,13 +3,16 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_db
 from app.core.security import create_access_token, hash_password, verify_password
+from app.models.enums import UserRole
 from app.models.user import User
 from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse
 
 router = APIRouter()
 
 
-@router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED
+)
 def signup(body: SignupRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
@@ -26,7 +29,7 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
     db.refresh(user)
 
     token = create_access_token(data={"sub": user.id})
-    return TokenResponse(access_token=token, user_id=user.id, role=user.role)
+    return TokenResponse(access_token=token, user_id=user.id, role=UserRole(user.role))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -36,4 +39,4 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token(data={"sub": user.id})
-    return TokenResponse(access_token=token, user_id=user.id, role=user.role)
+    return TokenResponse(access_token=token, user_id=user.id, role=UserRole(user.role))

@@ -1,24 +1,46 @@
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Import all models so Base.metadata knows about them
+import app.models as _models  # noqa: F401
 from app.core.config import settings
 from app.db.base import Base
-from app.db.session import engine
+from app.db.seed import seed_users
+from app.db.session import SessionLocal, engine
 from app.routes import api_router
-
-# Import all models so Base.metadata knows about them
-import app.models  # noqa: F401
 
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    """Create tables and seed dev data on startup.
+
+    create_all is safe against existing tables (no-ops if they exist).
+    Alembic migrations should be used for schema changes in production.
+    """
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables ensured")
+
+    db = SessionLocal()
+    try:
+        seed_users(db)
+    finally:
+        db.close()
+
+    yield
 
 
 def create_app() -> FastAPI:
     application = FastAPI(
         title="Dealership AI",
         version="0.1.0",
+        lifespan=lifespan,
         docs_url=f"{settings.API_PREFIX}/docs",
         openapi_url=f"{settings.API_PREFIX}/openapi.json",
     )
@@ -44,8 +66,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
-# Create tables for SQLite dev (Alembic handles this in production)
-if settings.DATABASE_URL.startswith("sqlite"):
-    Base.metadata.create_all(bind=engine)
-    logger.info("SQLite tables created")

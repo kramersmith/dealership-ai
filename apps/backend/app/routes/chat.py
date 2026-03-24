@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -7,6 +8,7 @@ from starlette.responses import StreamingResponse
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
+from app.models.enums import MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
@@ -22,9 +24,17 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
     """Apply a tool call result to the deal state in-place."""
     if tool_name == "update_deal_numbers":
         for field in [
-            "msrp", "invoice_price", "their_offer", "your_target", "walk_away_price",
-            "current_offer", "monthly_payment", "apr", "loan_term_months",
-            "down_payment", "trade_in_value",
+            "msrp",
+            "invoice_price",
+            "their_offer",
+            "your_target",
+            "walk_away_price",
+            "current_offer",
+            "monthly_payment",
+            "apr",
+            "loan_term_months",
+            "down_payment",
+            "trade_in_value",
         ]:
             if field in tool_data:
                 setattr(deal_state, field, tool_data[field])
@@ -34,14 +44,24 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
             deal_state.phase = tool_data["phase"]
 
     elif tool_name == "update_scorecard":
-        for field in ["score_price", "score_financing", "score_trade_in", "score_fees", "score_overall"]:
+        for field in [
+            "score_price",
+            "score_financing",
+            "score_trade_in",
+            "score_fees",
+            "score_overall",
+        ]:
             if field in tool_data:
                 setattr(deal_state, field, tool_data[field])
 
     elif tool_name == "set_vehicle":
         field_map = {
-            "year": "vehicle_year", "make": "vehicle_make", "model": "vehicle_model",
-            "trim": "vehicle_trim", "vin": "vehicle_vin", "mileage": "vehicle_mileage",
+            "year": "vehicle_year",
+            "make": "vehicle_make",
+            "model": "vehicle_model",
+            "trim": "vehicle_trim",
+            "vin": "vehicle_vin",
+            "mileage": "vehicle_mileage",
             "color": "vehicle_color",
         }
         for src, dst in field_map.items():
@@ -58,21 +78,32 @@ def _deal_state_to_dict(ds: DealState) -> dict:
     return {
         "phase": ds.phase,
         "numbers": {
-            "msrp": ds.msrp, "invoice_price": ds.invoice_price,
-            "their_offer": ds.their_offer, "your_target": ds.your_target,
-            "walk_away_price": ds.walk_away_price, "current_offer": ds.current_offer,
-            "monthly_payment": ds.monthly_payment, "apr": ds.apr,
-            "loan_term_months": ds.loan_term_months, "down_payment": ds.down_payment,
+            "msrp": ds.msrp,
+            "invoice_price": ds.invoice_price,
+            "their_offer": ds.their_offer,
+            "your_target": ds.your_target,
+            "walk_away_price": ds.walk_away_price,
+            "current_offer": ds.current_offer,
+            "monthly_payment": ds.monthly_payment,
+            "apr": ds.apr,
+            "loan_term_months": ds.loan_term_months,
+            "down_payment": ds.down_payment,
             "trade_in_value": ds.trade_in_value,
         },
         "vehicle": {
-            "year": ds.vehicle_year, "make": ds.vehicle_make,
-            "model": ds.vehicle_model, "trim": ds.vehicle_trim,
+            "year": ds.vehicle_year,
+            "make": ds.vehicle_make,
+            "model": ds.vehicle_model,
+            "trim": ds.vehicle_trim,
             "mileage": ds.vehicle_mileage,
-        } if ds.vehicle_make else None,
+        }
+        if ds.vehicle_make
+        else None,
         "scorecard": {
-            "price": ds.score_price, "financing": ds.score_financing,
-            "trade_in": ds.score_trade_in, "fees": ds.score_fees,
+            "price": ds.score_price,
+            "financing": ds.score_financing,
+            "trade_in": ds.score_trade_in,
+            "fees": ds.score_fees,
             "overall": ds.score_overall,
         },
         "checklist": ds.checklist or [],
@@ -98,7 +129,7 @@ async def send_message(
     # Save user message
     user_msg = Message(
         session_id=session_id,
-        role="user",
+        role=MessageRole.USER,
         content=body.content,
         image_url=body.image_url,
     )
@@ -150,7 +181,7 @@ async def send_message(
         # Persist assistant message
         assistant_msg = Message(
             session_id=session_id,
-            role="assistant",
+            role=MessageRole.ASSISTANT,
             content=full_text,
             tool_calls=all_tool_calls if all_tool_calls else None,
         )
@@ -162,7 +193,6 @@ async def send_message(
                 _apply_tool_call(deal_state, tc["name"], tc["args"])
 
         # Update session timestamp
-        from datetime import datetime, timezone
         session.updated_at = datetime.now(timezone.utc)
 
         db.commit()

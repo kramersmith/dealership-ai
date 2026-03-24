@@ -9,6 +9,7 @@ interface ChatState {
   sessions: Session[]
   isLoading: boolean
   isSending: boolean
+  sendError: string | null
 
   loadSessions: () => Promise<void>
   loadMessages: (sessionId: string) => Promise<void>
@@ -16,6 +17,7 @@ interface ChatState {
   createSession: (type: 'buyer_chat' | 'dealer_sim', title?: string) => Promise<Session>
   deleteSession: (sessionId: string) => Promise<void>
   sendMessage: (content: string, imageUri?: string) => Promise<void>
+  clearSendError: () => void
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -24,13 +26,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessions: [],
   isLoading: false,
   isSending: false,
+  sendError: null,
 
   loadSessions: async () => {
     set({ isLoading: true })
     try {
       const sessions = await api.getSessions()
       set({ sessions, isLoading: false })
-    } catch {
+    } catch (err) {
+      console.error('[chatStore] loadSessions failed:', err instanceof Error ? err.message : err)
       set({ isLoading: false })
     }
   },
@@ -40,7 +44,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const messages = await api.getMessages(sessionId)
       set({ messages, isLoading: false })
-    } catch {
+    } catch (err) {
+      console.error('[chatStore] loadMessages failed:', err instanceof Error ? err.message : err)
       set({ isLoading: false })
     }
   },
@@ -53,7 +58,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         useDealStore.getState().loadDealState(sessionId),
       ])
       set({ messages, isLoading: false })
-    } catch {
+    } catch (err) {
+      console.error('[chatStore] setActiveSession failed:', err instanceof Error ? err.message : err)
       set({ isLoading: false })
     }
   },
@@ -91,10 +97,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       imageUri,
       createdAt: new Date().toISOString(),
     }
-    set((state) => ({ messages: [...state.messages, userMessage], isSending: true }))
+    set((state) => ({ messages: [...state.messages, userMessage], isSending: true, sendError: null }))
 
     try {
-      // Get assistant response (mock returns the message with tool calls)
+      // Get assistant response
       const assistantMessage = await api.sendMessage(activeSessionId, content, imageUri)
 
       // Add assistant message to chat
@@ -103,7 +109,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isSending: false,
       }))
 
-      // Process tool calls → update dashboard
+      // Process tool calls -> update dashboard
       if (assistantMessage.toolCalls) {
         for (const toolCall of assistantMessage.toolCalls) {
           useDealStore.getState().applyToolCall(toolCall)
@@ -112,8 +118,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       // Refresh sessions list to update preview
       get().loadSessions()
-    } catch {
-      set({ isSending: false })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to send message'
+      console.error('[chatStore] sendMessage failed:', message)
+      // Remove the optimistic user message on failure
+      set((state) => ({
+        messages: state.messages.filter((msg) => msg.id !== userMessage.id),
+        isSending: false,
+        sendError: message,
+      }))
     }
+  },
+
+  clearSendError: () => {
+    set({ sendError: null })
   },
 }))

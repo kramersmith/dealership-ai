@@ -1,7 +1,7 @@
 # Dealership AI MVP — Technical Architecture Plan
 
 ## Context
-Greenfield build of two AI-powered smartphone apps (buyer + dealer) for the car buying experience. Solo developer, tight budget, targeting iOS/Android/web. Stack: React Native (Expo) → FastAPI → Claude API → PostgreSQL (Supabase).
+Greenfield build of two AI-powered smartphone apps (buyer + dealer) for the car buying experience. Solo developer, tight budget, targeting iOS/Android/web. Stack: React Native (Expo) → FastAPI → Claude API (claude-sonnet-4-6) → PostgreSQL.
 
 The key architectural challenge: the persistent UI (dashboard, scorecard, checklist, vehicle card) must update automatically from the LLM conversation. When a user says "they're offering $34k", the numbers dashboard updates live.
 
@@ -13,78 +13,100 @@ The key architectural challenge: the persistent UI (dashboard, scorecard, checkl
 
 ```
 dealership-ai/
+├── Makefile                     # Unified dev commands
+├── docker-compose.yml           # Frontend + backend + PostgreSQL
+├── CLAUDE.md                    # AI assistant guidance
 ├── apps/
-│   └── mobile/                  # Expo app (iOS + Android + Web)
-│       ├── app/                 # Expo Router file-based routing
-│       │   ├── (buyer)/         # Buyer tab group
-│       │   │   ├── chat.tsx     # Main chat screen
-│       │   │   ├── sessions.tsx # Session list
-│       │   │   └── settings.tsx
-│       │   ├── (dealer)/        # Dealer tab group
-│       │   │   ├── simulations.tsx
-│       │   │   └── sim/[id].tsx
-│       │   ├── (auth)/
-│       │   │   ├── login.tsx
-│       │   │   └── register.tsx
-│       │   └── _layout.tsx      # Root layout (auth gate)
-│       ├── components/
-│       │   ├── chat/            # ChatBubble, ChatInput, VoiceButton
-│       │   ├── dashboard/       # DealPhase, NumbersDash, Checklist,
-│       │   │                    # VehicleCard, Scorecard, Timer
-│       │   └── shared/          # Button, Card, Modal
-│       ├── hooks/
-│       │   ├── useChat.ts       # SSE streaming + state
-│       │   ├── useDashboard.ts
-│       │   ├── useVoice.ts      # Speech-to-text wrapper
-│       │   └── useSession.ts
-│       ├── stores/
-│       │   └── chatStore.ts     # Zustand store
-│       └── lib/
-│           ├── supabase.ts
-│           ├── api.ts
-│           └── types.ts
+│   ├── mobile/                  # Expo app (iOS + Android + Web)
+│   │   ├── app/                 # Expo Router file-based routing
+│   │   │   ├── (buyer)/         # Buyer tab group (AuthGuard protected)
+│   │   │   │   ├── _layout.tsx  # AuthGuard wrapper for buyer routes
+│   │   │   │   ├── chat.tsx     # Main chat screen
+│   │   │   │   ├── sessions.tsx # Session list
+│   │   │   │   └── settings.tsx
+│   │   │   ├── (dealer)/        # Dealer tab group (AuthGuard protected)
+│   │   │   │   ├── _layout.tsx  # AuthGuard wrapper for dealer routes
+│   │   │   │   ├── simulations.tsx
+│   │   │   │   └── sim/[id].tsx
+│   │   │   ├── (auth)/
+│   │   │   │   ├── login.tsx    # Login with quick sign-in buttons (__DEV__ only)
+│   │   │   │   └── register.tsx
+│   │   │   └── _layout.tsx      # Root layout
+│   │   ├── components/
+│   │   │   ├── chat/            # ChatBubble, ChatInput, VoiceButton
+│   │   │   ├── dashboard/       # DealPhase, NumbersDash, Checklist,
+│   │   │   │                    # VehicleCard, Scorecard, Timer
+│   │   │   └── shared/          # Button, Card, Modal, AuthGuard
+│   │   ├── hooks/
+│   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
+│   │   │   └── useScreenWidth.ts # Responsive breakpoint hook
+│   │   ├── stores/              # Zustand: auth, chat, deal, simulation, theme
+│   │   └── lib/
+│   │       ├── apiClient.ts     # HTTP client for FastAPI backend
+│   │       ├── colors.ts        # Centralized color palette
+│   │       └── types.ts
+│   │
+│   └── backend/                 # FastAPI backend
+│       ├── app/
+│       │   ├── main.py          # FastAPI app with lifespan handler
+│       │   ├── core/            # Config, security (JWT + bcrypt), deps
+│       │   ├── db/              # Session, base, seed users
+│       │   ├── models/          # SQLAlchemy ORM + enums (StrEnum)
+│       │   ├── schemas/         # Pydantic request/response
+│       │   ├── routes/          # auth, chat, sessions, deals, simulations
+│       │   └── services/
+│       │       ├── claude.py    # Claude API + tool definitions + SSE streaming
+│       │       └── simulation.py # Dealer training AI logic
+│       ├── alembic/             # DB migrations
+│       └── tests/               # Including test_seed.py
 │
-├── packages/
-│   └── shared/                  # Shared types/constants
-│
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app
-│   │   ├── config.py            # Settings
-│   │   ├── deps.py              # Dependency injection
-│   │   ├── models/              # SQLAlchemy: user, session, message, deal_state, simulation
-│   │   ├── schemas/             # Pydantic request/response
-│   │   ├── routes/              # auth, chat, sessions, deals, simulations
-│   │   ├── services/
-│   │   │   ├── claude.py        # Claude API + tool definitions + SSE streaming
-│   │   │   ├── deal_analyzer.py # Photo → deal sheet parsing
-│   │   │   └── simulation.py    # Dealer training AI logic
-│   │   └── claude_tools/        # Tool schemas for Claude
-│   ├── alembic/                 # DB migrations
-│   └── tests/
-│
-└── .env.example
+├── docs/                        # All documentation
+└── .claude/skills/              # Claude Code skills (pre-commit, update-docs)
 ```
 
 ---
 
-## Database Schema (PostgreSQL via Supabase)
+## Database Schema (SQLite dev / PostgreSQL prod)
 
-**profiles** — extends Supabase auth.users (id, role [buyer/dealer], display_name)
+**users** — (id, email, hashed_password, role [UserRole enum: buyer/dealer], display_name, created_at)
 
-**sessions** — (id, user_id, title, session_type [buyer_chat/dealer_sim], linked_session_ids UUID[], timestamps)
+**chat_sessions** — (id, user_id, title, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps)
 
-**messages** — (id, session_id, role [user/assistant/system], content, image_url, created_at)
+**messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 
 **deal_states** — one mutable row per session, the persistent UI state:
-- Phase: research → initial_contact → test_drive → negotiation → financing → closing
-- Numbers: msrp, invoice_price, their_offer, your_target, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
+- Phase: DealPhase enum (research → initial_contact → test_drive → negotiation → financing → closing)
+- Numbers: msrp, invoice_price, their_offer, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
 - Vehicle: year, make, model, trim, vin, mileage, color
-- Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (red/yellow/green)
-- Checklist: JSONB array of {label, done}
+- Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (ScoreStatus enum: red/yellow/green)
+- Checklist: JSON array of {label, done}
 - Timer: timer_started_at
 
-**simulations** — (id, session_id, scenario_type, difficulty, ai_persona JSONB, score, feedback, completed_at)
+**simulations** — (id, session_id, scenario_type, difficulty [Difficulty enum: easy/medium/hard], ai_persona JSON, score, feedback, completed_at)
+
+### Backend Enums (`app/models/enums.py`)
+
+All domain values use Python `StrEnum` for type safety:
+
+| Enum | Values |
+|------|--------|
+| `UserRole` | `buyer`, `dealer` |
+| `SessionType` | `buyer_chat`, `dealer_sim` |
+| `MessageRole` | `user`, `assistant`, `system` |
+| `DealPhase` | `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
+| `ScoreStatus` | `red`, `yellow`, `green` |
+| `Difficulty` | `easy`, `medium`, `hard` |
+
+### Seed Users (Development Only)
+
+On startup (via lifespan handler), when `ENV=development`, the backend seeds two test users:
+
+| Email | Password | Role |
+|-------|----------|------|
+| `buyer@test.com` | `password` | buyer |
+| `dealer@test.com` | `password` | dealer |
+
+These are used with the quick sign-in buttons on the login screen (visible only in `__DEV__` mode).
 
 ---
 
@@ -126,9 +148,10 @@ POST   /simulations/{id}/complete     # End + score
 3. Claude streams text + tool_use blocks
 4. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
 5. Backend persists messages and executes tool calls (UPDATE deal_states)
-6. Frontend `useChat` hook dispatches tool results to Zustand store → dashboard components re-render
+6. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render
+7. On send failure, optimistic messages are rolled back from the chat store
 
-**Photo analysis:** Client uploads to Supabase Storage → sends URL to backend → Claude vision extracts all numbers/details → calls multiple tools → dashboard populates in one shot.
+**Photo analysis:** Client uploads image → sends URL to backend → Claude vision extracts all numbers/details → calls multiple tools → dashboard populates in one shot.
 
 **Dealer simulations:** Same chat infrastructure, different system prompt (Claude plays a customer persona with hidden budget/goals). Uses a `score_salesperson` tool at completion.
 
@@ -139,7 +162,7 @@ POST   /simulations/{id}/complete     # End + score
 - **SSE over WebSockets** — simpler, maps directly to Claude's streaming API, no connection upgrade issues on Railway/Fly
 - **Zustand over Redux** — minimal boilerplate, perfect for this scope
 - **Single mutable deal_states row over event log** — simpler reads for MVP, can add history table later
-- **Claude Sonnet over Opus** — balances cost and quality for MVP, with max_tokens: 1024 and history truncated to last 20 messages
+- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — balances cost and quality for MVP, with max_tokens: 1024 and history truncated to last 20 messages
 - **Cost control** — track token usage per user, enforce daily limits
 
 ---
@@ -148,11 +171,11 @@ POST   /simulations/{id}/complete     # End + score
 
 | Phase | What | Days |
 |-------|------|------|
-| 0 | Project scaffolding (Expo, FastAPI, Supabase, env) | 1 |
+| 0 | Project scaffolding (Expo, FastAPI, PostgreSQL, env) | 1 |
 | 1 | Auth + session CRUD | 2-3 |
 | 2 | **Core chat loop** — text chat, Claude with tools, SSE streaming, NumbersDashboard + DealPhaseIndicator updating live | 4-7 |
 | 3 | Remaining dashboard UI — scorecard, vehicle card, checklist, timer, quick actions, session linking | 8-10 |
-| 4 | Photo upload (Supabase Storage + Claude vision) + voice input (expo-speech-recognition) | 11-13 |
+| 4 | Photo upload (Claude vision) + voice input (expo-speech-recognition) | 11-13 |
 | 5 | Dealer training simulations | 14-16 |
 | 6 | Polish + deploy (error handling, rate limiting, Railway, EAS builds, Vercel) | 17-20 |
 
@@ -162,7 +185,7 @@ POST   /simulations/{id}/complete     # End + score
 
 ## Verification
 
-- **Phase 0:** Expo app loads on simulator, FastAPI returns 200, Supabase connection succeeds
+- **Phase 0:** Expo app loads on simulator, FastAPI returns 200, database connection succeeds
 - **Phase 2:** Send a chat message → see streamed response + dashboard numbers update. This is the core proof of concept.
 - **Phase 4:** Take a photo of a deal sheet → see vehicle card, numbers, scorecard, and checklist all populate
 - **Phase 5:** Start a dealer simulation → have a back-and-forth with AI customer → get scored

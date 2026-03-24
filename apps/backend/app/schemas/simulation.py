@@ -1,11 +1,13 @@
 from pydantic import BaseModel
 
+from app.models.enums import Difficulty
+
 
 class ScenarioResponse(BaseModel):
     id: str
     title: str
     description: str
-    difficulty: str
+    difficulty: Difficulty
     ai_persona: dict
 
 

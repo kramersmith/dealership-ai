@@ -27,6 +27,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json()
 }
 
+function mapSession(s: any): Session {
+  return {
+    id: s.id,
+    title: s.title,
+    sessionType: s.session_type,
+    linkedSessionIds: s.linked_session_ids || [],
+    lastMessagePreview: '',
+    updatedAt: s.updated_at,
+    createdAt: s.created_at,
+  }
+}
+
 class ApiClient implements ApiService {
   // ─── Auth ───
 
@@ -52,15 +64,7 @@ class ApiClient implements ApiService {
 
   async getSessions(): Promise<Session[]> {
     const sessions = await request<any[]>('/sessions')
-    return sessions.map((s) => ({
-      id: s.id,
-      title: s.title,
-      sessionType: s.session_type,
-      linkedSessionIds: s.linked_session_ids || [],
-      lastMessagePreview: '',
-      updatedAt: s.updated_at,
-      createdAt: s.created_at,
-    }))
+    return sessions.map(mapSession)
   }
 
   async createSession(type: 'buyer_chat' | 'dealer_sim', title?: string): Promise<Session> {
@@ -68,15 +72,7 @@ class ApiClient implements ApiService {
       method: 'POST',
       body: JSON.stringify({ session_type: type, title }),
     })
-    return {
-      id: s.id,
-      title: s.title,
-      sessionType: s.session_type,
-      linkedSessionIds: s.linked_session_ids || [],
-      lastMessagePreview: '',
-      updatedAt: s.updated_at,
-      createdAt: s.created_at,
-    }
+    return mapSession(s)
   }
 
   async linkSessions(sessionId: string, linkedIds: string[]): Promise<void> {
@@ -87,10 +83,14 @@ class ApiClient implements ApiService {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await fetch(`${API_BASE}/sessions/${sessionId}`, {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
       method: 'DELETE',
       headers: headers(false),
     })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`API ${res.status}: ${text}`)
+    }
   }
 
   // ─── Chat ───
@@ -127,6 +127,7 @@ class ApiClient implements ApiService {
     let fullText = ''
     let toolCalls: ToolCall[] = []
     let buffer = ''
+    let currentEvent = ''
 
     if (reader) {
       while (true) {
@@ -138,24 +139,21 @@ class ApiClient implements ApiService {
         buffer = lines.pop() || ''
 
         for (const line of lines) {
-          if (line.startsWith('event: text')) {
-            // Next line is data
-          } else if (line.startsWith('data: ') && !line.includes('"tool"')) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ')) {
+            const payload = line.slice(6)
             try {
-              const data = JSON.parse(line.slice(6))
-              if (data.chunk) fullText += data.chunk
-            } catch {}
-          } else if (line.startsWith('event: tool_result')) {
-            // Next data line has tool info
-          } else if (line.startsWith('data: ') && line.includes('"tool"')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.tool) {
+              const data = JSON.parse(payload)
+              if (currentEvent === 'text' && data.chunk) {
+                fullText += data.chunk
+              } else if (currentEvent === 'tool_result' && data.tool) {
                 toolCalls.push({ name: data.tool as ToolCall['name'], args: data.data })
               }
-            } catch {}
-          } else if (line.startsWith('event: done')) {
-            // Stream complete
+            } catch {
+              // Skip malformed SSE data lines
+            }
+            currentEvent = ''
           }
         }
       }

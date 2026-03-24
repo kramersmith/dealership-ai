@@ -80,14 +80,14 @@ make dev-frontend
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | JWT token expiry (8 hours) |
 | `CORS_ORIGINS` | `["http://localhost:8081"]` | Allowed CORS origins |
 | `ANTHROPIC_API_KEY` | `` | Claude API key (required for chat) |
-| `CLAUDE_MODEL` | `claude-sonnet-4-5-20250514` | Claude model to use |
+| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Claude model to use |
 | `CLAUDE_MAX_TOKENS` | `1024` | Max tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages to include in context |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 ### Frontend
 
-The frontend currently uses a mock API layer. When connecting to the real backend, set the API base URL in the `realApi.ts` service.
+The frontend connects directly to the FastAPI backend. The API base URL is configured in `lib/apiClient.ts`.
 
 ## 5. Development Commands
 
@@ -96,7 +96,7 @@ All commands run from the repo root via Make.
 ### Development Servers
 - `make dev-frontend` — Expo dev server (web)
 - `make dev-backend` — FastAPI with reload (port 8001)
-- `make docker-up` — Full stack: backend + PostgreSQL
+- `make docker-up` — Full stack: frontend + backend + PostgreSQL
 
 ### Install
 - `make install-frontend` — npm install
@@ -176,7 +176,7 @@ make typecheck-backend # MyPy type checking
 ## 9. Docker Development
 
 ```bash
-# Start PostgreSQL + backend
+# Start frontend + backend + PostgreSQL
 make docker-up
 
 # Follow logs
@@ -190,5 +190,17 @@ make docker-clean
 ```
 
 Docker Compose runs:
+- **frontend** on port 8081 (Expo web)
 - **backend** on port 8001
 - **PostgreSQL** on port 5433 (avoids conflict with other projects)
+
+### Seed Users
+
+When `ENV=development` (the default), the backend automatically seeds two test users on startup via the lifespan handler:
+
+| Email | Password | Role |
+|-------|----------|------|
+| `buyer@test.com` | `password` | buyer |
+| `dealer@test.com` | `password` | dealer |
+
+The login screen shows quick sign-in buttons for these accounts when running in dev mode (`__DEV__`).

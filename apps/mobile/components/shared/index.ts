@@ -1,3 +1,4 @@
+export { AuthGuard } from './AuthGuard'
 export { AppCard } from './AppCard'
 export { AppButton } from './AppButton'
 export { StatusPill } from './StatusPill'

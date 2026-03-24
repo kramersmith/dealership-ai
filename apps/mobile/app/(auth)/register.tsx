@@ -8,13 +8,20 @@ import { useAuthStore } from '@/stores/authStore'
 
 export default function RegisterScreen() {
   const router = useRouter()
-  const { register, isLoading } = useAuthStore()
+  const { register, isLoading, error, clearError } = useAuthStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<'buyer' | 'dealer'>('buyer')
 
   const handleRegister = async () => {
-    await register(email || 'buyer@test.com', password || 'password', role)
+    try {
+      await register(email, password, role)
+    } catch {
+      // Error is already set in the auth store
+      return
+    }
+    const state = useAuthStore.getState()
+    if (!state.isAuthenticated) return
     if (role === 'dealer') {
       router.replace('/(dealer)/simulations')
     } else {
@@ -32,30 +39,46 @@ export default function RegisterScreen() {
           </Text>
         </YStack>
 
+        {error && (
+          <YStack
+            backgroundColor="$red2"
+            borderColor="$red8"
+            borderWidth={1}
+            borderRadius="$3"
+            padding="$3"
+          >
+            <Text color="$red10" fontSize={14}>
+              {error}
+            </Text>
+          </YStack>
+        )}
+
         <XStack gap="$3">
           <Button
             flex={1}
             size="$5"
             backgroundColor={role === 'buyer' ? colors.brand : '$backgroundStrong'}
-            color={role === 'buyer' ? 'white' : '$color'}
             borderColor={role === 'buyer' ? colors.brand : '$borderColor'}
             borderWidth={1}
-            fontWeight="600"
             onPress={() => setRole('buyer')}
+            pressStyle={{ opacity: 0.85, scale: 0.98 }}
           >
-            Buyer
+            <Button.Text color={role === 'buyer' ? 'white' : '$color'} fontWeight="600">
+              Buyer
+            </Button.Text>
           </Button>
           <Button
             flex={1}
             size="$5"
             backgroundColor={role === 'dealer' ? colors.brand : '$backgroundStrong'}
-            color={role === 'dealer' ? 'white' : '$color'}
             borderColor={role === 'dealer' ? colors.brand : '$borderColor'}
             borderWidth={1}
-            fontWeight="600"
             onPress={() => setRole('dealer')}
+            pressStyle={{ opacity: 0.85, scale: 0.98 }}
           >
-            Dealer
+            <Button.Text color={role === 'dealer' ? 'white' : '$color'} fontWeight="600">
+              Dealer
+            </Button.Text>
           </Button>
         </XStack>
 
@@ -63,7 +86,7 @@ export default function RegisterScreen() {
           <Input
             placeholder="Email"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(text) => { clearError(); setEmail(text) }}
             autoCapitalize="none"
             keyboardType="email-address"
             size="$5"
@@ -73,7 +96,7 @@ export default function RegisterScreen() {
           <Input
             placeholder="Password"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => { clearError(); setPassword(text) }}
             secureTextEntry
             size="$5"
             borderColor="$borderColor"
@@ -84,13 +107,13 @@ export default function RegisterScreen() {
         <Button
           size="$5"
           backgroundColor={colors.brand}
-          color="white"
-          fontWeight="600"
           onPress={handleRegister}
           disabled={isLoading}
           pressStyle={{ backgroundColor: colors.brandPressed }}
         >
-          {isLoading ? 'Creating account...' : 'Create Account'}
+          <Button.Text color="white" fontWeight="600">
+            {isLoading ? 'Creating account...' : 'Create Account'}
+          </Button.Text>
         </Button>
 
         <TouchableOpacity

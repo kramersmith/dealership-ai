@@ -29,7 +29,9 @@
 | `DATABASE_URL` | No | SQLite | PostgreSQL in Docker |
 | `SECRET_KEY` | Yes (prod) | `dev-secret` | Must change in production |
 | `ANTHROPIC_API_KEY` | Yes | `` | Required for chat functionality |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model for AI interactions |
 | `CORS_ORIGINS` | No | localhost origins | Explicit HTTPS in production |
+| `ENV` | No | `development` | Controls seed users and dev features |
 | `LOG_LEVEL` | No | `INFO` | See logging-guidelines.md |
 
 ## 3. Security
@@ -53,6 +55,15 @@ When deploying:
 - Tokens signed with `SECRET_KEY`
 - Default expiry: 8 hours
 - All routes except `/api/auth/*` and `/health` require authentication
+- Frontend uses AuthGuard component on buyer/dealer route groups
+
+### Seed Users (Development Only)
+
+When `ENV=development`, the backend seeds two test accounts on startup via the lifespan handler:
+- `buyer@test.com` / `password` (role: buyer)
+- `dealer@test.com` / `password` (role: dealer)
+
+The login screen shows quick sign-in buttons for these accounts in dev mode (`__DEV__`). These credentials must never be used in production.
 
 ## 4. Logging
 
@@ -60,7 +71,7 @@ See `docs/logging-guidelines.md` for log level reference, PII rules, and configu
 
 ## 5. Claude API Cost Control
 
-- Default model: `claude-sonnet-4-5-20250514` (balances cost and quality)
+- Default model: `claude-sonnet-4-6` (balances cost and quality)
 - Max tokens per response: 1024
 - Message history truncated to last 20 messages per request
 - Future: per-user daily token limits, usage tracking table

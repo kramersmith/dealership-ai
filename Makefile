@@ -37,7 +37,7 @@ help:
 	@echo "  check-backend          All backend checks (typecheck + lint + format + test)"
 	@echo ""
 	@echo "Docker:"
-	@echo "  docker-up              Build & start containers"
+	@echo "  docker-up              Build & start full stack (frontend + backend + db)"
 	@echo "  docker-down            Stop containers"
 	@echo "  docker-logs            Follow logs"
 	@echo "  docker-clean           Full cleanup (removes volumes)"

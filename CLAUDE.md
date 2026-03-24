@@ -29,7 +29,7 @@ All commands run from the repo root via Make. The Makefile auto-detects the `.ve
 ### Development Servers
 - `make dev-frontend` — Expo dev server (web)
 - `make dev-backend` — FastAPI with reload (port 8001)
-- `make docker-up` — Full stack: backend + PostgreSQL
+- `make docker-up` — Full stack: frontend + backend + PostgreSQL
 
 ### Testing
 - `make test-backend` — Run all backend tests
@@ -60,8 +60,11 @@ FastAPI app with layered architecture:
 - **Core** (`app/core/`) — Config (Pydantic Settings), security (JWT + bcrypt), deps (FastAPI DI)
 
 Key patterns:
-- Claude integration uses 5 tool definitions (update_deal_numbers, update_deal_phase, update_scorecard, set_vehicle, update_checklist) to drive the frontend dashboard
+- Claude integration (`claude-sonnet-4-6`) uses 5 tool definitions (update_deal_numbers, update_deal_phase, update_scorecard, set_vehicle, update_checklist) to drive the frontend dashboard
 - Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (dashboard updates), `done`
+- Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, Difficulty (all `StrEnum`)
+- Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
+- Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)
 - SQLite for local dev, PostgreSQL via Docker for production
 - JWT auth with Bearer tokens
 
@@ -72,10 +75,12 @@ React Native + Expo + Tamagui + Zustand:
 - **Screens** (`app/`) — Expo Router file-based routing with `(buyer)` and `(dealer)` route groups
 - **Components** (`components/`) — Chat (bubbles, input, voice), Dashboard (phase, numbers, scorecard, vehicle, checklist, timer, quick actions), Shared (cards, buttons, pills, menu)
 - **Stores** (`stores/`) — Zustand: auth, chat, deal, simulation, theme
-- **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls), useScreenWidth (responsive breakpoint)
-- **Mock** (`mock/`) — Swappable mock API layer (one-line change in `lib/api.ts` to switch to real backend)
+- **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls with event-based SSE parsing and optimistic rollback), useScreenWidth (responsive breakpoint)
+- **API** (`lib/`) — API client connecting to the FastAPI backend (no mock layer)
 
 Key patterns:
+- AuthGuard component (`components/shared/AuthGuard.tsx`) protects buyer and dealer route groups
+- Quick sign-in buttons on login screen for seed users (dev only via `__DEV__`)
 - Facebook dark mode color palette with light mode support
 - All colors centralized in `lib/colors.ts` — no hardcoded hex in components
 - Mobile-first with responsive desktop layout (dashboard sidebar at ≥768px)
@@ -87,7 +92,7 @@ Key patterns:
 
 Both apps use `.env` files (copy from `.env.example`). Key variables:
 - Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CORS_ORIGINS`
-- Frontend: Mock API by default, swap to real in `lib/api.ts`
+- Frontend: Connects to real FastAPI backend
 
 ## Commit Conventions
 
@@ -105,9 +110,13 @@ Mobile-first, touch targets ≥44px, no hover-only interactions, no hardcoded co
 
 When changes affect architecture, APIs, business rules, or setup, update relevant docs in `docs/`. Key docs:
 - `docs/architecture.md` — Technical architecture
-- `docs/notes.md` — Project vision and features
+- `docs/TRD.md` — Technical requirements document
+- `docs/PRD.md` — Product requirements document
+- `docs/business-rules.md` — Business rules reference
+- `docs/backend-endpoints.md` — API endpoint reference
 - `docs/development.md` — Setup guide and env vars
 - `docs/operational-guidelines.md` — Ports, security, cost control
 - `docs/logging-guidelines.md` — Log levels, PII rules
 - `docs/ui-design-principles.md` — Frontend design standards
-- `docs/backend-plan.md` — Backend implementation plan
+- `docs/notes.md` — Project vision and features
+- `docs/backend-plan.md` — Backend implementation plan (historical)

@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 import anthropic
 
 from app.core.config import settings
+from app.models.enums import DealPhase, ScoreStatus
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +19,47 @@ DEAL_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "msrp": {"type": "number", "description": "Manufacturer's suggested retail price"},
-                "invoice_price": {"type": "number", "description": "Dealer invoice price"},
-                "their_offer": {"type": "number", "description": "The dealer's current asking/offer price"},
-                "your_target": {"type": "number", "description": "The buyer's target price"},
-                "walk_away_price": {"type": "number", "description": "Price above which the buyer should walk away"},
-                "current_offer": {"type": "number", "description": "The current negotiation price on the table"},
-                "monthly_payment": {"type": "number", "description": "Monthly payment amount"},
+                "msrp": {
+                    "type": "number",
+                    "description": "Manufacturer's suggested retail price",
+                },
+                "invoice_price": {
+                    "type": "number",
+                    "description": "Dealer invoice price",
+                },
+                "their_offer": {
+                    "type": "number",
+                    "description": "The dealer's current asking/offer price",
+                },
+                "your_target": {
+                    "type": "number",
+                    "description": "The buyer's target price",
+                },
+                "walk_away_price": {
+                    "type": "number",
+                    "description": "Price above which the buyer should walk away",
+                },
+                "current_offer": {
+                    "type": "number",
+                    "description": "The current negotiation price on the table",
+                },
+                "monthly_payment": {
+                    "type": "number",
+                    "description": "Monthly payment amount",
+                },
                 "apr": {"type": "number", "description": "Annual percentage rate"},
-                "loan_term_months": {"type": "integer", "description": "Loan term in months"},
-                "down_payment": {"type": "number", "description": "Down payment amount"},
-                "trade_in_value": {"type": "number", "description": "Trade-in vehicle value"},
+                "loan_term_months": {
+                    "type": "integer",
+                    "description": "Loan term in months",
+                },
+                "down_payment": {
+                    "type": "number",
+                    "description": "Down payment amount",
+                },
+                "trade_in_value": {
+                    "type": "number",
+                    "description": "Trade-in vehicle value",
+                },
             },
         },
     },
@@ -40,7 +71,7 @@ DEAL_TOOLS = [
             "properties": {
                 "phase": {
                     "type": "string",
-                    "enum": ["research", "initial_contact", "test_drive", "negotiation", "financing", "closing"],
+                    "enum": [p.value for p in DealPhase],
                 },
             },
             "required": ["phase"],
@@ -52,11 +83,26 @@ DEAL_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "score_price": {"type": "string", "enum": ["red", "yellow", "green"]},
-                "score_financing": {"type": "string", "enum": ["red", "yellow", "green"]},
-                "score_trade_in": {"type": "string", "enum": ["red", "yellow", "green"]},
-                "score_fees": {"type": "string", "enum": ["red", "yellow", "green"]},
-                "score_overall": {"type": "string", "enum": ["red", "yellow", "green"]},
+                "score_price": {
+                    "type": "string",
+                    "enum": [s.value for s in ScoreStatus],
+                },
+                "score_financing": {
+                    "type": "string",
+                    "enum": [s.value for s in ScoreStatus],
+                },
+                "score_trade_in": {
+                    "type": "string",
+                    "enum": [s.value for s in ScoreStatus],
+                },
+                "score_fees": {
+                    "type": "string",
+                    "enum": [s.value for s in ScoreStatus],
+                },
+                "score_overall": {
+                    "type": "string",
+                    "enum": [s.value for s in ScoreStatus],
+                },
             },
         },
     },
@@ -124,7 +170,9 @@ Keep responses concise — car advice doesn't need essays. Use short paragraphs 
 {linked_context}"""
 
 
-def build_system_prompt(deal_state_dict: dict | None, linked_messages: list[dict] | None = None) -> str:
+def build_system_prompt(
+    deal_state_dict: dict | None, linked_messages: list[dict] | None = None
+) -> str:
     deal_context = ""
     if deal_state_dict:
         deal_context = f"\nCurrent deal state:\n```json\n{json.dumps(deal_state_dict, indent=2, default=str)}\n```"
@@ -142,7 +190,9 @@ def build_system_prompt(deal_state_dict: dict | None, linked_messages: list[dict
     )
 
 
-def build_messages(history: list[dict], user_content: str, image_url: str | None = None) -> list[dict]:
+def build_messages(
+    history: list[dict], user_content: str, image_url: str | None = None
+) -> list[dict]:
     """Build the messages array for Claude API from message history."""
     messages = []
 
@@ -153,16 +203,18 @@ def build_messages(history: list[dict], user_content: str, image_url: str | None
 
     # Add current user message
     if image_url:
-        messages.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {"type": "url", "url": image_url},
-                },
-                {"type": "text", "text": user_content},
-            ],
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": image_url},
+                    },
+                    {"type": "text", "text": user_content},
+                ],
+            }
+        )
     else:
         messages.append({"role": "user", "content": user_content})
 
@@ -189,8 +241,8 @@ async def stream_chat(
         model=settings.CLAUDE_MODEL,
         max_tokens=settings.CLAUDE_MAX_TOKENS,
         system=system_prompt,
-        tools=DEAL_TOOLS,
-        messages=messages,
+        tools=DEAL_TOOLS,  # type: ignore[arg-type]
+        messages=messages,  # type: ignore[arg-type]
     ) as stream:
         current_tool_input = ""
         current_tool_name = ""

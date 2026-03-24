@@ -10,7 +10,7 @@ Add a FastAPI backend with real Claude LLM integration, full Makefile commands, 
 ```
 dealership-ai/
 ├── Makefile                    # Unified commands (matches fueldash)
-├── docker-compose.yml          # postgres + backend
+├── docker-compose.yml          # frontend + backend + postgres
 ├── CLAUDE.md                   # Project guidance (updated)
 ├── apps/
 │   ├── mobile/                 # Existing Expo frontend
@@ -101,7 +101,7 @@ help:
 	@echo ""
 	@echo "Backend:"
 	@echo "  install-backend     Install backend dependencies"
-	@echo "  dev-backend         Start FastAPI dev server (port 8000)"
+	@echo "  dev-backend         Start FastAPI dev server (port 8001)"
 	@echo "  lint-backend        Run Ruff linter"
 	@echo "  format-backend      Format with Ruff"
 	@echo "  isort-backend       Sort imports with Ruff"
@@ -214,21 +214,30 @@ docker-clean:
 
 ## Docker Compose
 
+> **Note:** The actual `docker-compose.yml` has been updated since this plan was written. The current version includes a frontend service and uses port 8001 for backend, 5433 for PostgreSQL. See the actual file for the definitive configuration.
+
 ```yaml
 services:
+  frontend:
+    build:
+      context: ./apps/mobile
+    ports:
+      - "8081:8081"
+    depends_on:
+      - backend
+
   backend:
     build:
       context: ./apps/backend
     ports:
-      - "8000:8000"
-    volumes:
-      - ./apps/backend:/app
+      - "8001:8001"
     env_file:
       - ./apps/backend/.env
     environment:
       - DATABASE_URL=postgresql+psycopg://dealership:dealership@db:5432/dealership
       - SECRET_KEY=change-me
       - CORS_ORIGINS=["http://localhost:8081","http://localhost:19006"]
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
     depends_on:
       - db
 
@@ -239,7 +248,7 @@ services:
       POSTGRES_PASSWORD: dealership
       POSTGRES_DB: dealership
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - dealership_db:/var/lib/postgresql/data
 
@@ -263,7 +272,7 @@ class Settings(BaseSettings):
 
     # Claude API
     ANTHROPIC_API_KEY: str = ""
-    CLAUDE_MODEL: str = "claude-sonnet-4-5-20250514"
+    CLAUDE_MODEL: str = "claude-sonnet-4-6"
     CLAUDE_MAX_TOKENS: int = 1024
     CLAUDE_MAX_HISTORY: int = 20
 
@@ -383,7 +392,7 @@ Rewrite to match fueldash style:
 | 9 | docs/development.md, docs/backend-endpoints.md |
 | 10 | docs/operational-guidelines.md, docs/logging-guidelines.md |
 | 11 | Update CLAUDE.md |
-| 12 | Frontend: realApi.ts, swap mock → real |
+| 12 | Frontend: apiClient.ts connected to real backend (mock layer removed) |
 | 13 | End-to-end test |
 
 ---
@@ -391,8 +400,8 @@ Rewrite to match fueldash style:
 ## Verification
 
 - `make install-backend` succeeds
-- `make dev-backend` starts on :8000
-- `make docker-up` starts postgres + backend
+- `make dev-backend` starts on :8001
+- `make docker-up` starts frontend + postgres + backend
 - `make migrate-backend` creates tables
 - `make lint-backend` / `make format-backend` / `make typecheck-backend` pass
 - `make test-backend` passes

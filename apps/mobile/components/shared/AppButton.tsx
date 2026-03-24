@@ -1,44 +1,55 @@
 import { Button, type ButtonProps } from 'tamagui'
+import type { ReactNode } from 'react'
 import { colors } from '@/lib/colors'
 
-interface AppButtonProps extends ButtonProps {
+interface AppButtonProps extends Omit<ButtonProps, 'variant'> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
+  children?: ReactNode
 }
 
 const variantStyles = {
   primary: {
-    backgroundColor: colors.brand,
-    color: 'white' as const,
-    pressStyle: { backgroundColor: colors.brandPressed },
+    button: {
+      backgroundColor: colors.brand,
+      pressStyle: { backgroundColor: colors.brandPressed },
+    },
+    text: { color: 'white' as const, fontWeight: '600' as const },
   },
   secondary: {
-    backgroundColor: 'transparent',
-    color: colors.brand as string,
-    borderWidth: 1,
-    borderColor: colors.brand,
-    pressStyle: { backgroundColor: colors.brandSubtle },
+    button: {
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: colors.brand,
+      pressStyle: { backgroundColor: colors.brandSubtle },
+    },
+    text: { color: colors.brand as string, fontWeight: '600' as const },
   },
   ghost: {
-    backgroundColor: 'transparent',
-    color: '$color' as const,
-    pressStyle: { backgroundColor: '$backgroundHover' },
+    button: {
+      backgroundColor: 'transparent',
+      pressStyle: { backgroundColor: '$backgroundHover' },
+    },
+    text: { color: '$color' as const, fontWeight: '600' as const },
   },
   danger: {
-    backgroundColor: colors.danger,
-    color: 'white' as const,
-    pressStyle: { backgroundColor: colors.dangerPressed },
+    button: {
+      backgroundColor: colors.danger,
+      pressStyle: { backgroundColor: colors.dangerPressed },
+    },
+    text: { color: 'white' as const, fontWeight: '600' as const },
   },
 }
 
-export function AppButton({ variant = 'primary', ...props }: AppButtonProps) {
+export function AppButton({ variant = 'primary', children, ...props }: AppButtonProps) {
   const styles = variantStyles[variant]
   return (
     <Button
-      size="$4"
-      fontWeight="600"
+      size="$5"
       borderRadius="$2"
-      {...styles}
+      {...styles.button}
       {...props}
-    />
+    >
+      <Button.Text {...styles.text}>{children}</Button.Text>
+    </Button>
   )
 }

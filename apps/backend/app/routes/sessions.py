@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
+from app.models.enums import SessionType
 from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.session import SessionCreate, SessionResponse, SessionUpdate
@@ -11,7 +12,9 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[SessionResponse])
-def list_sessions(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_sessions(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     sessions = (
         db.query(ChatSession)
         .filter(ChatSession.user_id == user.id)
@@ -29,7 +32,12 @@ def create_session(
 ):
     session = ChatSession(
         user_id=user.id,
-        title=body.title or ("New Deal" if body.session_type == "buyer_chat" else "New Simulation"),
+        title=body.title
+        or (
+            "New Deal"
+            if body.session_type == SessionType.BUYER_CHAT
+            else "New Simulation"
+        ),
         session_type=body.session_type,
     )
     db.add(session)

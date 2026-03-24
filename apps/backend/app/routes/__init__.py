@@ -11,4 +11,6 @@ api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
 api_router.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_router.include_router(deals_router, prefix="/deal", tags=["deal"])
-api_router.include_router(simulations_router, prefix="/simulations", tags=["simulations"])
+api_router.include_router(
+    simulations_router, prefix="/simulations", tags=["simulations"]
+)

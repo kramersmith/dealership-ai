@@ -6,18 +6,23 @@ from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.models.enums import DealPhase
 
 
 class DealState(Base):
     __tablename__ = "deal_states"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4())
+    )
     session_id: Mapped[str] = mapped_column(
         String, ForeignKey("chat_sessions.id"), nullable=False, unique=True, index=True
     )
 
     # Phase
-    phase: Mapped[str] = mapped_column(String, nullable=False, default="research")
+    phase: Mapped[str] = mapped_column(
+        String, nullable=False, default=DealPhase.RESEARCH
+    )
 
     # Numbers
     msrp: Mapped[float | None] = mapped_column(Float, nullable=True)
