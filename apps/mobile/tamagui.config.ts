@@ -1,0 +1,62 @@
+import { config as configBase } from '@tamagui/config/v3'
+import { createTamagui } from 'tamagui'
+
+const config = createTamagui({
+  ...configBase,
+  themes: {
+    ...configBase.themes,
+    light: {
+      ...configBase.themes.light,
+      background: '#F0F2F5',
+      backgroundStrong: '#FFFFFF',
+      backgroundHover: '#E4E6EB',
+      backgroundPress: '#E4E6EB',
+      backgroundFocus: '#E4E6EB',
+      color: '#1C1E21',
+      colorHover: '#1C1E21',
+      colorPress: '#1C1E21',
+      colorFocus: '#1C1E21',
+      borderColor: '#CED0D4',
+      borderColorHover: '#2D88FF',
+      borderColorFocus: '#2D88FF',
+      borderColorPress: '#CED0D4',
+      placeholderColor: '#8A8D91',
+      shadowColor: 'rgba(0,0,0,0.08)',
+      shadowColorHover: 'rgba(0,0,0,0.12)',
+    },
+    dark: {
+      ...configBase.themes.dark,
+      // Facebook dark mode palette
+      background: '#18191A',
+      backgroundStrong: '#242526',
+      backgroundHover: '#3A3B3C',
+      backgroundPress: '#3A3B3C',
+      backgroundFocus: '#3A3B3C',
+      color: '#E4E6EB',
+      colorHover: '#E4E6EB',
+      colorPress: '#E4E6EB',
+      colorFocus: '#E4E6EB',
+      borderColor: '#3E4042',
+      borderColorHover: '#2D88FF',
+      borderColorFocus: '#2D88FF',
+      borderColorPress: '#3E4042',
+      placeholderColor: '#B0B3B8',
+      shadowColor: 'rgba(0,0,0,0.4)',
+      shadowColorHover: 'rgba(0,0,0,0.5)',
+      color1: '#18191A',
+      color2: '#242526',
+      color3: '#3A3B3C',
+      color4: '#3E4042',
+      color5: '#4E4F50',
+      color6: '#606162',
+      color7: '#8A8D91',
+      color8: '#B0B3B8',
+      color9: '#2D88FF',
+      color10: '#1877F2',
+      color11: '#C8CCD1',
+      color12: '#E4E6EB',
+    },
+  },
+})
+
+export default config
