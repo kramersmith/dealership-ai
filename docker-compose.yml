@@ -1,0 +1,31 @@
+services:
+  backend:
+    build:
+      context: ./apps/backend
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./apps/backend:/app
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      - DATABASE_URL=postgresql+psycopg://dealership:dealership@db:5433/dealership
+      - SECRET_KEY=change-me
+      - CORS_ORIGINS=["http://localhost:8081","http://localhost:19006"]
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dealership
+      POSTGRES_PASSWORD: dealership
+      POSTGRES_DB: dealership
+    ports:
+      - "5433:5432"
+    volumes:
+      - dealership_db:/var/lib/postgresql/data
+
+volumes:
+  dealership_db:
