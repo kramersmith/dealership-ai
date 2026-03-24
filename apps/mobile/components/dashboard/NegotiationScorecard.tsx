@@ -46,7 +46,12 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
   const progressAnim = useRef(new Animated.Value(50)).current
 
   let progressPercent = 50
-  if (yourTarget !== null && walkAwayPrice !== null && currentOffer !== null && walkAwayPrice > yourTarget) {
+  if (
+    yourTarget !== null &&
+    walkAwayPrice !== null &&
+    currentOffer !== null &&
+    walkAwayPrice > yourTarget
+  ) {
     const range = walkAwayPrice - yourTarget
     const position = currentOffer - yourTarget
     progressPercent = Math.max(0, Math.min(100, (position / range) * 100))
@@ -61,9 +66,11 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
   }, [progressPercent])
 
   const progressColor =
-    progressPercent <= 33 ? SCORE_COLORS.green :
-    progressPercent <= 66 ? SCORE_COLORS.yellow :
-    SCORE_COLORS.red
+    progressPercent <= 33
+      ? SCORE_COLORS.green
+      : progressPercent <= 66
+        ? SCORE_COLORS.yellow
+        : SCORE_COLORS.red
 
   const animatedWidth = progressAnim.interpolate({
     inputRange: [0, 100],
@@ -82,12 +89,7 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
 
       {yourTarget !== null && currentOffer !== null && (
         <YStack gap="$1">
-          <XStack
-            height={6}
-            backgroundColor="$borderColor"
-            borderRadius={100}
-            overflow="hidden"
-          >
+          <XStack height={6} backgroundColor="$borderColor" borderRadius={100} overflow="hidden">
             <Animated.View
               style={{
                 width: animatedWidth,

@@ -84,11 +84,7 @@ export function HamburgerMenu() {
           style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
         >
           <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
-            {isOpen ? (
-              <X size={22} color="$color" />
-            ) : (
-              <Menu size={22} color="$color" />
-            )}
+            {isOpen ? <X size={22} color="$color" /> : <Menu size={22} color="$color" />}
           </Animated.View>
         </TouchableOpacity>
       </View>
@@ -99,11 +95,7 @@ export function HamburgerMenu() {
         animationType="none"
         onRequestClose={() => setIsOpen(false)}
       >
-        <TouchableOpacity
-          style={{ flex: 1 }}
-          activeOpacity={1}
-          onPress={() => setIsOpen(false)}
-        >
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setIsOpen(false)}>
           {/* Rotated square behind dropdown — peeks out as arrow nub */}
           <View
             style={{
@@ -113,13 +105,20 @@ export function HamburgerMenu() {
               width: 14,
               height: 14,
               transform: [{ rotate: '45deg' }],
-              backgroundColor: theme.backgroundStrong?.val ?? theme.background?.val ?? 'transparent',
+              backgroundColor:
+                theme.backgroundStrong?.val ?? theme.background?.val ?? 'transparent',
               borderWidth: 1,
               borderColor: theme.borderColor?.val ?? 'transparent',
               zIndex: 1,
               ...(Platform.OS === 'web'
                 ? { boxShadow: `0 2px 8px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}` }
-                : { shadowColor: theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 4, elevation: 8 }),
+                : {
+                    shadowColor: theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 1,
+                    shadowRadius: 4,
+                    elevation: 8,
+                  }),
             }}
           />
 
@@ -136,8 +135,16 @@ export function HamburgerMenu() {
             minWidth={220}
             zIndex={2}
             {...(Platform.OS === 'web'
-              ? { style: { boxShadow: `0 4px 16px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}` } }
-              : { shadowColor: '$shadowColor', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 8, elevation: 9 })}
+              ? {
+                  style: { boxShadow: `0 4px 16px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}` },
+                }
+              : {
+                  shadowColor: '$shadowColor',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 1,
+                  shadowRadius: 8,
+                  elevation: 9,
+                })}
           >
             {/* Menu items */}
             {items.map((item) => (
@@ -147,12 +154,7 @@ export function HamburgerMenu() {
                 activeOpacity={0.6}
                 style={{ minHeight: 44 }}
               >
-                <XStack
-                  gap="$3"
-                  alignItems="center"
-                  paddingVertical="$3"
-                  paddingHorizontal="$4"
-                >
+                <XStack gap="$3" alignItems="center" paddingVertical="$3" paddingHorizontal="$4">
                   <item.Icon size={18} color="$color" />
                   <Text fontSize={15} color="$color" fontWeight="500">
                     {item.label}
@@ -166,23 +168,19 @@ export function HamburgerMenu() {
 
             {/* Role label */}
             <XStack paddingHorizontal="$4" paddingVertical="$2">
-              <Text fontSize={11} color="$placeholderColor" textTransform="uppercase" letterSpacing={1}>
+              <Text
+                fontSize={11}
+                color="$placeholderColor"
+                textTransform="uppercase"
+                letterSpacing={1}
+              >
                 {role === 'dealer' ? 'Dealer Mode' : 'Buyer Mode'}
               </Text>
             </XStack>
 
             {/* Logout */}
-            <TouchableOpacity
-              onPress={handleLogout}
-              activeOpacity={0.6}
-              style={{ minHeight: 44 }}
-            >
-              <XStack
-                gap="$3"
-                alignItems="center"
-                paddingVertical="$3"
-                paddingHorizontal="$4"
-              >
+            <TouchableOpacity onPress={handleLogout} activeOpacity={0.6} style={{ minHeight: 44 }}>
+              <XStack gap="$3" alignItems="center" paddingVertical="$3" paddingHorizontal="$4">
                 <LogOut size={18} color={colors.danger} />
                 <Text fontSize={15} color={colors.danger} fontWeight="500">
                   Sign Out

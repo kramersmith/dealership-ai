@@ -31,9 +31,20 @@ export default function RegisterScreen() {
 
   return (
     <ThemedSafeArea>
-      <YStack flex={1} justifyContent="center" padding="$7" backgroundColor="$background" gap="$5" maxWidth={480} width="100%" alignSelf="center">
+      <YStack
+        flex={1}
+        justifyContent="center"
+        padding="$7"
+        backgroundColor="$background"
+        gap="$5"
+        maxWidth={480}
+        width="100%"
+        alignSelf="center"
+      >
         <YStack gap="$2" marginBottom="$4">
-          <H2 color="$color" fontWeight="700">Create Account</H2>
+          <H2 color="$color" fontWeight="700">
+            Create Account
+          </H2>
           <Text color="$placeholderColor" fontSize={16}>
             Are you buying or selling?
           </Text>
@@ -86,7 +97,10 @@ export default function RegisterScreen() {
           <Input
             placeholder="Email"
             value={email}
-            onChangeText={(text) => { clearError(); setEmail(text) }}
+            onChangeText={(text) => {
+              clearError()
+              setEmail(text)
+            }}
             autoCapitalize="none"
             keyboardType="email-address"
             size="$5"
@@ -96,7 +110,10 @@ export default function RegisterScreen() {
           <Input
             placeholder="Password"
             value={password}
-            onChangeText={(text) => { clearError(); setPassword(text) }}
+            onChangeText={(text) => {
+              clearError()
+              setPassword(text)
+            }}
             secureTextEntry
             size="$5"
             borderColor="$borderColor"
@@ -125,7 +142,7 @@ export default function RegisterScreen() {
             <Text color="$placeholderColor">Already have an account?</Text>
             <Text color={colors.brand} fontWeight="600">
               Sign In
-          </Text>
+            </Text>
           </XStack>
         </TouchableOpacity>
       </YStack>

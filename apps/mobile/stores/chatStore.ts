@@ -61,7 +61,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ])
       set({ messages, isLoading: false })
     } catch (err) {
-      console.error('[chatStore] setActiveSession failed:', err instanceof Error ? err.message : err)
+      console.error(
+        '[chatStore] setActiveSession failed:',
+        err instanceof Error ? err.message : err
+      )
       set({ isLoading: false })
     }
   },
@@ -113,7 +116,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       imageUri,
       createdAt: new Date().toISOString(),
     }
-    set((state) => ({ messages: [...state.messages, userMessage], isSending: true, sendError: null }))
+    set((state) => ({
+      messages: [...state.messages, userMessage],
+      isSending: true,
+      sendError: null,
+    }))
 
     try {
       // Get assistant response

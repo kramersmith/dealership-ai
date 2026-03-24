@@ -15,7 +15,9 @@ function EmptySimulationsState() {
     <Animated.View style={{ flex: 1, opacity }}>
       <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
         <Swords size={48} color="$borderColor" />
-        <Text fontSize={16} fontWeight="600" color="$color">No scenarios available</Text>
+        <Text fontSize={16} fontWeight="600" color="$color">
+          No scenarios available
+        </Text>
       </YStack>
     </Animated.View>
   )

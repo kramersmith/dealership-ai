@@ -10,7 +10,7 @@ interface QuickActionsProps {
 const ACTIONS = [
   { id: 'what_to_say', label: 'What Do I Say?', Icon: MessageSquare },
   { id: 'should_i_walk', label: 'Should I Walk?', Icon: DoorOpen },
-  { id: 'whats_missing', label: "What Am I Forgetting?", Icon: CircleHelp },
+  { id: 'whats_missing', label: 'What Am I Forgetting?', Icon: CircleHelp },
 ]
 
 export function QuickActions({ onAction }: QuickActionsProps) {

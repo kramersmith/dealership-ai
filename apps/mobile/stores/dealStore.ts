@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { DealState, DealPhase, DealNumbers, Scorecard, Vehicle, ChecklistItem, ToolCall } from '@/lib/types'
+import type {
+  DealState,
+  DealPhase,
+  DealNumbers,
+  Scorecard,
+  Vehicle,
+  ChecklistItem,
+  ToolCall,
+} from '@/lib/types'
 import { EMPTY_DEAL_NUMBERS, EMPTY_SCORECARD } from '@/lib/constants'
 import { api } from '@/lib/api'
 

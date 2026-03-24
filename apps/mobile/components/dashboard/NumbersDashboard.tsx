@@ -32,9 +32,7 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
   }, [value])
 
   const valueColor =
-    highlight === 'good' ? colors.positive :
-    highlight === 'bad' ? colors.danger :
-    undefined
+    highlight === 'good' ? colors.positive : highlight === 'bad' ? colors.danger : undefined
 
   return (
     <YStack flex={1} gap="$1">
@@ -54,16 +52,15 @@ export function NumbersDashboard({ numbers }: NumbersDashboardProps) {
   const { msrp, yourTarget, walkAwayPrice, currentOffer, monthlyPayment, apr } = numbers
 
   const offerHighlight =
-    currentOffer === null || yourTarget === null ? 'neutral' :
-    currentOffer <= yourTarget ? 'good' :
-    walkAwayPrice !== null && currentOffer > walkAwayPrice ? 'bad' :
-    'neutral'
+    currentOffer === null || yourTarget === null
+      ? 'neutral'
+      : currentOffer <= yourTarget
+        ? 'good'
+        : walkAwayPrice !== null && currentOffer > walkAwayPrice
+          ? 'bad'
+          : 'neutral'
 
-  const aprHighlight =
-    apr === null ? 'neutral' :
-    apr <= 6.5 ? 'good' :
-    apr >= 9 ? 'bad' :
-    'neutral'
+  const aprHighlight = apr === null ? 'neutral' : apr <= 6.5 ? 'good' : apr >= 9 ? 'bad' : 'neutral'
 
   return (
     <AppCard gap="$3">
@@ -73,7 +70,11 @@ export function NumbersDashboard({ numbers }: NumbersDashboardProps) {
         <NumberCell label="Walk-Away" value={formatCurrency(walkAwayPrice)} highlight="bad" />
       </XStack>
       <XStack gap="$4">
-        <NumberCell label="Current Offer" value={formatCurrency(currentOffer)} highlight={offerHighlight} />
+        <NumberCell
+          label="Current Offer"
+          value={formatCurrency(currentOffer)}
+          highlight={offerHighlight}
+        />
         <NumberCell label="Monthly" value={formatCurrency(monthlyPayment)} />
         <NumberCell label="APR" value={formatPercent(apr)} highlight={aprHighlight} />
       </XStack>

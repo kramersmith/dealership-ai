@@ -59,11 +59,22 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
         paddingHorizontal="$3"
         paddingVertical="$2"
         borderRadius="$2"
-        backgroundColor={isLong ? colors.dangerSurfaceDark : isWarning ? colors.warningSurfaceDark : '$backgroundStrong'}
+        backgroundColor={
+          isLong
+            ? colors.dangerSurfaceDark
+            : isWarning
+              ? colors.warningSurfaceDark
+              : '$backgroundStrong'
+        }
         borderWidth={1}
-        borderColor={isLong ? colors.dangerBorderDark : isWarning ? colors.warningBorderDark : '$borderColor'}
+        borderColor={
+          isLong ? colors.dangerBorderDark : isWarning ? colors.warningBorderDark : '$borderColor'
+        }
       >
-        <Clock size={14} color={isLong ? colors.danger : isWarning ? colors.warning : '$placeholderColor'} />
+        <Clock
+          size={14}
+          color={isLong ? colors.danger : isWarning ? colors.warning : '$placeholderColor'}
+        />
         <Text
           fontSize={13}
           fontWeight="600"

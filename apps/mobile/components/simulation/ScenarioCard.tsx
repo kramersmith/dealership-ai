@@ -33,13 +33,14 @@ export function ScenarioCard({ scenario, onStart }: ScenarioCardProps) {
           {scenario.description}
         </Text>
 
-        <YStack
-          backgroundColor="$backgroundHover"
-          borderRadius="$2"
-          padding="$3"
-          gap="$1"
-        >
-          <Text fontSize={12} color="$placeholderColor" fontWeight="600" textTransform="uppercase" letterSpacing={0.5}>
+        <YStack backgroundColor="$backgroundHover" borderRadius="$2" padding="$3" gap="$1">
+          <Text
+            fontSize={12}
+            color="$placeholderColor"
+            fontWeight="600"
+            textTransform="uppercase"
+            letterSpacing={0.5}
+          >
             Customer: {scenario.aiPersona.name}
           </Text>
           <Text fontSize={13} color="$color" numberOfLines={2}>

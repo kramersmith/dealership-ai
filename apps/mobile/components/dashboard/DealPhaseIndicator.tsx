@@ -33,9 +33,7 @@ export function DealPhaseIndicator({ currentPhase }: DealPhaseIndicatorProps) {
                 height={isCurrent ? 12 : 8}
                 borderRadius={100}
                 backgroundColor={
-                  isCompleted ? colors.brand :
-                  isCurrent ? colors.brand :
-                  '$borderColor'
+                  isCompleted ? colors.brand : isCurrent ? colors.brand : '$borderColor'
                 }
                 borderWidth={isCurrent ? 2 : 0}
                 borderColor={isCurrent ? colors.brandLight : undefined}

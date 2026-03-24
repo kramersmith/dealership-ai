@@ -37,7 +37,9 @@ export function formatElapsedTime(startedAt: string | null): string {
   return `${minutes}:${String(secs).padStart(2, '0')}`
 }
 
-export function vehicleSummary(vehicle: { year: number; make: string; model: string; trim?: string } | null): string {
+export function vehicleSummary(
+  vehicle: { year: number; make: string; model: string; trim?: string } | null
+): string {
   if (!vehicle) return 'No vehicle set'
   const parts = [vehicle.year, vehicle.make, vehicle.model]
   if (vehicle.trim) parts.push(vehicle.trim)

@@ -43,12 +43,7 @@ const variantStyles = {
 export function AppButton({ variant = 'primary', children, ...props }: AppButtonProps) {
   const styles = variantStyles[variant]
   return (
-    <Button
-      size="$5"
-      borderRadius="$2"
-      {...styles.button}
-      {...props}
-    >
+    <Button size="$5" borderRadius="$2" {...styles.button} {...props}>
       <Button.Text {...styles.text}>{children}</Button.Text>
     </Button>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { ThemedSafeArea, LoadingIndicator, HamburgerMenu, RoleGuard } from '@/components/shared'
@@ -9,6 +9,7 @@ import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { DashboardPanel, QuickActions } from '@/components/dashboard'
 import { ChatMessageList, ChatInput } from '@/components/chat'
+import { useFocusEffect } from 'expo-router'
 
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
@@ -17,18 +18,20 @@ export default function ChatScreen() {
   const isCreating = useRef(false)
   const [createFailed, setCreateFailed] = useState(false)
 
-  useEffect(() => {
-    if (!activeSessionId && !isCreating.current && !createFailed) {
-      isCreating.current = true
-      createSession('buyer_chat', 'New Deal')
-        .catch(() => {
-          setCreateFailed(true)
-        })
-        .finally(() => {
-          isCreating.current = false
-        })
-    }
-  }, [activeSessionId, createFailed])
+  useFocusEffect(
+    useCallback(() => {
+      if (!activeSessionId && !isCreating.current && !createFailed) {
+        isCreating.current = true
+        createSession('buyer_chat', 'New Deal')
+          .catch(() => {
+            setCreateFailed(true)
+          })
+          .finally(() => {
+            isCreating.current = false
+          })
+      }
+    }, [activeSessionId, createFailed])
+  )
 
   const {
     messages,
@@ -143,10 +146,7 @@ export default function ChatScreen() {
 
             {/* Dashboard Panel (collapsible on mobile) */}
             {dealState && (
-              <DashboardPanel
-                dealState={dealState}
-                onToggleChecklist={toggleChecklistItem}
-              />
+              <DashboardPanel dealState={dealState} onToggleChecklist={toggleChecklistItem} />
             )}
 
             {/* Divider */}

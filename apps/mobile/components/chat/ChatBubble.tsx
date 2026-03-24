@@ -45,11 +45,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
               </Text>
             </YStack>
           )}
-          <Text
-            fontSize={15}
-            lineHeight={22}
-            color={isUser ? 'white' : '$color'}
-          >
+          <Text fontSize={15} lineHeight={22} color={isUser ? 'white' : '$color'}>
             {message.content}
           </Text>
           <Text

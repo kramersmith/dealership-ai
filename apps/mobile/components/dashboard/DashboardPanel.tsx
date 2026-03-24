@@ -16,7 +16,11 @@ interface DashboardPanelProps {
   mode?: 'mobile' | 'sidebar'
 }
 
-export function DashboardPanel({ dealState, onToggleChecklist, mode = 'mobile' }: DashboardPanelProps) {
+export function DashboardPanel({
+  dealState,
+  onToggleChecklist,
+  mode = 'mobile',
+}: DashboardPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true)
   const isSidebar = mode === 'sidebar'
 
@@ -26,33 +30,26 @@ export function DashboardPanel({ dealState, onToggleChecklist, mode = 'mobile' }
 
   const hasNumbers = Object.values(dealState.numbers).some((v) => v !== null)
   const hasScorecard = Object.values(dealState.scorecard).some((v) => v !== null)
-  const hasContent = dealState.vehicle || hasNumbers || hasScorecard || dealState.checklist.length > 0 || dealState.timerStartedAt
+  const hasContent =
+    dealState.vehicle ||
+    hasNumbers ||
+    hasScorecard ||
+    dealState.checklist.length > 0 ||
+    dealState.timerStartedAt
 
   const dashboardWidgets = (
     <YStack paddingHorizontal="$4" gap="$3" paddingVertical="$3">
-      {dealState.timerStartedAt && (
-        <DealershipTimer startedAt={dealState.timerStartedAt} />
-      )}
+      {dealState.timerStartedAt && <DealershipTimer startedAt={dealState.timerStartedAt} />}
 
-      {dealState.vehicle && (
-        <VehicleCard vehicle={dealState.vehicle} />
-      )}
+      {dealState.vehicle && <VehicleCard vehicle={dealState.vehicle} />}
 
-      {hasNumbers && (
-        <NumbersDashboard numbers={dealState.numbers} />
-      )}
+      {hasNumbers && <NumbersDashboard numbers={dealState.numbers} />}
 
       {hasScorecard && (
-        <NegotiationScorecard
-          scorecard={dealState.scorecard}
-          numbers={dealState.numbers}
-        />
+        <NegotiationScorecard scorecard={dealState.scorecard} numbers={dealState.numbers} />
       )}
 
-      <Checklist
-        items={dealState.checklist}
-        onToggle={onToggleChecklist}
-      />
+      <Checklist items={dealState.checklist} onToggle={onToggleChecklist} />
     </YStack>
   )
 
@@ -72,7 +69,12 @@ export function DashboardPanel({ dealState, onToggleChecklist, mode = 'mobile' }
   return (
     <YStack>
       {/* Phase indicator always visible */}
-      <YStack paddingHorizontal="$4" paddingTop="$2" paddingBottom="$2" backgroundColor="$background">
+      <YStack
+        paddingHorizontal="$4"
+        paddingTop="$2"
+        paddingBottom="$2"
+        backgroundColor="$background"
+      >
         <DealPhaseIndicator currentPhase={dealState.phase} />
       </YStack>
 
@@ -83,11 +85,7 @@ export function DashboardPanel({ dealState, onToggleChecklist, mode = 'mobile' }
           activeOpacity={0.6}
           style={{ minHeight: 44, justifyContent: 'center' }}
         >
-          <XStack
-            justifyContent="center"
-            alignItems="center"
-            gap="$1"
-          >
+          <XStack justifyContent="center" alignItems="center" gap="$1">
             <Text fontSize={12} color="$placeholderColor" fontWeight="500">
               {isExpanded ? 'Hide Dashboard' : 'Show Dashboard'}
             </Text>
@@ -102,10 +100,7 @@ export function DashboardPanel({ dealState, onToggleChecklist, mode = 'mobile' }
 
       {/* Collapsible content */}
       {isExpanded && hasContent && (
-        <ScrollView
-          style={{ maxHeight: 400 }}
-          showsVerticalScrollIndicator={false}
-        >
+        <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
           {dashboardWidgets}
         </ScrollView>
       )}

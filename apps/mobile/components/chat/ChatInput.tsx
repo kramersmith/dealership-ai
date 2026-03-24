@@ -21,12 +21,17 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   }
 
   const handlePhoto = () => {
-    const alertFn = Platform.OS === 'web' ? (t: string, m: string) => window.alert(`${t}: ${m}`) : Alert.alert
-    alertFn('Photo Upload', 'Camera integration coming soon. For now, describe the deal sheet in chat.')
+    const alertFn =
+      Platform.OS === 'web' ? (t: string, m: string) => window.alert(`${t}: ${m}`) : Alert.alert
+    alertFn(
+      'Photo Upload',
+      'Camera integration coming soon. For now, describe the deal sheet in chat.'
+    )
   }
 
   const handleVoice = () => {
-    const alertFn = Platform.OS === 'web' ? (t: string, m: string) => window.alert(`${t}: ${m}`) : Alert.alert
+    const alertFn =
+      Platform.OS === 'web' ? (t: string, m: string) => window.alert(`${t}: ${m}`) : Alert.alert
     alertFn('Voice Mode', 'Voice input coming soon. Type your message for now.')
   }
 

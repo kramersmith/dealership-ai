@@ -17,7 +17,9 @@ function QuickSignInButton({ label, onPress }: { label: string; onPress: () => v
       pressStyle={{ backgroundColor: '$backgroundHover' }}
       flex={1}
     >
-      <Button.Text color="$color" fontWeight="600">{label}</Button.Text>
+      <Button.Text color="$color" fontWeight="600">
+        {label}
+      </Button.Text>
     </Button>
   )
 }
@@ -48,9 +50,20 @@ export default function LoginScreen() {
 
   return (
     <ThemedSafeArea>
-      <YStack flex={1} justifyContent="center" padding="$7" backgroundColor="$background" gap="$5" maxWidth={480} width="100%" alignSelf="center">
+      <YStack
+        flex={1}
+        justifyContent="center"
+        padding="$7"
+        backgroundColor="$background"
+        gap="$5"
+        maxWidth={480}
+        width="100%"
+        alignSelf="center"
+      >
         <YStack gap="$2" marginBottom="$4">
-          <H2 color="$color" fontWeight="700">Dealership AI</H2>
+          <H2 color="$color" fontWeight="700">
+            Dealership AI
+          </H2>
           <Text color="$placeholderColor" fontSize={16}>
             Your car buying advantage
           </Text>
@@ -74,7 +87,12 @@ export default function LoginScreen() {
         {__DEV__ && (
           <>
             <YStack gap="$3">
-              <Text color="$placeholderColor" fontSize={13} textTransform="uppercase" letterSpacing={1}>
+              <Text
+                color="$placeholderColor"
+                fontSize={13}
+                textTransform="uppercase"
+                letterSpacing={1}
+              >
                 Quick Sign In
               </Text>
               <XStack gap="$3">
@@ -91,7 +109,9 @@ export default function LoginScreen() {
 
             <XStack alignItems="center" gap="$3">
               <Separator flex={1} />
-              <Text color="$placeholderColor" fontSize={13}>or sign in with email</Text>
+              <Text color="$placeholderColor" fontSize={13}>
+                or sign in with email
+              </Text>
               <Separator flex={1} />
             </XStack>
           </>
@@ -101,7 +121,10 @@ export default function LoginScreen() {
           <Input
             placeholder="Email"
             value={email}
-            onChangeText={(text) => { clearError(); setEmail(text) }}
+            onChangeText={(text) => {
+              clearError()
+              setEmail(text)
+            }}
             autoCapitalize="none"
             keyboardType="email-address"
             size="$5"
@@ -111,7 +134,10 @@ export default function LoginScreen() {
           <Input
             placeholder="Password"
             value={password}
-            onChangeText={(text) => { clearError(); setPassword(text) }}
+            onChangeText={(text) => {
+              clearError()
+              setPassword(text)
+            }}
             secureTextEntry
             size="$5"
             borderColor="$borderColor"

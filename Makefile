@@ -4,7 +4,8 @@ BACKEND_DIR := apps/backend
 # Prefer venv python if it exists; else python3, else python
 PYTHON := $(shell test -f .venv/bin/python && echo "$(CURDIR)/.venv/bin/python" || (command -v python3 >/dev/null 2>&1 && echo python3) || echo python)
 
-.PHONY: help install-frontend dev-frontend install-backend dev-backend \
+.PHONY: help install-frontend dev-frontend lint-frontend format-frontend format-check-frontend typecheck-frontend check-frontend \
+	install-backend dev-backend \
 	lint-backend format-backend isort-backend typecheck-backend \
 	migrations-backend migrate-backend migrate-backend-fresh \
 	test-backend test-backend-specific test-backend-watch \
@@ -19,6 +20,10 @@ help:
 	@echo "Frontend:"
 	@echo "  install-frontend       Install frontend dependencies"
 	@echo "  dev-frontend           Start Expo dev server (web)"
+	@echo "  lint-frontend          Run ESLint"
+	@echo "  format-frontend        Format with Prettier"
+	@echo "  typecheck-frontend     Run TypeScript check"
+	@echo "  check-frontend         All frontend checks (lint + format + typecheck)"
 	@echo ""
 	@echo "Backend:"
 	@echo "  install-backend        Install backend dependencies"
@@ -55,6 +60,20 @@ install-frontend:
 
 dev-frontend:
 	cd $(FRONTEND_DIR) && npx expo start --web
+
+lint-frontend:
+	cd $(FRONTEND_DIR) && npx eslint app/ components/ hooks/ lib/ stores/
+
+format-frontend:
+	cd $(FRONTEND_DIR) && npx prettier --write app/ components/ hooks/ lib/ stores/
+
+format-check-frontend:
+	cd $(FRONTEND_DIR) && npx prettier --check app/ components/ hooks/ lib/ stores/
+
+typecheck-frontend:
+	cd $(FRONTEND_DIR) && npx tsc --noEmit
+
+check-frontend: lint-frontend format-check-frontend typecheck-frontend
 
 # ================================ Backend ================================
 install-backend:
@@ -104,9 +123,9 @@ install-all: install-frontend install-backend
 
 test-all: test-backend
 
-check-all: check-backend
+check-all: check-frontend check-backend
 
-check-static: lint-backend format-backend isort-backend typecheck-backend
+check-static: lint-frontend format-check-frontend typecheck-frontend lint-backend format-backend isort-backend typecheck-backend
 
 clean-frontend:
 	rm -rf "$(FRONTEND_DIR)/node_modules" "$(FRONTEND_DIR)/dist"

@@ -21,7 +21,8 @@ function EmptyState() {
           Ready to help with your deal
         </Text>
         <Text fontSize={14} color="$placeholderColor" textAlign="center" lineHeight={22}>
-          Tell me about the vehicle you're looking at — year, make, model, and price — and I'll set up your dashboard.
+          Tell me about the vehicle you're looking at — year, make, model, and price — and I'll set
+          up your dashboard.
         </Text>
       </YStack>
     </Animated.View>

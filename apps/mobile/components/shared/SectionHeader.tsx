@@ -11,14 +11,26 @@ interface SectionHeaderProps {
 export function SectionHeader({ title, action, onAction }: SectionHeaderProps) {
   return (
     <XStack justifyContent="space-between" alignItems="center" marginBottom="$2">
-      <Text fontSize={13} fontWeight="600" color="$placeholderColor" textTransform="uppercase" letterSpacing={0.5}>
+      <Text
+        fontSize={13}
+        fontWeight="600"
+        color="$placeholderColor"
+        textTransform="uppercase"
+        letterSpacing={0.5}
+      >
         {title}
       </Text>
       {action && onAction && (
         <TouchableOpacity
           onPress={onAction}
           activeOpacity={0.6}
-          style={{ minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 }}
+          style={{
+            minWidth: 44,
+            minHeight: 44,
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 8,
+          }}
         >
           <Text fontSize={13} fontWeight="600" color={colors.brand}>
             {action}

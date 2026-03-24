@@ -45,7 +45,7 @@ class ApiClient implements ApiService {
   async login(email: string, password: string) {
     const data = await request<{ access_token: string; user_id: string; role: string }>(
       '/auth/login',
-      { method: 'POST', body: JSON.stringify({ email, password }) },
+      { method: 'POST', body: JSON.stringify({ email, password }) }
     )
     setAuthToken(data.access_token)
     return { userId: data.user_id, role: data.role }
@@ -54,7 +54,7 @@ class ApiClient implements ApiService {
   async register(email: string, password: string, role: string) {
     const data = await request<{ access_token: string; user_id: string; role: string }>(
       '/auth/signup',
-      { method: 'POST', body: JSON.stringify({ email, password, role }) },
+      { method: 'POST', body: JSON.stringify({ email, password, role }) }
     )
     setAuthToken(data.access_token)
     return { userId: data.user_id }
@@ -103,7 +103,10 @@ class ApiClient implements ApiService {
       role: m.role,
       content: m.content,
       imageUri: m.image_url,
-      toolCalls: m.tool_calls?.map((tc: any) => ({ name: tc.name as ToolCall['name'], args: tc.args })),
+      toolCalls: m.tool_calls?.map((tc: any) => ({
+        name: tc.name as ToolCall['name'],
+        args: tc.args,
+      })),
       createdAt: m.created_at,
     }))
   }
@@ -125,7 +128,7 @@ class ApiClient implements ApiService {
     const decoder = new TextDecoder()
 
     let fullText = ''
-    let toolCalls: ToolCall[] = []
+    const toolCalls: ToolCall[] = []
     let buffer = ''
     let currentEvent = ''
 
@@ -189,15 +192,17 @@ class ApiClient implements ApiService {
         downPayment: ds.down_payment,
         tradeInValue: ds.trade_in_value,
       },
-      vehicle: ds.vehicle_make ? {
-        year: ds.vehicle_year,
-        make: ds.vehicle_make,
-        model: ds.vehicle_model,
-        trim: ds.vehicle_trim,
-        vin: ds.vehicle_vin,
-        mileage: ds.vehicle_mileage,
-        color: ds.vehicle_color,
-      } : null,
+      vehicle: ds.vehicle_make
+        ? {
+            year: ds.vehicle_year,
+            make: ds.vehicle_make,
+            model: ds.vehicle_model,
+            trim: ds.vehicle_trim,
+            vin: ds.vehicle_vin,
+            mileage: ds.vehicle_mileage,
+            color: ds.vehicle_color,
+          }
+        : null,
       scorecard: {
         price: ds.score_price,
         financing: ds.score_financing,

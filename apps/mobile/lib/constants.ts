@@ -40,5 +40,5 @@ export const EMPTY_SCORECARD = {
 export const QUICK_ACTIONS = [
   { id: 'what_to_say', label: 'What Do I Say?', icon: 'MessageSquare' },
   { id: 'should_i_walk', label: 'Should I Walk?', icon: 'DoorOpen' },
-  { id: 'whats_missing', label: "What Am I Forgetting?", icon: 'CircleHelp' },
+  { id: 'whats_missing', label: 'What Am I Forgetting?', icon: 'CircleHelp' },
 ] as const

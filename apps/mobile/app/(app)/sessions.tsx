@@ -1,7 +1,14 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FlatList, TouchableOpacity, Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
-import { ThemedSafeArea, AppCard, HamburgerMenu, LoadingIndicator, RoleGuard } from '@/components/shared'
+import {
+  ThemedSafeArea,
+  AppCard,
+  HamburgerMenu,
+  LoadingIndicator,
+  RoleGuard,
+  ConfirmModal,
+} from '@/components/shared'
 import { useRouter } from 'expo-router'
 import { MessageSquare, Plus, Trash2 } from '@tamagui/lucide-icons'
 import type { Session } from '@/lib/types'
@@ -26,7 +33,12 @@ function formatDate(dateStr: string) {
   return date.toLocaleDateString()
 }
 
-function SessionCard({ item, index, onSelect, onDelete }: {
+function SessionCard({
+  item,
+  index,
+  onSelect,
+  onDelete,
+}: {
   item: Session
   index: number
   onSelect: (id: string) => void
@@ -72,7 +84,9 @@ function EmptySessionsState() {
     <Animated.View style={{ flex: 1, opacity }}>
       <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
         <MessageSquare size={48} color="$borderColor" />
-        <Text fontSize={16} fontWeight="600" color="$color">No sessions yet</Text>
+        <Text fontSize={16} fontWeight="600" color="$color">
+          No sessions yet
+        </Text>
         <Text fontSize={14} color="$placeholderColor" textAlign="center">
           Start a new deal to get going.
         </Text>
@@ -83,7 +97,8 @@ function EmptySessionsState() {
 
 export default function SessionsScreen() {
   const router = useRouter()
-  const { sessions, isLoading, loadSessions, setActiveSession, createSession, deleteSession } = useChatStore()
+  const { sessions, isLoading, loadSessions, setActiveSession, createSession, deleteSession } =
+    useChatStore()
 
   useEffect(() => {
     loadSessions()
@@ -113,9 +128,17 @@ export default function SessionsScreen() {
     }
   }
 
-  const handleDelete = async (sessionId: string) => {
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+
+  const handleDelete = (sessionId: string) => {
+    setDeleteTarget(sessionId)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteTarget(null)
     try {
-      await deleteSession(sessionId)
+      await deleteSession(deleteTarget)
     } catch {
       // Error already logged in chatStore
     }
@@ -156,7 +179,12 @@ export default function SessionsScreen() {
             <FlatList
               data={sessions}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={{ padding: 16, maxWidth: 480, width: '100%', alignSelf: 'center' }}
+              contentContainerStyle={{
+                padding: 16,
+                maxWidth: 480,
+                width: '100%',
+                alignSelf: 'center',
+              }}
               ItemSeparatorComponent={() => <YStack height={12} />}
               renderItem={({ item, index }) => (
                 <SessionCard
@@ -170,6 +198,15 @@ export default function SessionsScreen() {
           )}
         </YStack>
       </ThemedSafeArea>
+
+      <ConfirmModal
+        visible={deleteTarget !== null}
+        title="Delete Session"
+        message="Are you sure you want to delete this session? This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </RoleGuard>
   )
 }

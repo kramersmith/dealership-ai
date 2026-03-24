@@ -6,7 +6,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "lint": "eslint app/ components/ hooks/ lib/ stores/",
+    "format": "prettier --write app/ components/ hooks/ lib/ stores/",
+    "format:check": "prettier --check app/ components/ hooks/ lib/ stores/"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.33",
@@ -41,8 +44,13 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/react": "~19.2.2",
-    "typescript": "~5.9.2"
+    "eslint": "^10.1.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.57.2"
   },
   "private": true
 }

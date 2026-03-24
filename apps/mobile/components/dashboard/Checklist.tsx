@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef } from 'react'
 import { Animated, TouchableOpacity, Platform } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 
@@ -13,7 +13,15 @@ interface ChecklistProps {
   onToggle: (index: number) => void
 }
 
-function ChecklistRow({ item, index, onToggle }: { item: ChecklistItem; index: number; onToggle: (i: number) => void }) {
+function ChecklistRow({
+  item,
+  index,
+  onToggle,
+}: {
+  item: ChecklistItem
+  index: number
+  onToggle: (i: number) => void
+}) {
   const scale = useRef(new Animated.Value(1)).current
 
   const handlePress = () => {
@@ -81,10 +89,7 @@ export function Checklist({ items, onToggle }: ChecklistProps) {
 
   return (
     <AppCard gap="$2">
-      <SectionHeader
-        title="Checklist"
-        action={`${doneCount}/${items.length}`}
-      />
+      <SectionHeader title="Checklist" action={`${doneCount}/${items.length}`} />
       <YStack gap="$1">
         {items.map((item, index) => (
           <ChecklistRow key={index} item={item} index={index} onToggle={onToggle} />

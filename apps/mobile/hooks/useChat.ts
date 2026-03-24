@@ -3,13 +3,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 
 export function useChat(sessionId: string | null) {
-  const {
-    messages,
-    isSending,
-    isLoading,
-    setActiveSession,
-    sendMessage,
-  } = useChatStore()
+  const { messages, isSending, isLoading, setActiveSession, sendMessage } = useChatStore()
 
   const dealState = useDealStore((s) => s.dealState)
   const toggleChecklistItem = useDealStore((s) => s.toggleChecklistItem)
@@ -39,9 +33,9 @@ export function useChat(sessionId: string | null) {
 
   const handleQuickAction = (actionId: string) => {
     const prompts: Record<string, string> = {
-      what_to_say: "What should I say right now? Give me a script.",
+      what_to_say: 'What should I say right now? Give me a script.',
       should_i_walk: 'Based on the current deal, should I walk away?',
-      whats_missing: "What am I forgetting? What should I check before signing?",
+      whats_missing: 'What am I forgetting? What should I check before signing?',
     }
     const prompt = prompts[actionId]
     if (prompt) {
