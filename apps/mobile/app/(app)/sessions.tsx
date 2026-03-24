@@ -156,7 +156,7 @@ export default function SessionsScreen() {
             <FlatList
               data={sessions}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={{ padding: 16 }}
+              contentContainerStyle={{ padding: 16, maxWidth: 480, width: '100%', alignSelf: 'center' }}
               ItemSeparatorComponent={() => <YStack height={12} />}
               renderItem={({ item, index }) => (
                 <SessionCard

@@ -46,7 +46,7 @@ export default function SettingsScreen() {
           <XStack width={44} />
         </XStack>
 
-        <YStack padding="$4" gap="$5">
+        <YStack padding="$4" gap="$5" maxWidth={480} width="100%" alignSelf="center">
           <YStack gap="$3">
             <Text fontSize={12} color="$placeholderColor" fontWeight="600" textTransform="uppercase" letterSpacing={0.5}>
               Appearance

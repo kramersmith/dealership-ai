@@ -31,7 +31,7 @@ export default function RegisterScreen() {
 
   return (
     <ThemedSafeArea>
-      <YStack flex={1} justifyContent="center" padding="$7" backgroundColor="$background" gap="$5">
+      <YStack flex={1} justifyContent="center" padding="$7" backgroundColor="$background" gap="$5" maxWidth={480} width="100%" alignSelf="center">
         <YStack gap="$2" marginBottom="$4">
           <H2 color="$color" fontWeight="700">Create Account</H2>
           <Text color="$placeholderColor" fontSize={16}>
