@@ -102,11 +102,25 @@ Scores are updated via the `update_scorecard` tool. The AI calls this after asse
 | `buyer_chat` | Buyer-facing deal advisor session. AI helps the buyer negotiate and understand the deal. |
 | `dealer_sim` | Dealer training simulation. AI role-plays as a buyer persona for salesperson practice. |
 
-### Default Titles
+### Session Titles
 
 When no title is provided at creation:
 - `buyer_chat` sessions default to "New Deal"
 - `dealer_sim` sessions default to "New Simulation"
+
+**Auto-titling:** Sessions with `auto_title=true` (the default) receive automatic title updates:
+1. **Vehicle title (deterministic):** When the `set_vehicle` tool is called, the title updates to the vehicle description (e.g., "2024 Toyota Camry LE"). Max 40 characters.
+2. **LLM title (fallback):** If the title is still the default after the first AI exchange, the backend generates a 3-6 word title via Haiku (`CLAUDE_FAST_MODEL`) using the last 3 messages.
+
+**Manual rename:** When a user renames a session via `PATCH /api/sessions/{id}`, `auto_title` is set to `false`, preventing further automatic title updates.
+
+### Message Preview
+
+Each session stores a `last_message_preview` (max 120 characters) updated after every chat exchange. The preview shows the truncated last assistant message, or "You: {user message}" if the assistant response was empty.
+
+### Session Search
+
+The `GET /api/sessions?q=` parameter searches sessions by title (case-insensitive LIKE) and message content (subquery on the messages table). SQL LIKE wildcards in user input are escaped.
 
 ### Linked Sessions
 
@@ -318,7 +332,7 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 | Setting | Value | Description |
 |---|---|---|
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat with tool use |
-| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation) |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation, session title generation) |
 | `CLAUDE_MAX_TOKENS` | `4096` | Maximum tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages included in context window |
 
@@ -356,5 +370,6 @@ If Claude doesn't call `update_quick_actions` during the primary response, the b
 
 - Max tokens capped at 4096 per response (primary model)
 - Quick action generation capped at 256 tokens (fast model)
+- Session title generation capped at 30 tokens (fast model)
 - Message history limited to 20 messages to control context size
 - Linked session context limited to last 10 messages, each truncated to 200 characters

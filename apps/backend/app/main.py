@@ -23,6 +23,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     create_all is safe against existing tables (no-ops if they exist).
     Alembic migrations should be used for schema changes in production.
+    If the schema has changed and you have an existing dev database,
+    delete it and restart to pick up the new columns.
     """
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables ensured")

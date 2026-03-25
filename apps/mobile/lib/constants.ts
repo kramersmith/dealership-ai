@@ -1,5 +1,9 @@
 import type { BuyerContext, DealPhase, QuickAction } from './types'
 
+// ─── App ───
+
+export const APP_NAME = 'DealershipAI'
+
 // ─── Buyer Context ───
 
 export const DEFAULT_BUYER_CONTEXT: BuyerContext = 'researching'

@@ -22,7 +22,7 @@ dealership-ai/
 │   │   │   ├── (app)/           # Unified route group (AuthGuard protected)
 │   │   │   │   ├── _layout.tsx  # AuthGuard wrapper for all app routes
 │   │   │   │   ├── chat.tsx     # Main chat screen (buyer, RoleGuard)
-│   │   │   │   ├── sessions.tsx # Session list (buyer, RoleGuard)
+│   │   │   │   ├── chats.tsx   # Chats list / buyer home (buyer, RoleGuard)
 │   │   │   │   ├── simulations.tsx # Scenario list (dealer, RoleGuard)
 │   │   │   │   ├── sim/[id].tsx # Simulation chat (dealer, RoleGuard)
 │   │   │   │   └── settings.tsx # Shared settings
@@ -32,11 +32,13 @@ dealership-ai/
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
 │   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, WelcomePrompts
+│   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
 │   │   │   ├── insights/        # InsightsPanel, NumbersSummary, DealPhaseIndicator,
 │   │   │   │                    # VehicleCard, NegotiationScorecard, Checklist, DealershipTimer, QuickActions
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
+│   │   │   ├── useAnimatedValue.ts # useIconEntrance (animated icon transitions)
 │   │   │   └── useScreenWidth.ts # Responsive breakpoint hook
 │   │   ├── stores/              # Zustand: auth, chat, deal, simulation, theme
 │   │   └── lib/
@@ -44,7 +46,7 @@ dealership-ai/
 │   │       ├── theme/
 │   │       │   ├── tokens.ts    # Centralized color palette + token colors
 │   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
-│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds, animation/layout constants
+│   │       ├── constants.ts     # APP_NAME, buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds, animation/layout constants
 │       ├── platform.ts      # Platform-specific constants (USE_NATIVE_DRIVER)
 │   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.
 │   │       └── types.ts
@@ -59,6 +61,8 @@ dealership-ai/
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
 │       │       ├── claude.py    # Claude API + tool definitions + SSE streaming
+│       │       ├── post_chat_processing.py  # Preview + title updates after chat
+│       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
 │       │       └── simulation.py # Dealer training AI logic
 │       ├── alembic/             # DB migrations
 │       └── tests/               # Including test_seed.py, test_sessions.py
@@ -73,7 +77,7 @@ dealership-ai/
 
 **users** — (id, email, hashed_password, role [UserRole enum: buyer/dealer], display_name, created_at)
 
-**chat_sessions** — (id, user_id, title, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, and simulation.
+**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, and simulation.
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 
@@ -122,7 +126,7 @@ POST   /chat/{session_id}/message    # Send message → SSE stream (text + tool_
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
 GET    /chat/{session_id}/messages    # Message history
 
-GET    /sessions                      # List sessions
+GET    /sessions                      # List sessions (optional ?q= search)
 POST   /sessions                      # Create session
 GET    /sessions/{id}                 # Get session + deal_state
 PATCH  /sessions/{id}                 # Update title, link sessions
@@ -158,15 +162,17 @@ POST   /simulations/{id}/complete     # End + score
 6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
 7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
 8. Backend persists messages (including follow-up text) and executes tool calls (UPDATE deal_states)
-9. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
-10. On send failure, optimistic messages are rolled back from the chat store
+9. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
+10. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
+11. On send failure, optimistic messages are rolled back from the chat store
 
 **New session flow (buyer):**
-1. Chat screen shows WelcomePrompts — three situation cards: "Researching", "Have a deal to review", "At the dealership"
+1. Buyer lands on the chats list (`/(app)/chats`), the buyer home screen. If no sessions exist, WelcomePrompts shows as an empty state with three situation cards: "Researching", "Have a deal to review", "At the dealership".
 2. User taps a card (or skips by typing/uploading directly, which defaults to `researching`)
 3. Frontend calls `POST /api/sessions` with the selected `buyer_context`
 4. A hardcoded greeting message (per context) is injected client-side — no LLM call needed
 5. Quick actions, dashboard panel ordering, and system prompt preamble all adapt to the selected context
+6. If the buyer has only one session, the chats screen navigates directly to the chat (single-session fast-path)
 
 **Photo analysis:** Client uploads image → sends URL to backend → Claude vision extracts all numbers/details → calls multiple tools → dashboard populates in one shot.
 
@@ -179,7 +185,7 @@ POST   /simulations/{id}/complete     # End + score
 - **SSE over WebSockets** — simpler, maps directly to Claude's streaming API, no connection upgrade issues on Railway/Fly
 - **Zustand over Redux** — minimal boilerplate, perfect for this scope
 - **Single mutable deal_states row over event log** — simpler reads for MVP, can add history table later
-- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (quick action generation)
+- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (quick action generation, session title generation)
 - **Cost control** — track token usage per user, enforce daily limits
 
 ---

@@ -210,16 +210,21 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 #### 4.3 Session Management (Buyer)
 
-**Description:** Create, list, switch between, and delete chat sessions. Supports multiple active deals and linked sessions for cross-deal context.
+**Description:** Create, list, search, switch between, and delete chat sessions. The chats list is the buyer's home screen, showing sessions organized into Active and Past sections with search, pull-to-refresh, and rich session cards.
 
-**Implementation status:** Built. Session list screen, new session creation, session switching, session deletion.
+**Implementation status:** Built. Chats list screen (`/(app)/chats`) as buyer home, session creation, session switching, session deletion, search, auto-titling, message previews.
 
 **Key behaviors:**
 - Each session has its own deal state (dashboard, messages, vehicle) and buyer context
 - Sessions persist across app closures
 - Sessions can be linked to share context (e.g., researching the same vehicle at two dealers)
-- Title auto-generated or user-editable
+- **Auto-generated titles**: Sessions are titled automatically — deterministic vehicle titles (e.g., "2024 Toyota Camry LE") when a vehicle is set via `set_vehicle`, or LLM-generated via Haiku on the first exchange. Manual renames disable auto-titling.
+- **Message previews**: Each session shows a truncated preview of the last assistant message (max 120 characters)
+- **Deal summary on cards**: Session cards display a phase dot, vehicle info, current offer or listing price, and overall score status
+- **Search**: The `?q=` parameter on the sessions endpoint searches by title and message content
+- **Sectioned list**: Sessions are organized into Active (sessions with recent activity) and Past sections
 - Buyer context (researching, reviewing deal, at dealership) is set at session creation and can be updated mid-conversation by the AI via `update_buyer_context` tool
+- **Single-session fast-path**: If the buyer has only one session, they are navigated directly to it
 
 #### 4.4 Deal Decoder (Buyer)
 

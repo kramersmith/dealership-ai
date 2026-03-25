@@ -54,8 +54,8 @@ dealership-ai/
 │   │   └── migrations/   # Alembic database migrations
 │   └── mobile/           # Expo React Native application
 │       ├── app/          # Expo Router file-based routing
-│       ├── components/   # Chat, Insights, Shared UI
-│       ├── hooks/        # useChat, useScreenWidth
+│       ├── components/   # Chat, Chats (session list), Insights, Shared UI
+│       ├── hooks/        # useChat, useScreenWidth, useIconEntrance
 │       ├── lib/          # Theme (tokens + themes), API client
 │       └── stores/       # Zustand state management
 ├── docs/                 # Project documentation
@@ -82,7 +82,7 @@ graph TB
 
     subgraph Backend["FastAPI Backend (:8001)"]
         Routes["Routes Layer<br/>/api/auth · /api/sessions · /api/chat<br/>/api/deal · /api/simulations"]
-        Services["Services Layer<br/>Claude integration (tool definitions, SSE streaming)"]
+        Services["Services Layer<br/>Claude integration (tool definitions, SSE streaming)<br/>Post-chat processing · Title generation"]
         Data["Data Layer<br/>SQLAlchemy ORM · Alembic Migrations · Pydantic"]
         Routes --> Services --> Data
     end
@@ -107,6 +107,7 @@ graph TB
 8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
 10. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
+11. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
 11. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
 
 ---
@@ -185,7 +186,7 @@ graph TB
 | -------- | --------------------------------- | ---- | ----------------------------------- |
 | `POST`   | `/api/auth/signup`                | No   | Create account, return token        |
 | `POST`   | `/api/auth/login`                 | No   | Authenticate, return token          |
-| `GET`    | `/api/sessions`                   | Yes  | List user's sessions                |
+| `GET`    | `/api/sessions`                   | Yes  | List user's sessions (optional `?q=` search) |
 | `POST`   | `/api/sessions`                   | Yes  | Create session + deal state (with optional buyer_context) |
 | `GET`    | `/api/sessions/{session_id}`      | Yes  | Get single session                  |
 | `PATCH`  | `/api/sessions/{session_id}`      | Yes  | Update title or linked sessions     |
@@ -309,6 +310,8 @@ erDiagram
         string id PK
         string user_id FK
         string title
+        boolean auto_title "true if not manually renamed"
+        string last_message_preview
         string session_type "buyer_chat | dealer_sim"
         json linked_session_ids
         datetime created_at
@@ -389,15 +392,17 @@ erDiagram
 #### `chat_sessions`
 
 
-| Column               | Type     | Constraints                       | Notes                        |
-| -------------------- | -------- | --------------------------------- | ---------------------------- |
-| `id`                 | String   | PK, default UUID                  |                              |
-| `user_id`            | String   | FK -> users.id, Not Null, Indexed |                              |
-| `title`              | String   | Not Null, default "New Deal"      |                              |
-| `session_type`       | String   | Not Null, default "buyer_chat"    | `buyer_chat` or `dealer_sim` |
-| `linked_session_ids` | JSON     | default empty list                | Array of session UUIDs       |
-| `created_at`         | DateTime | default now(UTC)                  |                              |
-| `updated_at`         | DateTime | default now(UTC), on update       |                              |
+| Column                 | Type     | Constraints                       | Notes                        |
+| ---------------------- | -------- | --------------------------------- | ---------------------------- |
+| `id`                   | String   | PK, default UUID                  |                              |
+| `user_id`              | String   | FK -> users.id, Not Null, Indexed |                              |
+| `title`                | String   | Not Null, default "New Deal"      |                              |
+| `auto_title`           | Boolean  | Not Null, default `true`          | False when user manually renames |
+| `last_message_preview` | String   | Not Null, default `""`            | Truncated last assistant message (max 120 chars) |
+| `session_type`         | String   | Not Null, default "buyer_chat"    | `buyer_chat` or `dealer_sim` |
+| `linked_session_ids`   | JSON     | default empty list                | Array of session UUIDs       |
+| `created_at`           | DateTime | default now(UTC)                  |                              |
+| `updated_at`           | DateTime | default now(UTC), on update       |                              |
 
 
 #### `messages`
@@ -488,7 +493,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
 | Tool use       | 7 tool definitions (primary model only)    |
 | Streaming      | Yes (messages.stream)  |
@@ -496,7 +501,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. Quick action generation uses the async Anthropic client with the fast model (Haiku).
+The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. Quick action generation and session title generation both use the async Anthropic client with the fast model (Haiku).
 
 ### No Other External Integrations (v1)
 
@@ -552,6 +557,9 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 - **Duplicate user message prevention**: Message history is loaded BEFORE the user message is saved to the database, so the current message is not duplicated in the Claude context.
 - **Event-based SSE parsing**: The `useChat` hook uses an event-based approach to parse SSE streams, dispatching `text`, `tool_result`, `followup_done`, and `done` events to the appropriate store handlers.
 - **Error handling in stores and auth screens**: All Zustand stores and auth screens include try/catch error handling with user-facing error state.
+- **Chats list as buyer home screen**: The `/(app)/chats` screen is the buyer's landing page, showing sessions in Active/Past sections with search, pull-to-refresh, and SessionCard components displaying phase dot, message preview, and deal summary line.
+- **Auto-generated session titles**: Sessions receive automatic titles — deterministic vehicle titles when a vehicle is set, LLM-generated via Haiku as a fallback. Manual renames via PATCH set `auto_title=false`, preventing further auto-updates.
+- **Animated icon transitions**: The `useIconEntrance` hook provides animated entrance effects for navigation icons (e.g., settings gear, back button) when transitioning between screens.
 
 ---
 

@@ -55,12 +55,12 @@ FastAPI app with layered architecture:
 
 - **Routes** (`app/routes/`) — Endpoint definitions: auth, sessions, chat (SSE streaming), deals, simulations
 - **Schemas** (`app/schemas/`) — Pydantic models for request/response validation
-- **Services** (`app/services/`) — Business logic: Claude API integration with tool definitions, SSE streaming
+- **Services** (`app/services/`) — Business logic: Claude API integration with tool definitions, SSE streaming, post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback)
 - **Models** (`app/models/`) — SQLAlchemy ORM: User, ChatSession, Message, DealState, Simulation
 - **Core** (`app/core/`) — Config (Pydantic Settings), security (JWT + bcrypt), deps (FastAPI DI)
 
 Key patterns:
-- Claude integration uses two models: `claude-sonnet-4-6` (`CLAUDE_MODEL`) for primary chat with 7 tool definitions, and `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) for lightweight tasks like quick action generation
+- Claude integration uses two models: `claude-sonnet-4-6` (`CLAUDE_MODEL`) for primary chat with 7 tool definitions, and `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) for lightweight tasks like quick action generation and session title generation
 - Two-pass response architecture: if the primary Claude response contains only tool calls and no text, a follow-up text-only call generates the conversational response
 - Server-side quick actions: if Claude doesn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
 - Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (text from two-pass follow-up), `done`
@@ -75,9 +75,9 @@ Key patterns:
 React Native + Expo + Tamagui + Zustand:
 
 - **Screens** (`app/`) — Expo Router file-based routing with a single `(app)` route group (role-gated screens)
-- **Components** (`components/`) — Chat (bubbles, input, voice, WelcomePrompts), Insights (phase, numbers, scorecard, vehicle, checklist, timer, quick actions), Shared (cards, buttons, pills, menu)
+- **Components** (`components/`) — Chat (bubbles, input, voice, WelcomePrompts), Chats (SessionCard with phase dot, preview, deal summary), Insights (phase, numbers, scorecard, vehicle, checklist, timer, quick actions), Shared (cards, buttons, pills, menu)
 - **Stores** (`stores/`) — Zustand: auth, chat, deal, simulation, theme
-- **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls with event-based SSE parsing and optimistic rollback), useScreenWidth (responsive breakpoint)
+- **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls with event-based SSE parsing and optimistic rollback), useScreenWidth (responsive breakpoint), useIconEntrance (animated icon transitions between screens)
 - **API** (`lib/`) — API client connecting to the FastAPI backend (no mock layer), `snakeToCamel` utility for mapping backend snake_case fields to frontend camelCase
 
 Key patterns:
@@ -87,6 +87,8 @@ Key patterns:
 - AuthGuard component (`components/shared/AuthGuard.tsx`) protects the `(app)` route group
 - RoleGuard component (`components/shared/RoleGuard.tsx`) gates individual screens by role (buyer/dealer)
 - Role is set at registration and cannot be changed in production (role switching is dev-only via `__DEV__`)
+- Chats list screen (`/(app)/chats`) is the buyer home screen with search, Active/Past sections, SessionCard components, pull-to-refresh, WelcomePrompts empty state, and single-session fast-path
+- `APP_NAME` constant ('DealershipAI') in `lib/constants.ts`
 - Quick sign-in buttons on login screen for seed users (dev only via `__DEV__`)
 - Markdown rendering in assistant chat bubbles via `react-native-markdown-display` (user messages render as plain text)
 - Facebook dark mode color palette with light mode support

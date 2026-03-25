@@ -103,6 +103,19 @@ export interface Message {
   createdAt: string
 }
 
+// ─── Deal Summary (lightweight, for session cards) ───
+
+export interface DealSummary {
+  phase: DealPhase | null
+  vehicleYear: number | null
+  vehicleMake: string | null
+  vehicleModel: string | null
+  vehicleTrim: string | null
+  currentOffer: number | null
+  listingPrice: number | null
+  scoreOverall: ScoreStatus | null
+}
+
 // ─── Sessions ───
 
 export interface Session {
@@ -111,6 +124,7 @@ export interface Session {
   sessionType: 'buyer_chat' | 'dealer_sim'
   linkedSessionIds: string[]
   lastMessagePreview: string
+  dealSummary: DealSummary | null
   updatedAt: string
   createdAt: string
 }
@@ -142,6 +156,7 @@ export interface ApiService {
 
   // Sessions
   getSessions(): Promise<Session[]>
+  searchSessions(query: string): Promise<Session[]>
   createSession(
     type: 'buyer_chat' | 'dealer_sim',
     title?: string,

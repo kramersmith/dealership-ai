@@ -1,6 +1,6 @@
 from app.core.security import create_access_token, hash_password
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, MessageRole, SessionType, UserRole
+from app.models.enums import BuyerContext, DealPhase, MessageRole, SessionType, UserRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
@@ -173,3 +173,149 @@ def test_deal_state_response_includes_buyer_context(client, db):
     data = resp.json()
     assert "buyer_context" in data
     assert data["buyer_context"] == BuyerContext.REVIEWING_DEAL
+
+
+# --- deal_summary tests ---
+
+
+def test_session_response_includes_deal_summary(client, db):
+    """Session list response includes deal_summary with vehicle and phase info."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    # Populate deal state with vehicle info
+    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
+    deal_state.vehicle_year = 2024
+    deal_state.vehicle_make = "Honda"
+    deal_state.vehicle_model = "Civic"
+    deal_state.phase = DealPhase.NEGOTIATION
+    deal_state.current_offer = 28500
+    db.commit()
+
+    # Fetch sessions list
+    resp = client.get("/api/sessions", headers=headers)
+    assert resp.status_code == 200
+    sessions = resp.json()
+    assert len(sessions) == 1
+
+    summary = sessions[0]["deal_summary"]
+    assert summary is not None
+    assert summary["vehicle_year"] == 2024
+    assert summary["vehicle_make"] == "Honda"
+    assert summary["vehicle_model"] == "Civic"
+    assert summary["phase"] == "negotiation"
+    assert summary["current_offer"] == 28500
+
+
+def test_session_response_includes_last_message_preview(client, db):
+    """Session response includes last_message_preview field."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    # Manually set the preview (normally done by post_chat_processing)
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    session.last_message_preview = "Here is your deal analysis..."
+    db.commit()
+
+    resp = client.get("/api/sessions", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()[0]["last_message_preview"] == "Here is your deal analysis..."
+
+
+# --- search tests ---
+
+
+def test_search_sessions_by_title(client, db):
+    """Search query parameter filters sessions by title."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    # Create two sessions with different titles
+    session1 = ChatSession(user_id=user.id, title="2024 Honda Civic")
+    session2 = ChatSession(user_id=user.id, title="2023 Toyota Camry")
+    db.add_all([session1, session2])
+    db.flush()
+    db.add(DealState(session_id=session1.id))
+    db.add(DealState(session_id=session2.id))
+    db.commit()
+
+    resp = client.get("/api/sessions?q=Honda", headers=headers)
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["title"] == "2024 Honda Civic"
+
+
+def test_search_sessions_by_message_content(client, db):
+    """Search query parameter filters sessions by message content."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    session = ChatSession(user_id=user.id, title="New Deal")
+    db.add(session)
+    db.flush()
+    db.add(DealState(session_id=session.id))
+    db.add(
+        Message(
+            session_id=session.id,
+            role=MessageRole.USER,
+            content="I want to buy a Ford F-150",
+        )
+    )
+    db.commit()
+
+    resp = client.get("/api/sessions?q=F-150", headers=headers)
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["id"] == session.id
+
+
+# --- auto_title tests ---
+
+
+def test_manual_title_update_sets_auto_title_false(client, db):
+    """PATCH with a title sets auto_title to False."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    # Verify auto_title starts as True
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    assert session.auto_title is True
+
+    # Update title manually
+    resp = client.patch(
+        f"/api/sessions/{session_id}",
+        json={"title": "My Custom Title"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "My Custom Title"
+
+    # Verify auto_title is now False
+    db.refresh(session)
+    assert session.auto_title is False

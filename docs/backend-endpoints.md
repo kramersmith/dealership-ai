@@ -107,9 +107,15 @@ All session endpoints require authentication.
 
 ### GET /api/sessions
 
-List all sessions for the authenticated user, ordered by most recently updated.
+List all sessions for the authenticated user, ordered by most recently updated. Optionally filter by search query.
 
 **Auth required:** Yes
+
+**Query parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `q` | string | No | Search sessions by title or message content (case-insensitive) |
 
 **Request body:** None
 
@@ -119,14 +125,40 @@ List all sessions for the authenticated user, ordered by most recently updated.
 [
   {
     "id": "uuid",
-    "title": "New Deal",
+    "title": "2024 Toyota Camry LE",
     "session_type": "buyer_chat",
     "linked_session_ids": [],
+    "last_message_preview": "Based on the numbers you shared, this looks like a fair deal...",
+    "deal_summary": {
+      "phase": "negotiation",
+      "vehicle_year": 2024,
+      "vehicle_make": "Toyota",
+      "vehicle_model": "Camry",
+      "vehicle_trim": "LE",
+      "current_offer": 32500,
+      "listing_price": 34000,
+      "score_overall": "green"
+    },
     "created_at": "2026-03-24T12:00:00Z",
     "updated_at": "2026-03-24T12:00:00Z"
   }
 ]
 ```
+
+The `deal_summary` object is a lightweight projection of the session's deal state:
+
+| Field | Type | Description |
+|---|---|---|
+| `phase` | string | Current deal phase |
+| `vehicle_year` | integer | Vehicle year |
+| `vehicle_make` | string | Vehicle make |
+| `vehicle_model` | string | Vehicle model |
+| `vehicle_trim` | string | Vehicle trim |
+| `current_offer` | number | Current negotiation price |
+| `listing_price` | number | Listing price |
+| `score_overall` | string | Overall scorecard rating (`red`, `yellow`, `green`) |
+
+All `deal_summary` fields are nullable. The `deal_summary` itself is `null` if no deal state exists.
 
 ---
 
@@ -160,6 +192,8 @@ Create a new chat session. Also creates a deal state linked to the session, opti
   "title": "New Deal",
   "session_type": "buyer_chat",
   "linked_session_ids": [],
+  "last_message_preview": "",
+  "deal_summary": null,
   "created_at": "2026-03-24T12:00:00Z",
   "updated_at": "2026-03-24T12:00:00Z"
 }
@@ -190,9 +224,20 @@ Get a single session by ID. Only returns sessions owned by the authenticated use
 ```json
 {
   "id": "uuid",
-  "title": "New Deal",
+  "title": "2024 Toyota Camry LE",
   "session_type": "buyer_chat",
   "linked_session_ids": [],
+  "last_message_preview": "Based on the numbers you shared...",
+  "deal_summary": {
+    "phase": "negotiation",
+    "vehicle_year": 2024,
+    "vehicle_make": "Toyota",
+    "vehicle_model": "Camry",
+    "vehicle_trim": "LE",
+    "current_offer": 32500,
+    "listing_price": 34000,
+    "score_overall": "green"
+  },
   "created_at": "2026-03-24T12:00:00Z",
   "updated_at": "2026-03-24T12:00:00Z"
 }
@@ -232,6 +277,8 @@ Update a session's title or linked sessions. Only updates fields that are provid
 | `title` | string | No | New session title |
 | `linked_session_ids` | array of strings | No | Session IDs to link for shared context |
 
+When `title` is provided, the session's `auto_title` flag is set to `false`, preventing further automatic title updates.
+
 **Response:** `200 OK`
 
 ```json
@@ -240,6 +287,8 @@ Update a session's title or linked sessions. Only updates fields that are provid
   "title": "Updated Title",
   "session_type": "buyer_chat",
   "linked_session_ids": ["uuid1", "uuid2"],
+  "last_message_preview": "Here's what I found about...",
+  "deal_summary": null,
   "created_at": "2026-03-24T12:00:00Z",
   "updated_at": "2026-03-24T12:00:00Z"
 }
@@ -347,6 +396,7 @@ data: {"text": "Full follow-up text..."}
 - If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
 - Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
 - Tool call results are applied to the session's deal state
+- Post-chat processing updates `last_message_preview` and auto-generates a session title (deterministic vehicle title or LLM fallback via Haiku) when `auto_title` is true
 - Session `updated_at` timestamp is refreshed
 
 **Error responses:**

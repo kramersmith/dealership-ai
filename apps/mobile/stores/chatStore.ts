@@ -23,6 +23,7 @@ interface ChatState {
   _sessionJustCreated: boolean
 
   loadSessions: () => Promise<void>
+  searchSessions: (query: string) => Promise<Session[]>
   loadMessages: (sessionId: string) => Promise<void>
   setActiveSession: (sessionId: string) => Promise<void>
   createSession: (
@@ -57,6 +58,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       console.error('[chatStore] loadSessions failed:', err instanceof Error ? err.message : err)
       set({ isLoading: false })
+      throw err
+    }
+  },
+
+  searchSessions: async (query) => {
+    try {
+      return await api.searchSessions(query)
+    } catch (err) {
+      console.error('[chatStore] searchSessions failed:', err instanceof Error ? err.message : err)
+      throw err
     }
   },
 
@@ -213,8 +224,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
-      // Refresh sessions list to update preview
-      get().loadSessions()
+      // Refresh sessions list to update preview (fire-and-forget; failure is non-critical)
+      get()
+        .loadSessions()
+        .catch(() => {})
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
       console.error('[chatStore] sendMessage failed:', message)

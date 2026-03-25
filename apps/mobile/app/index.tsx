@@ -12,5 +12,5 @@ export default function Index() {
     return <Redirect href="/(app)/simulations" />
   }
 
-  return <Redirect href="/(app)/chat" />
+  return <Redirect href="/(app)/chats" />
 }

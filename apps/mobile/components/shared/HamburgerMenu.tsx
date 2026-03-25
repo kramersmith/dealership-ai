@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
 import { TouchableOpacity, Modal, View, Animated, Platform, Dimensions } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
-import { Menu, X, MessageSquare, List, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
+import { Menu, X, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useAuthStore } from '@/stores/authStore'
 
 interface MenuItem {
   label: string
-  Icon: typeof MessageSquare
+  Icon: typeof Settings
   route: string
 }
 
@@ -35,11 +35,7 @@ export function HamburgerMenu() {
     outputRange: ['0deg', '90deg'],
   })
 
-  const buyerItems: MenuItem[] = [
-    { label: 'Chat', Icon: MessageSquare, route: '/(app)/chat' },
-    { label: 'Sessions', Icon: List, route: '/(app)/sessions' },
-    { label: 'Settings', Icon: Settings, route: '/(app)/settings' },
-  ]
+  const buyerItems: MenuItem[] = [{ label: 'Settings', Icon: Settings, route: '/(app)/settings' }]
 
   const dealerItems: MenuItem[] = [
     { label: 'Training', Icon: Swords, route: '/(app)/simulations' },

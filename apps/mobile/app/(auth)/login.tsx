@@ -3,6 +3,7 @@ import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text, Input, Button, H2, Separator } from 'tamagui'
 import { ThemedSafeArea } from '@/components/shared'
 import { useRouter } from 'expo-router'
+import { APP_NAME } from '@/lib/constants'
 import { useAuthStore } from '@/stores/authStore'
 
 function QuickSignInButton({ label, onPress }: { label: string; onPress: () => void }) {
@@ -41,7 +42,7 @@ export default function LoginScreen() {
     if (state.role === 'dealer') {
       router.replace('/(app)/simulations')
     } else {
-      router.replace('/(app)/chat')
+      router.replace('/(app)/chats')
     }
   }
 
@@ -61,7 +62,7 @@ export default function LoginScreen() {
       >
         <YStack gap="$2" marginBottom="$4">
           <H2 color="$color" fontWeight="700">
-            Dealership AI
+            {APP_NAME}
           </H2>
           <Text color="$placeholderColor" fontSize={16}>
             Your car buying advantage

@@ -20,6 +20,7 @@ from app.services.claude import (
     stream_chat,
     stream_followup_text,
 )
+from app.services.post_chat_processing import update_session_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,19 @@ async def send_message(
             for tc in all_tool_calls:
                 logger.debug("Applying tool call: %s args=%s", tc["name"], tc["args"])
                 _apply_tool_call(deal_state, tc["name"], tc["args"])
+
+        # Update session metadata (preview + title)
+        all_messages = [*history_dicts, {"role": "user", "content": body.content}]
+        if full_text:
+            all_messages.append({"role": "assistant", "content": full_text})
+        await update_session_metadata(
+            session=session,
+            deal_state=deal_state,
+            messages=all_messages,
+            tool_calls=all_tool_calls,
+            response_text=full_text,
+            user_message=body.content,
+        )
 
         # Update session timestamp
         session.updated_at = datetime.now(timezone.utc)

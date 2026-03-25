@@ -11,10 +11,11 @@ import {
   Dimensions,
 } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
-import { ThemedSafeArea, LoadingIndicator, HamburgerMenu, RoleGuard } from '@/components/shared'
-import { Plus, X } from '@tamagui/lucide-icons'
+import { ThemedSafeArea, LoadingIndicator, RoleGuard } from '@/components/shared'
+import { Plus, X, ChevronLeft } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
+  APP_NAME,
   DEFAULT_BUYER_CONTEXT,
   FALLBACK_QUICK_ACTIONS,
   QUICK_ACTIONS_STALENESS_THRESHOLD,
@@ -25,6 +26,7 @@ import {
 import type { BuyerContext, DealState } from '@/lib/types'
 import { formatCurrency, vehicleSummary } from '@/lib/utils'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
 import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
@@ -82,6 +84,9 @@ const GREETING_MESSAGES: Record<BuyerContext, string> = {
 
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
+  const activeSession = useChatStore((state) =>
+    state.sessions.find((s) => s.id === state.activeSessionId)
+  )
   const createSession = useChatStore((state) => state.createSession)
   const addGreeting = useChatStore((state) => state.addGreeting)
   const storeQuickActions = useChatStore((state) => state.quickActions)
@@ -89,6 +94,7 @@ export default function ChatScreen() {
   const quickActionsUpdatedAtResponse = useChatStore((state) => state.quickActionsUpdatedAtResponse)
 
   const { isDesktop } = useScreenWidth()
+  const router = useRouter()
   const isCreating = useRef(false)
   const theme = useTheme()
   const mobileInsightsWidth = useMobileInsightsWidth()
@@ -243,9 +249,24 @@ export default function ChatScreen() {
       borderBottomColor="$borderColor"
       backgroundColor="$backgroundStrong"
     >
-      <HamburgerMenu />
-      <Text fontSize={18} fontWeight="700" color="$color">
-        Deal Assistant
+      <TouchableOpacity
+        onPress={() => router.push('/(app)/chats')}
+        activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityLabel="Back to chats"
+        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+      >
+        <ChevronLeft size={24} color="$color" />
+      </TouchableOpacity>
+      <Text
+        fontSize={18}
+        fontWeight="700"
+        color="$color"
+        flex={1}
+        textAlign="center"
+        numberOfLines={1}
+      >
+        {activeSession?.title || APP_NAME}
       </Text>
       <TouchableOpacity
         onPress={handleNewSession}

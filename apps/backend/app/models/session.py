@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +27,10 @@ class ChatSession(Base):
         String, ForeignKey("users.id"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False, default="New Deal")
+    auto_title: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_message_preview: Mapped[str] = mapped_column(
+        String, nullable=False, default=""
+    )
     session_type: Mapped[str] = mapped_column(
         String, nullable=False, default=SessionType.BUYER_CHAT
     )

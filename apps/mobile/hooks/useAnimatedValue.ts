@@ -1,5 +1,6 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 import { Animated } from 'react-native'
+import { useFocusEffect } from 'expo-router'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 
 /** Animates a numeric value smoothly when it changes */
@@ -56,6 +57,41 @@ export function useSlideIn(duration = 300, delay = 0) {
   }, [])
 
   return { opacity, translateY }
+}
+
+/** Rotate + fade in on focus — used to fake icon morphing across screens.
+ *  Re-fires every time the screen gains focus (including back navigation). */
+export function useIconEntrance(duration = 150) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const rotation = useRef(new Animated.Value(0)).current
+
+  // useFocusEffect fires on mount AND when the screen regains focus
+  // (e.g. navigating back from another screen)
+  useFocusEffect(
+    useCallback(() => {
+      opacity.setValue(0)
+      rotation.setValue(0)
+      Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(rotation, {
+          toValue: 1,
+          duration,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]).start()
+    }, [])
+  )
+
+  const rotate = rotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['-90deg', '0deg'],
+  })
+
+  return { opacity, rotate }
 }
 
 /** Pulse effect — scale up then back */

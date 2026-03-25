@@ -53,6 +53,8 @@ dealership-ai/
 │       │   │   └── simulations.py
 │       │   └── services/
 │       │       ├── claude.py
+│       │       ├── post_chat_processing.py
+│       │       ├── title_generator.py
 │       │       └── simulation.py
 │       └── tests/
 │           └── conftest.py
@@ -285,7 +287,7 @@ class Settings(BaseSettings):
 
 **User** — id, email, hashed_password, role (buyer/dealer), display_name, created_at
 
-**ChatSession** — id, user_id (FK), title, session_type (buyer_chat/dealer_sim), linked_session_ids (JSON), created_at, updated_at
+**ChatSession** — id, user_id (FK), title, auto_title, last_message_preview, session_type (buyer_chat/dealer_sim), linked_session_ids (JSON), created_at, updated_at
 
 **Message** — id, session_id (FK), role (user/assistant/system), content, image_url, tool_calls (JSON), created_at
 

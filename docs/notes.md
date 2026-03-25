@@ -52,7 +52,9 @@ The buyer can skip the cards entirely by typing or uploading directly (defaults 
 - When a dealer calls or texts after a walk-away, the app should surface a push notification with context: where the deal left off, suggested response, and current recommendation (accept/counter/decline).
 - Post-deal notifications: refinance timing reminders, recall alerts, maintenance milestones.
 
-### Session / deal management
+### Session / deal management (BUILT)
+- **Chats list as buyer home screen** — the `/(app)/chats` screen is the buyer's landing page, showing all sessions organized into Active and Past sections with search, pull-to-refresh, and rich SessionCard components (phase dot, message preview, deal summary).
+- **Auto-generated session titles** — sessions receive automatic titles: deterministic vehicle titles (e.g., "2024 Toyota Camry LE") when a vehicle is set, or LLM-generated via Haiku as a fallback after the first exchange. Manual renames disable auto-titling.
 - **"New chat" feature** — start a fresh conversation for a new vehicle or dealer. Users can choose to add previous chats as context (e.g. "I already analyzed this vehicle last night" or "here's what happened at the first dealer").
 - Multiple active deals supported — shopping two dealers at once is common.
 - Deal history persists — dealer calls a week later, user can pick up where they left off.

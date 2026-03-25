@@ -36,13 +36,28 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json()
 }
 
+function mapDealSummary(ds: any): import('./types').DealSummary | null {
+  if (!ds) return null
+  return {
+    phase: ds.phase ?? null,
+    vehicleYear: ds.vehicle_year ?? null,
+    vehicleMake: ds.vehicle_make ?? null,
+    vehicleModel: ds.vehicle_model ?? null,
+    vehicleTrim: ds.vehicle_trim ?? null,
+    currentOffer: ds.current_offer ?? null,
+    listingPrice: ds.listing_price ?? null,
+    scoreOverall: ds.score_overall ?? null,
+  }
+}
+
 function mapSession(s: any): Session {
   return {
     id: s.id,
     title: s.title,
     sessionType: s.session_type,
     linkedSessionIds: s.linked_session_ids || [],
-    lastMessagePreview: '',
+    lastMessagePreview: s.last_message_preview || '',
+    dealSummary: mapDealSummary(s.deal_summary),
     updatedAt: s.updated_at,
     createdAt: s.created_at,
   }
@@ -73,6 +88,11 @@ class ApiClient implements ApiService {
 
   async getSessions(): Promise<Session[]> {
     const sessions = await request<any[]>('/sessions')
+    return sessions.map(mapSession)
+  }
+
+  async searchSessions(query: string): Promise<Session[]> {
+    const sessions = await request<any[]>(`/sessions?q=${encodeURIComponent(query)}`)
     return sessions.map(mapSession)
   }
 

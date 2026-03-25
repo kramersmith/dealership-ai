@@ -1,13 +1,15 @@
-import { TouchableOpacity } from 'react-native'
+import { TouchableOpacity, Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { useRouter } from 'expo-router'
-import { ArrowLeftRight, LogOut, Sun, Moon } from '@tamagui/lucide-icons'
+import { ArrowLeftRight, LogOut, Sun, Moon, ChevronLeft } from '@tamagui/lucide-icons'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
-import { AppCard, HamburgerMenu, ThemedSafeArea } from '@/components/shared'
+import { AppCard, ThemedSafeArea } from '@/components/shared'
+import { useIconEntrance } from '@/hooks/useAnimatedValue'
 
 export default function SettingsScreen() {
   const router = useRouter()
+  const backIcon = useIconEntrance()
   const { role, setRole, logout } = useAuthStore()
   const { mode, toggle } = useThemeStore()
 
@@ -17,7 +19,7 @@ export default function SettingsScreen() {
     if (newRole === 'dealer') {
       router.replace('/(app)/simulations')
     } else {
-      router.replace('/(app)/chat')
+      router.replace('/(app)/chats')
     }
   }
 
@@ -38,7 +40,19 @@ export default function SettingsScreen() {
           borderBottomColor="$borderColor"
           backgroundColor="$backgroundStrong"
         >
-          <HamburgerMenu />
+          <TouchableOpacity
+            onPress={() => router.back()}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Animated.View
+              style={{ opacity: backIcon.opacity, transform: [{ rotate: backIcon.rotate }] }}
+            >
+              <ChevronLeft size={24} color="$color" />
+            </Animated.View>
+          </TouchableOpacity>
           <Text fontSize={18} fontWeight="700" color="$color">
             Settings
           </Text>

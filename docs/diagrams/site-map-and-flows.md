@@ -24,15 +24,15 @@ flowchart TD
     ROOT["/ (index)"] --> AUTH_CHECK{Authenticated?}
 
     AUTH_CHECK -- No --> LOGIN["/(auth)/login"]
-    AUTH_CHECK -- "Yes, role=buyer" --> APP_CHAT["/(app)/chat"]
+    AUTH_CHECK -- "Yes, role=buyer" --> APP_CHATS["/(app)/chats"]
     AUTH_CHECK -- "Yes, role=dealer" --> APP_SIMS["/(app)/simulations"]
 
     LOGIN --> REGISTER["/(auth)/register"]
     REGISTER --> LOGIN
 
-    LOGIN -- "Login as buyer" --> APP_CHAT
+    LOGIN -- "Login as buyer" --> APP_CHATS
     LOGIN -- "Login as dealer" --> APP_SIMS
-    REGISTER -- "Register (Buying)" --> APP_CHAT
+    REGISTER -- "Register (Buying)" --> APP_CHATS
     REGISTER -- "Register (Selling)" --> APP_SIMS
 
     subgraph AUTH ["(auth) — Unauthenticated"]
@@ -41,16 +41,16 @@ flowchart TD
     end
 
     subgraph APP ["(app) — Authenticated (AuthGuard)"]
+        APP_CHATS["/(app)/chats\nChats List (buyer home)\n(RoleGuard: buyer)"]
         APP_CHAT["/(app)/chat\nAI Chat + Dashboard\n(RoleGuard: buyer)"]
-        APP_SESSIONS["/(app)/sessions\nSession History\n(RoleGuard: buyer)"]
         APP_SIMS["/(app)/simulations\nScenario List\n(RoleGuard: dealer)"]
         APP_SIM_ID["/(app)/sim/[id]\nSimulation Chat\n(RoleGuard: dealer)"]
         APP_SETTINGS["/(app)/settings\nSettings (shared)"]
     end
 
-    APP_CHAT <--> APP_SESSIONS
-    APP_CHAT <--> APP_SETTINGS
-    APP_SESSIONS --> APP_CHAT
+    APP_CHATS --> APP_CHAT
+    APP_CHATS <--> APP_SETTINGS
+    APP_CHAT --> APP_CHATS
 
     APP_SIMS --> APP_SIM_ID
     APP_SIM_ID --> APP_SIMS
@@ -65,11 +65,11 @@ flowchart TD
 |---|---|:---:|:---:|---|---|
 | `/(auth)/login` | Login | -- | -- | None | Email/password login with quick sign-in buttons |
 | `/(auth)/register` | Register | -- | -- | None | Account creation with "Buying"/"Selling" role selection |
-| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist); WelcomePrompts for new sessions with buyer context selection |
-| `/(app)/sessions` | Sessions | Yes | -- | RoleGuard(buyer) | List of past chat sessions; select to resume or delete |
+| `/(app)/chats` | Chats | Yes | -- | RoleGuard(buyer) | Buyer home screen; session list with search, Active/Past sections, SessionCard (phase dot, preview, deal summary); single-session fast-path; WelcomePrompts empty state |
+| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist); back button to chats list; dynamic title from session |
 | `/(app)/simulations` | Simulations | -- | Yes | RoleGuard(dealer) | Browse AI training scenarios; start a new simulation |
 | `/(app)/sim/[id]` | Simulation Chat | -- | Yes | RoleGuard(dealer) | Live chat session for a selected training scenario |
-| `/(app)/settings` | Settings | Yes | Yes | None (shared) | App settings (theme toggle, logout) |
+| `/(app)/settings` | Settings | Yes | Yes | None (shared) | App settings (theme toggle, logout); back button with animated icon entrance |
 
 The `(app)` route group has an `AuthGuard` that redirects to `/(auth)/login` if the user is not authenticated. Individual screens use `RoleGuard` to enforce role-based access and redirect mismatched users to their default screen.
 
@@ -79,19 +79,27 @@ The `(app)` route group has an `AuthGuard` that redirects to `/(auth)/login` if 
 
 ### Buyer Flow
 
-Open app, authenticate, chat with AI advisor, receive dashboard updates, manage sessions.
+Open app, authenticate, manage sessions from chats list, chat with AI advisor, receive dashboard updates.
 
 ```mermaid
 flowchart TD
     OPEN[Open App] --> INDEX["/  — Auth Gate"]
     INDEX --> |Not authenticated| LOGIN[Login Screen]
-    INDEX --> |Authenticated as buyer| CHAT
+    INDEX --> |Authenticated as buyer| CHATS
 
-    LOGIN --> |Sign in| CHAT[Chat Screen]
+    LOGIN --> |Sign in| CHATS[Chats Screen\nBuyer Home]
 
-    CHAT --> |No active session| WELCOME[WelcomePrompts\n3 situation cards]
-    WELCOME --> |Tap card or type directly| SESSION_CREATE[Create Session\nwith buyer_context]
-    SESSION_CREATE --> |Hardcoded greeting| AI[Send Message to AI]
+    CHATS --> |No sessions| WELCOME[WelcomePrompts\nEmpty State]
+    CHATS --> |Single session| CHAT[Chat Screen]
+    CHATS --> |Select session| CHAT
+    CHATS --> |Search sessions| CHATS
+    CHATS --> |Pull to refresh| CHATS
+    CHATS --> |New session| WELCOME_NEW[WelcomePrompts\n3 situation cards]
+    WELCOME --> |Tap card| SESSION_CREATE[Create Session\nwith buyer_context]
+    WELCOME_NEW --> |Tap card| SESSION_CREATE
+    SESSION_CREATE --> |Hardcoded greeting| CHAT
+
+    CHAT --> |Send message| AI[Send Message to AI]
     AI --> |AI responds via SSE| STREAM[Stream Response]
     STREAM --> |text events| BUBBLES[Chat Bubbles Update]
     STREAM --> |tool_result events| DASHBOARD[Dashboard Updates]
@@ -102,12 +110,10 @@ flowchart TD
     DASHBOARD --> CHECKLIST[Checklist]
 
     CHAT --> |Tap quick action| AI
-    CHAT --> |Navigate via menu| SESSIONS[Sessions Screen]
-    SESSIONS --> |Select session| CHAT
-    SESSIONS --> |Delete session| SESSIONS
-    SESSIONS --> |New session| CHAT
+    CHAT --> |Back button| CHATS
 
-    CHAT --> |Navigate via menu| SETTINGS[Settings Screen]
+    CHATS --> |Gear icon| SETTINGS[Settings Screen]
+    SETTINGS --> |Back button| CHATS
     SETTINGS --> |Logout| LOGIN
 ```
 
@@ -156,6 +162,6 @@ flowchart TD
     CREATE --> ROLE_CHECK
     VALIDATE --> ROLE_CHECK
 
-    ROLE_CHECK -- buyer --> BUYER["/(app)/chat"]
+    ROLE_CHECK -- buyer --> BUYER["/(app)/chats"]
     ROLE_CHECK -- dealer --> DEALER["/(app)/simulations"]
 ```
