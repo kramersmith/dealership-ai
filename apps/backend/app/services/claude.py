@@ -145,6 +145,42 @@ DEAL_TOOLS = [
         },
     },
     {
+        "name": "update_quick_actions",
+        "description": (
+            "Suggest 2-3 quick action buttons the buyer might want to tap next. "
+            "Call this when the conversation context shifts or the previous suggestions "
+            "are no longer relevant — not necessarily after every response. "
+            "Order by relevance — most useful action first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "Button text, 2-5 words. Be specific and actionable, not generic.",
+                                "maxLength": 30,
+                            },
+                            "prompt": {
+                                "type": "string",
+                                "description": "The full prompt sent when tapped",
+                                "maxLength": 200,
+                            },
+                        },
+                        "required": ["label", "prompt"],
+                    },
+                    "minItems": 2,
+                    "maxItems": 3,
+                },
+            },
+            "required": ["actions"],
+        },
+    },
+    {
         "name": "update_buyer_context",
         "description": (
             "Update the buyer's situational context when it changes. For example, if the buyer "
@@ -200,6 +236,7 @@ IMPORTANT — Tool usage:
 - When the buyer's situation changes (e.g., they arrive at the dealership, or mention having a quote), call update_buyer_context
 - After assessing the deal quality, call update_scorecard with red/yellow/green ratings
 - When you give advice about what to check/do, call update_checklist with relevant items
+- Call update_quick_actions when the conversation context shifts or the previous suggestions are no longer relevant. You do NOT need to call it after every response — only when the suggestions should change. Order by relevance — most useful action first. Labels must be specific and actionable (not generic like "Tell me more" or "What else?"). Think of them as button text, not sentences.
 - Call tools proactively — don't wait to be asked
 - You can call multiple tools in a single response
 

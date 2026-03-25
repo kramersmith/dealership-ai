@@ -1,4 +1,12 @@
-import type { ApiService, BuyerContext, Session, Message, DealState, Scenario, ToolCall } from './types'
+import type {
+  ApiService,
+  BuyerContext,
+  Session,
+  Message,
+  DealState,
+  Scenario,
+  ToolCall,
+} from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 
 const API_BASE = 'http://localhost:8001/api'

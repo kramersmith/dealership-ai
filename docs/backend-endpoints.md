@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)

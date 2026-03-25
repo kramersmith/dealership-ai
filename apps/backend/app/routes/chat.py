@@ -84,6 +84,10 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
                 return
             deal_state.buyer_context = validated
 
+    elif tool_name == "update_quick_actions":
+        # Quick actions are ephemeral UI state handled client-side only — no persistence needed.
+        pass
+
 
 def _deal_state_to_dict(ds: DealState) -> dict:
     """Convert deal state to dict for system prompt context."""

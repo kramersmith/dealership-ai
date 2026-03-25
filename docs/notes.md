@@ -1,6 +1,6 @@
 # AI Car Buying App — Project Notes
 
-## Last updated: March 24, 2026
+## Last updated: March 25, 2026
 
 ---
 
@@ -35,7 +35,7 @@ The chat is for back-and-forth; the surrounding UI keeps the customer grounded a
 - **Active checklist** — phase-appropriate to-do items that update as you progress. Pre-visit: got pre-approval? checked market value? At dealer: inspected vehicle? test drove? got OTD sheet? F&I: declined add-ons? verified APR? numbers match verbal agreement? Items check off as you go.
 - **Vehicle card** — the vehicle you're looking at: year, make, model, trim, mileage, price. Risk flags from CARFAX/vehicle analysis. Market comparison. Swap between vehicles if comparing multiple.
 - **Negotiation scorecard** — their starting price → current offer → your target as a visual progress bar. Rate: offered vs. expected. Simple red/yellow/green status on price, rate, and terms.
-- **Quick action buttons** — context-aware actions that change based on buyer context. Researching: "Compare Prices", "New or Used?", "What's My Budget?". Reviewing deal: "Check This Price", "Hidden Fees?", "Should I Walk?". At dealership: "What Do I Say?", "Should I Walk?", "They're Pressuring Me". Data-driven via `ACTIONS_BY_CONTEXT` mapping.
+- **Quick action buttons** — LLM-generated contextual action buttons (2-3 at a time) that update dynamically as the conversation shifts, via the `update_quick_actions` tool. Static fallback actions (per buyer context) show before the first AI exchange or when dynamic actions go stale. Hidden until the first real AI exchange. Disabled during streaming. Staleness threshold: hidden after 3 AI responses without an update (4 for static fallbacks). Data-driven via `FALLBACK_QUICK_ACTIONS` constant for fallbacks.
 - **Timer / awareness cues** — how long you've been at the dealership (awareness, not pressure). Reminder if you've been waiting a long time ("they may be using wait time as a tactic").
 
 Design principle: **everything the customer needs to stay rational and informed should be visible without asking for it.**

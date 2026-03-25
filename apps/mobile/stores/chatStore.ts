@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { BuyerContext, Message, Session } from '@/lib/types'
+import type { BuyerContext, Message, QuickAction, Session } from '@/lib/types'
+import { MAX_QUICK_ACTIONS } from '@/lib/constants'
 import { api } from '@/lib/api'
 import { useDealStore } from './dealStore'
 
@@ -11,6 +12,10 @@ interface ChatState {
   isCreatingSession: boolean
   isSending: boolean
   sendError: string | null
+  quickActions: QuickAction[]
+  /** The number of assistant messages when quick actions were last updated.
+   *  Used to hide stale actions after QUICK_ACTIONS_STALENESS_THRESHOLD responses without an update. */
+  quickActionsMessageIndex: number
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
    *  wiping optimistic messages or greeting messages. */
@@ -38,6 +43,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isCreatingSession: false,
   isSending: false,
   sendError: null,
+  quickActions: [],
+  quickActionsMessageIndex: 0,
   _sessionJustCreated: false,
 
   loadSessions: async () => {
@@ -70,7 +77,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
 
-    set({ activeSessionId: sessionId, messages: [], isLoading: true, _sessionJustCreated: false })
+    set({
+      activeSessionId: sessionId,
+      messages: [],
+      quickActions: [],
+      quickActionsMessageIndex: 0,
+      isLoading: true,
+      _sessionJustCreated: false,
+    })
     try {
       const [messages] = await Promise.all([
         api.getMessages(sessionId),
@@ -95,6 +109,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sessions: [session, ...state.sessions],
         activeSessionId: session.id,
         messages: [],
+        quickActions: [],
+        quickActionsMessageIndex: 0,
         isCreatingSession: false,
         _sessionJustCreated: true,
       }))
@@ -110,10 +126,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   deleteSession: async (sessionId) => {
     try {
       await api.deleteSession(sessionId)
+      const isActive = get().activeSessionId === sessionId
       set((state) => ({
         sessions: state.sessions.filter((s) => s.id !== sessionId),
-        activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
-        messages: state.activeSessionId === sessionId ? [] : state.messages,
+        activeSessionId: isActive ? null : state.activeSessionId,
+        messages: isActive ? [] : state.messages,
+        quickActions: isActive ? [] : state.quickActions,
+        quickActionsMessageIndex: isActive ? 0 : state.quickActionsMessageIndex,
       }))
     } catch (err) {
       console.error('[chatStore] deleteSession failed:', err instanceof Error ? err.message : err)
@@ -165,10 +184,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isSending: false,
       }))
 
-      // Process tool calls -> update dashboard
+      // Process tool calls -> update dashboard and quick actions
       if (assistantMessage.toolCalls) {
         for (const toolCall of assistantMessage.toolCalls) {
-          useDealStore.getState().applyToolCall(toolCall)
+          if (toolCall.name === 'update_quick_actions') {
+            const actions = (toolCall.args.actions as QuickAction[]) ?? []
+            const validActions = actions
+              .filter((action) => action.label && action.prompt)
+              .slice(0, MAX_QUICK_ACTIONS)
+            const assistantCount = get().messages.filter(
+              (message) => message.role === 'assistant'
+            ).length
+            set({ quickActions: validActions, quickActionsMessageIndex: assistantCount })
+          } else {
+            useDealStore.getState().applyToolCall(toolCall)
+          }
         }
       }
 

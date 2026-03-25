@@ -4,7 +4,12 @@ import { YStack, XStack, Text } from 'tamagui'
 import { ThemedSafeArea, LoadingIndicator, HamburgerMenu, RoleGuard } from '@/components/shared'
 import { Plus } from '@tamagui/lucide-icons'
 import { colors } from '@/lib/colors'
-import { DEFAULT_BUYER_CONTEXT } from '@/lib/constants'
+import {
+  DEFAULT_BUYER_CONTEXT,
+  FALLBACK_QUICK_ACTIONS,
+  QUICK_ACTIONS_STALENESS_THRESHOLD,
+  STATIC_ACTIONS_STALENESS_THRESHOLD,
+} from '@/lib/constants'
 import type { BuyerContext } from '@/lib/types'
 import { useChatStore } from '@/stores/chatStore'
 import { useChat } from '@/hooks/useChat'
@@ -40,6 +45,9 @@ export default function ChatScreen() {
     handleQuickAction,
     toggleChecklistItem,
   } = useChat(activeSessionId)
+
+  const storeQuickActions = useChatStore((state) => state.quickActions)
+  const quickActionsMessageIndex = useChatStore((state) => state.quickActionsMessageIndex)
 
   const addGreeting = useChatStore((state) => state.addGreeting)
 
@@ -84,10 +92,36 @@ export default function ChatScreen() {
   // New session button (+) — resets to welcome state
   const handleNewSession = () => {
     if (isCreating.current) return
-    useChatStore.setState({ activeSessionId: null, messages: [], _sessionJustCreated: false })
+    useChatStore.setState({
+      activeSessionId: null,
+      messages: [],
+      quickActions: [],
+      quickActionsMessageIndex: 0,
+      _sessionJustCreated: false,
+    })
   }
 
   const showWelcome = !activeSessionId && !isLoading
+
+  // Compute which quick actions to show
+  const assistantMessageCount = messages.filter((message) => message.role === 'assistant').length
+  const hasRealExchange = assistantMessageCount >= 2 // greeting + at least one real AI response
+  const hasDynamicActions = storeQuickActions.length > 0
+  const isStaleDynamic =
+    hasDynamicActions &&
+    assistantMessageCount - quickActionsMessageIndex >= QUICK_ACTIONS_STALENESS_THRESHOLD
+  const isStaleStatic =
+    !hasDynamicActions && assistantMessageCount >= STATIC_ACTIONS_STALENESS_THRESHOLD
+
+  const effectiveQuickActions = hasDynamicActions
+    ? isStaleDynamic
+      ? []
+      : storeQuickActions
+    : isStaleStatic
+      ? []
+      : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? [])
+
+  const showQuickActions = !showWelcome && hasRealExchange && effectiveQuickActions.length > 0
 
   if (isLoading && messages.length === 0) {
     return (
@@ -134,11 +168,12 @@ export default function ChatScreen() {
           <ChatMessageList messages={messages} isSending={isSending} />
         </YStack>
       )}
-      {!showWelcome && (
+      {showQuickActions && (
         <YStack paddingHorizontal="$4">
           <QuickActions
-            buyerContext={dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT}
+            actions={effectiveQuickActions}
             onAction={handleQuickAction}
+            disabled={isSending}
           />
         </YStack>
       )}

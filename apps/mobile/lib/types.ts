@@ -72,6 +72,13 @@ export interface DealState {
   timerStartedAt: string | null
 }
 
+// ─── Quick Actions ───
+
+export interface QuickAction {
+  label: string
+  prompt: string
+}
+
 // ─── Messages ───
 
 export interface ToolCall {
@@ -82,6 +89,7 @@ export interface ToolCall {
     | 'set_vehicle'
     | 'update_checklist'
     | 'update_buyer_context'
+    | 'update_quick_actions'
   args: Record<string, any>
 }
 

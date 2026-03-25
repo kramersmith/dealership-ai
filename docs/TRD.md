@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-03**
+**Last updated: 2026-03-25**
 
 ---
 
@@ -98,7 +98,7 @@ graph TB
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
 4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, and linked session context.
-5. Backend opens a streaming connection to the Claude API with 6 tool definitions.
+5. Backend opens a streaming connection to the Claude API with 7 tool definitions.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays each chunk as an SSE event to the client:
   - `event: text` -- conversation text chunks
@@ -246,7 +246,7 @@ Scorecard dimensions: **price**, **financing**, **trade_in**, **fees**, **overal
 
 ### Claude Tool Definitions
 
-The AI advisor uses 6 tools to drive the frontend dashboard in real time:
+The AI advisor uses 7 tools to drive the frontend dashboard and quick actions in real time:
 
 
 | Tool                  | Purpose                                    | Required Fields                  |
@@ -256,6 +256,7 @@ The AI advisor uses 6 tools to drive the frontend dashboard in real time:
 | `update_scorecard`    | Set red/yellow/green ratings               | None (all optional)              |
 | `set_vehicle`         | Set or update the vehicle under discussion | `make`, `model`                  |
 | `update_checklist`    | Update buyer's action item checklist       | `items` (array of {label, done}) |
+| `update_quick_actions` | Suggest 2-3 dynamic quick action buttons  | `actions` (array of {label, prompt}) |
 | `update_buyer_context` | Change buyer's situational context mid-conversation | `buyer_context` |
 
 
@@ -481,7 +482,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | -------------- | ---------------------- |
 | Model          | `claude-sonnet-4-6`    |
 | Max tokens     | 1024 (configurable)    |
-| Tool use       | 6 tool definitions     |
+| Tool use       | 7 tool definitions     |
 | Streaming      | Yes (messages.stream)  |
 | Image input    | Supported (URL-based)  |
 | Client library | `anthropic` Python SDK |

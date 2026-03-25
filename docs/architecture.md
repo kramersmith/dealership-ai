@@ -42,7 +42,7 @@ dealership-ai/
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend
 │   │       ├── colors.ts        # Centralized color palette
-│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases
+│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions
 │   │       └── types.ts
 │   │
 │   └── backend/                 # FastAPI backend
@@ -136,13 +136,14 @@ POST   /simulations/{id}/complete     # End + score
 
 ## Core Architecture: Claude Tool Use → Dashboard Updates
 
-**6 tools registered with every Claude call:**
+**7 tools registered with every Claude call:**
 1. `update_deal_numbers` — prices, payments, rates (all fields optional, only update what changed)
 2. `update_deal_phase` — progression through deal phases
 3. `update_scorecard` — red/yellow/green ratings
 4. `set_vehicle` — year, make, model, trim, vin, mileage
 5. `update_checklist` — array of {label, done} items
-6. `update_buyer_context` — change the buyer's situational context mid-conversation (researching, reviewing_deal, at_dealership)
+6. `update_quick_actions` — suggest 2-3 dynamic quick action buttons (label + prompt) based on conversation context
+7. `update_buyer_context` — change the buyer's situational context mid-conversation (researching, reviewing_deal, at_dealership)
 
 **Streaming flow:**
 1. Client POSTs message

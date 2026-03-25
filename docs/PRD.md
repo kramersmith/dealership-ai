@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03-24
+**Last updated:** 2026-03-25
 
 ---
 
@@ -196,7 +196,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 | Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality | `update_scorecard` |
 | Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |
 | Dealership Timer | Tracks time at the dealership; surfaces awareness cues about wait-time tactics | N/A (client-side) |
-| Quick Actions | Context-aware prompts that change per buyer context (e.g., "Compare Prices" for researching, "Should I Walk?" for at dealership) | N/A (sends chat message) |
+| Quick Actions | LLM-generated contextual prompts (2-3 buttons) that update as conversation shifts; static fallbacks shown before first AI exchange or when dynamic actions go stale | `update_quick_actions` |
 
 **Dashboard panel ordering by buyer context:**
 
@@ -264,7 +264,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 **Implementation status:** Built. Auth, sessions, chat (SSE streaming), deals, and simulations routes all implemented.
 
 **Key details:**
-- Claude API integration with 6 tool definitions driving the dashboard (including `update_buyer_context` for mid-conversation context changes)
+- Claude API integration with 7 tool definitions driving the dashboard and quick actions (including `update_quick_actions` for dynamic quick action suggestions and `update_buyer_context` for mid-conversation context changes)
 - SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `done` events
 - SQLite for local development, PostgreSQL via Docker for production
 - Alembic database migrations
