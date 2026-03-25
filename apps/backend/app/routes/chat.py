@@ -13,7 +13,13 @@ from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.chat import ChatMessageRequest, MessageResponse
-from app.services.claude import build_messages, build_system_prompt, stream_chat
+from app.services.claude import (
+    build_messages,
+    build_system_prompt,
+    generate_quick_actions,
+    stream_chat,
+    stream_followup_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +32,7 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
         for field in [
             "msrp",
             "invoice_price",
-            "their_offer",
+            "listing_price",
             "your_target",
             "walk_away_price",
             "current_offer",
@@ -97,7 +103,7 @@ def _deal_state_to_dict(ds: DealState) -> dict:
         "numbers": {
             "msrp": ds.msrp,
             "invoice_price": ds.invoice_price,
-            "their_offer": ds.their_offer,
+            "listing_price": ds.listing_price,
             "your_target": ds.your_target,
             "walk_away_price": ds.walk_away_price,
             "current_offer": ds.current_offer,
@@ -145,6 +151,16 @@ async def send_message(
 
     logger.info("Chat message received: session_id=%s, user_id=%s", session_id, user.id)
 
+    # Load message history BEFORE saving the new user message
+    # (build_messages will append the current message separately)
+    history = (
+        db.query(Message)
+        .filter(Message.session_id == session_id)
+        .order_by(Message.created_at)
+        .all()
+    )
+    history_dicts = [{"role": m.role, "content": m.content} for m in history]
+
     # Save user message
     user_msg = Message(
         session_id=session_id,
@@ -154,15 +170,6 @@ async def send_message(
     )
     db.add(user_msg)
     db.commit()
-
-    # Load message history
-    history = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
-        .order_by(Message.created_at)
-        .all()
-    )
-    history_dicts = [{"role": m.role, "content": m.content} for m in history]
 
     # Load deal state
     deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
@@ -197,6 +204,51 @@ async def send_message(
                 full_text = done_data.get("text", "")
                 all_tool_calls = done_data.get("tool_calls", [])
 
+        # Log what Claude returned
+        logger.debug(
+            "Claude response: text_length=%d, tool_calls=%s, session_id=%s",
+            len(full_text),
+            [tc["name"] for tc in all_tool_calls],
+            session_id,
+        )
+
+        # Two-pass: if Claude responded with only tool calls and no text,
+        # fire a lightweight follow-up to generate the text response
+        if not full_text.strip() and all_tool_calls:
+            logger.info(
+                "Tool-only response detected, firing follow-up: session_id=%s",
+                session_id,
+            )
+            try:
+                async for sse_event in stream_followup_text(messages, all_tool_calls):
+                    yield sse_event
+
+                    if sse_event.startswith("event: followup_done"):
+                        data_line = sse_event.split("data: ", 1)[1].split("\n")[0]
+                        followup_data = json.loads(data_line)
+                        full_text = followup_data.get("text", "")
+            except Exception:
+                logger.exception(
+                    "Follow-up text generation failed: session_id=%s", session_id
+                )
+
+        # Generate quick actions if Claude didn't call update_quick_actions
+        called_quick_actions = any(
+            tc["name"] == "update_quick_actions" for tc in all_tool_calls
+        )
+        if not called_quick_actions:
+            quick_actions = await generate_quick_actions(messages, full_text)
+            if quick_actions:
+                qa_tool_call = {
+                    "name": "update_quick_actions",
+                    "args": {"actions": quick_actions},
+                }
+                all_tool_calls.append(qa_tool_call)
+                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_quick_actions', 'data': {'actions': quick_actions}})}\n\n"
+                logger.debug(
+                    "Generated quick actions: %s", [a["label"] for a in quick_actions]
+                )
+
         # Persist assistant message
         assistant_msg = Message(
             session_id=session_id,
@@ -209,6 +261,7 @@ async def send_message(
         # Apply tool calls to deal state
         if deal_state and all_tool_calls:
             for tc in all_tool_calls:
+                logger.debug("Applying tool call: %s args=%s", tc["name"], tc["args"])
                 _apply_tool_call(deal_state, tc["name"], tc["args"])
 
         # Update session timestamp

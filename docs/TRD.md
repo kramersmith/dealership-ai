@@ -32,7 +32,7 @@ Dealership AI is a monorepo containing a unified AI-powered smartphone applicati
 | Backend          | FastAPI + SQLAlchemy + Alembic                         |
 | Database (dev)   | SQLite                                                 |
 | Database (prod)  | PostgreSQL 15                                          |
-| AI               | Anthropic Claude API (claude-sonnet-4-6) with tool use |
+| AI               | Anthropic Claude API — Sonnet 4.6 (primary) + Haiku 4.5 (fast tasks) — with tool use |
 | Authentication   | JWT (HS256) + bcrypt                                   |
 | Streaming        | Server-Sent Events (SSE)                               |
 | Containerization | Docker Compose                                         |
@@ -98,14 +98,16 @@ graph TB
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
 4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, and linked session context.
-5. Backend opens a streaming connection to the Claude API with 7 tool definitions.
+5. Backend opens a streaming connection to the Claude API (Sonnet) with 7 tool definitions.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays each chunk as an SSE event to the client:
   - `event: text` -- conversation text chunks
-  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist)
+  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions)
   - `event: done` -- final payload with full text and all tool calls
-8. On stream completion, backend persists the assistant message and applies tool call results to `deal_states`.
-9. Client Zustand stores update in real time as SSE events arrive.
+8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
+9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
+10. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
+11. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
 
 ---
 
@@ -196,18 +198,23 @@ graph TB
 
 ### SSE Event Format
 
-All chat responses stream as `text/event-stream` with three event types:
+All chat responses stream as `text/event-stream` with these event types:
 
 ```
 event: text
 data: {"chunk": "Here's what I think about..."}
 
 event: tool_result
-data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "their_offer": 33500}}
+data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "listing_price": 33500}}
 
 event: done
 data: {"text": "Full response text...", "tool_calls": [{"name": "update_deal_numbers", "args": {...}}]}
+
+event: followup_done
+data: {"text": "Full follow-up text..."}
 ```
+
+The `followup_done` event only appears when the primary response had tool calls but no text (two-pass architecture). The follow-up text chunks are streamed as regular `text` events before the `followup_done` event.
 
 For detailed endpoint schemas (request/response bodies, status codes), see the Pydantic schemas in `apps/backend/app/schemas/`.
 
@@ -267,7 +274,7 @@ Sessions can reference other sessions via `linked_session_ids` (JSON array). Whe
 ### Message History Limits
 
 - Claude receives at most the **last 20 messages** from the current session (`CLAUDE_MAX_HISTORY`).
-- Claude `max_tokens` per response: **1024** (configurable via `CLAUDE_MAX_TOKENS`).
+- Claude `max_tokens` per response: **4096** (configurable via `CLAUDE_MAX_TOKENS`).
 
 ### Simulation Scenarios
 
@@ -325,7 +332,7 @@ erDiagram
         string buyer_context "researching | reviewing_deal | at_dealership"
         float msrp
         float invoice_price
-        float their_offer
+        float listing_price
         float your_target
         float walk_away_price
         float current_offer
@@ -418,7 +425,7 @@ erDiagram
 | `buyer_context`    | String   | Not Null, default "researching"         | `researching`, `reviewing_deal`, or `at_dealership` |
 | `msrp`             | Float    | Nullable                                |                             |
 | `invoice_price`    | Float    | Nullable                                |                             |
-| `their_offer`      | Float    | Nullable                                |                             |
+| `listing_price`      | Float    | Nullable                                |                             |
 | `your_target`      | Float    | Nullable                                |                             |
 | `walk_away_price`  | Float    | Nullable                                |                             |
 | `current_offer`    | Float    | Nullable                                |                             |
@@ -480,15 +487,16 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
-| Model          | `claude-sonnet-4-6`    |
-| Max tokens     | 1024 (configurable)    |
-| Tool use       | 7 tool definitions     |
+| Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation |
+| Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
+| Tool use       | 7 tool definitions (primary model only)    |
 | Streaming      | Yes (messages.stream)  |
 | Image input    | Supported (URL-based)  |
 | Client library | `anthropic` Python SDK |
 
 
-The integration uses the synchronous Anthropic client with the `.messages.stream()` context manager. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence.
+The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. Quick action generation uses the async Anthropic client with the fast model (Haiku).
 
 ### No Other External Integrations (v1)
 
@@ -536,10 +544,13 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 | `BuyerContext` | `researching`, `reviewing_deal`, `at_dealership` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 
-### Frontend Error Handling
+### Frontend Patterns
 
+- **snake_case to camelCase mapping**: The `snakeToCamel` utility (`lib/utils.ts`) converts backend snake_case keys to frontend camelCase, replacing hand-mapped field assignments in the deal store.
+- **Markdown rendering**: Assistant chat bubbles render content as Markdown via `react-native-markdown-display`, supporting bold, italic, lists, code blocks, blockquotes, and links. User messages render as plain text.
 - **Optimistic message rollback**: When sending a chat message, the user message is added to the store optimistically. If the backend request fails, the message is removed from the store.
-- **Event-based SSE parsing**: The `useChat` hook uses an event-based approach to parse SSE streams, dispatching `text`, `tool_result`, and `done` events to the appropriate store handlers.
+- **Duplicate user message prevention**: Message history is loaded BEFORE the user message is saved to the database, so the current message is not duplicated in the Claude context.
+- **Event-based SSE parsing**: The `useChat` hook uses an event-based approach to parse SSE streams, dispatching `text`, `tool_result`, `followup_done`, and `done` events to the appropriate store handlers.
 - **Error handling in stores and auth screens**: All Zustand stores and auth screens include try/catch error handling with user-facing error state.
 
 ---

@@ -31,7 +31,7 @@ Core differentiator: **real-time, in-person, showroom-floor AI**. No competitor 
 The chat is for back-and-forth; the surrounding UI keeps the customer grounded and rational without having to ask.
 
 - **Deal phase indicator** — Researching → At Dealership → Negotiating Price → F&I Office → Signing → Post-Purchase. Each phase auto-surfaces relevant tips and checklists.
-- **Your numbers dashboard** — target price, walk-away price, their current offer, running OTD calculation, APR at your target rate vs. their offered rate, how much you've saved (or how much they're overcharging).
+- **Your numbers dashboard** — listing price, MSRP, target price, walk-away price, current offer, monthly payment, APR. APR thresholds use named constants (`APR_GOOD_THRESHOLD`, `APR_BAD_THRESHOLD`) for color-coding.
 - **Active checklist** — phase-appropriate to-do items that update as you progress. Pre-visit: got pre-approval? checked market value? At dealer: inspected vehicle? test drove? got OTD sheet? F&I: declined add-ons? verified APR? numbers match verbal agreement? Items check off as you go.
 - **Vehicle card** — the vehicle you're looking at: year, make, model, trim, mileage, price. Risk flags from CARFAX/vehicle analysis. Market comparison. Swap between vehicles if comparing multiple.
 - **Negotiation scorecard** — their starting price → current offer → your target as a visual progress bar. Rate: offered vs. expected. Simple red/yellow/green status on price, rate, and terms.

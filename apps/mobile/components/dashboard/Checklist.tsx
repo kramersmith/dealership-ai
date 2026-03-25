@@ -78,7 +78,7 @@ export function Checklist({ items, onToggle }: ChecklistProps) {
       <Animated.View style={{ opacity }}>
         <AppCard>
           <Text fontSize={13} color="$placeholderColor" textAlign="center">
-            No checklist items yet. Start chatting to build your checklist.
+            Your checklist will appear here as the AI identifies things to check.
           </Text>
         </AppCard>
       </Animated.View>

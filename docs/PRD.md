@@ -174,8 +174,10 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 **Key behaviors:**
 - Conversational AI that understands car buying context
-- Streams responses in real time via SSE (text chunks + tool results)
+- Streams responses in real time via SSE (text chunks + tool results), with two-pass follow-up for tool-only responses
+- Assistant messages render as Markdown (bold, lists, code blocks, links) via `react-native-markdown-display`; user messages render as plain text
 - Automatically calls tools to update the persistent dashboard when deal information changes
+- Server-side quick action generation via Haiku when Claude doesn't suggest them
 - Maintains conversation history within a session (last 20 messages sent to Claude)
 - Voice input via device speech-to-text
 - Context-aware system prompt preambles adapt AI tone and advice style based on buyer context (researching, reviewing a deal, at the dealership)
@@ -191,7 +193,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 | Component | Purpose | Tool |
 |-----------|---------|------|
 | Deal Phase Indicator | Shows current stage: Researching, At Dealership, Negotiating, F&I, Signing, Post-Purchase | `update_deal_phase` |
-| Numbers Dashboard | Target price, walk-away price, current offer, OTD calculation, APR, monthly payment, down payment, trade-in value | `update_deal_numbers` |
+| Numbers Dashboard | Listing price, MSRP, target price, walk-away price, current offer, monthly payment, APR (with named threshold constants for color-coding) | `update_deal_numbers` |
 | Vehicle Card | Year, make, model, trim, VIN, mileage, color of the vehicle under consideration | `set_vehicle` |
 | Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality | `update_scorecard` |
 | Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |
@@ -264,8 +266,9 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 **Implementation status:** Built. Auth, sessions, chat (SSE streaming), deals, and simulations routes all implemented.
 
 **Key details:**
-- Claude API integration with 7 tool definitions driving the dashboard and quick actions (including `update_quick_actions` for dynamic quick action suggestions and `update_buyer_context` for mid-conversation context changes)
-- SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `done` events
+- Claude API integration with two models: Sonnet (primary, with 7 tool definitions) and Haiku (fast, for quick action generation)
+- Two-pass response architecture: tool-only responses trigger a follow-up text generation call
+- SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (two-pass text), `done` events
 - SQLite for local development, PostgreSQL via Docker for production
 - Alembic database migrations
 - Pydantic request/response validation

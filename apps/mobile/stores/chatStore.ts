@@ -13,9 +13,10 @@ interface ChatState {
   isSending: boolean
   sendError: string | null
   quickActions: QuickAction[]
-  /** The number of assistant messages when quick actions were last updated.
-   *  Used to hide stale actions after QUICK_ACTIONS_STALENESS_THRESHOLD responses without an update. */
-  quickActionsMessageIndex: number
+  /** Increments on every AI response (including tool-only responses with no text). */
+  aiResponseCount: number
+  /** The aiResponseCount when quick actions were last updated. */
+  quickActionsUpdatedAtResponse: number
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
    *  wiping optimistic messages or greeting messages. */
@@ -44,7 +45,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isSending: false,
   sendError: null,
   quickActions: [],
-  quickActionsMessageIndex: 0,
+  aiResponseCount: 0,
+  quickActionsUpdatedAtResponse: 0,
   _sessionJustCreated: false,
 
   loadSessions: async () => {
@@ -81,7 +83,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeSessionId: sessionId,
       messages: [],
       quickActions: [],
-      quickActionsMessageIndex: 0,
+      aiResponseCount: 0,
+      quickActionsUpdatedAtResponse: 0,
       isLoading: true,
       _sessionJustCreated: false,
     })
@@ -110,7 +113,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId: session.id,
         messages: [],
         quickActions: [],
-        quickActionsMessageIndex: 0,
+        aiResponseCount: 0,
+        quickActionsUpdatedAtResponse: 0,
         isCreatingSession: false,
         _sessionJustCreated: true,
       }))
@@ -132,7 +136,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId: isActive ? null : state.activeSessionId,
         messages: isActive ? [] : state.messages,
         quickActions: isActive ? [] : state.quickActions,
-        quickActionsMessageIndex: isActive ? 0 : state.quickActionsMessageIndex,
+        aiResponseCount: isActive ? 0 : state.aiResponseCount,
+        quickActionsUpdatedAtResponse: isActive ? 0 : state.quickActionsUpdatedAtResponse,
       }))
     } catch (err) {
       console.error('[chatStore] deleteSession failed:', err instanceof Error ? err.message : err)
@@ -178,11 +183,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Get assistant response
       const assistantMessage = await api.sendMessage(activeSessionId, content, imageUri)
 
-      // Add assistant message to chat
-      set((state) => ({
-        messages: [...state.messages, assistantMessage],
-        isSending: false,
-      }))
+      // Track every AI response for staleness calculation (including tool-only)
+      const newResponseCount = get().aiResponseCount + 1
+      set({ aiResponseCount: newResponseCount })
+
+      // Add assistant message to chat (the backend's two-pass approach ensures
+      // there's always text, even for tool-only first responses)
+      if (assistantMessage.content.trim()) {
+        set((state) => ({
+          messages: [...state.messages, assistantMessage],
+          isSending: false,
+        }))
+      } else {
+        set({ isSending: false })
+      }
 
       // Process tool calls -> update dashboard and quick actions
       if (assistantMessage.toolCalls) {
@@ -192,10 +206,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const validActions = actions
               .filter((action) => action.label && action.prompt)
               .slice(0, MAX_QUICK_ACTIONS)
-            const assistantCount = get().messages.filter(
-              (message) => message.role === 'assistant'
-            ).length
-            set({ quickActions: validActions, quickActionsMessageIndex: assistantCount })
+            set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
           } else {
             useDealStore.getState().applyToolCall(toolCall)
           }

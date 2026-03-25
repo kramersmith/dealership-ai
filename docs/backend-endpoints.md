@@ -322,7 +322,7 @@ data: {"chunk": "this is a fair deal."}
 **`tool_result` event** — Dashboard updates from AI tool calls:
 ```
 event: tool_result
-data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "their_offer": 33500}}
+data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "listing_price": 33500}}
 
 event: tool_result
 data: {"tool": "update_scorecard", "data": {"score_price": "green", "score_overall": "yellow"}}
@@ -331,12 +331,21 @@ data: {"tool": "update_scorecard", "data": {"score_price": "green", "score_overa
 **`done` event** — Final event with complete response:
 ```
 event: done
-data: {"text": "Based on the numbers you've shared, this is a fair deal.", "tool_calls": [{"name": "update_deal_numbers", "args": {"msrp": 35000, "their_offer": 33500}}]}
+data: {"text": "Based on the numbers you've shared, this is a fair deal.", "tool_calls": [{"name": "update_deal_numbers", "args": {"msrp": 35000, "listing_price": 33500}}]}
+```
+
+**`followup_done` event** — Follow-up text when primary response had tools but no conversational text (two-pass):
+```
+event: followup_done
+data: {"text": "Full follow-up text..."}
 ```
 
 **Side effects:**
+- Message history is loaded before the user message is saved (prevents duplicate user messages in Claude context)
 - User message is persisted before streaming begins
-- Assistant message (with tool calls) is persisted after streaming completes
+- If Claude responds with only tool calls and no text, a follow-up text-only call generates conversational text (two-pass architecture)
+- If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
+- Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
 - Tool call results are applied to the session's deal state
 - Session `updated_at` timestamp is refreshed
 
@@ -423,7 +432,7 @@ Get the current deal state for a session.
   "buyer_context": "researching",
   "msrp": null,
   "invoice_price": null,
-  "their_offer": null,
+  "listing_price": null,
   "your_target": null,
   "walk_away_price": null,
   "current_offer": null,

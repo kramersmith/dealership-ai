@@ -27,9 +27,9 @@ DEAL_TOOLS = [
                     "type": "number",
                     "description": "Dealer invoice price",
                 },
-                "their_offer": {
+                "listing_price": {
                     "type": "number",
-                    "description": "The dealer's current asking/offer price",
+                    "description": "The price the vehicle is listed or advertised for, before negotiation or fees",
                 },
                 "your_target": {
                     "type": "number",
@@ -41,7 +41,7 @@ DEAL_TOOLS = [
                 },
                 "current_offer": {
                     "type": "number",
-                    "description": "The current negotiation price on the table",
+                    "description": "The current price on the table (out-the-door, negotiated, or latest offer). Set this whenever the buyer mentions a specific price being offered.",
                 },
                 "monthly_payment": {
                     "type": "number",
@@ -229,21 +229,25 @@ Your job:
 - Analyze deal sheets, CARFAX reports, and financing terms
 - Keep advice practical and actionable
 
-IMPORTANT — Tool usage:
+RESPONSE FORMAT: First, write your advice/analysis/script to the user. Then call any relevant tools to update the dashboard. Text comes first, tools come second.
+
+Tool usage:
 - Whenever the user mentions a vehicle (year, make, model), call set_vehicle
 - Whenever financial numbers are discussed (price, offer, APR, payment), call update_deal_numbers
 - When the conversation indicates a phase change (arriving at dealer, test driving, negotiating, in F&I, signing), call update_deal_phase
 - When the buyer's situation changes (e.g., they arrive at the dealership, or mention having a quote), call update_buyer_context
 - After assessing the deal quality, call update_scorecard with red/yellow/green ratings
 - When you give advice about what to check/do, call update_checklist with relevant items
-- Call update_quick_actions when the conversation context shifts or the previous suggestions are no longer relevant. You do NOT need to call it after every response — only when the suggestions should change. Order by relevance — most useful action first. Labels must be specific and actionable (not generic like "Tell me more" or "What else?"). Think of them as button text, not sentences.
+- Call update_quick_actions on your FIRST response and whenever the conversation context shifts. You do not need to call it after every response — but always call it on the first message and when suggestions should change. Order by relevance — most useful action first. Labels must be specific and actionable (not generic like "Tell me more" or "What else?"). Think of them as button text, not sentences.
 - Call tools proactively — don't wait to be asked
 - You can call multiple tools in a single response
 
-Keep responses concise — car advice doesn't need essays. Use short paragraphs and scripts the buyer can use immediately.
-
 {deal_state_context}
 {linked_context}"""
+
+FOLLOWUP_SYSTEM_PROMPT = """You are a car buying advisor. The user sent a message and you updated their dashboard with tool calls, but you did not include any text response. Now respond to the user with your analysis and advice based on what you just processed. Be direct and concise. Do not call any tools."""
+
+QUICK_ACTIONS_PROMPT = """Based on the conversation so far, suggest 2-3 quick action buttons the buyer might want to tap next. Return a JSON array of objects with "label" (2-5 word button text, specific and actionable) and "prompt" (the full message sent when tapped). Order by relevance. Return ONLY the JSON array, no other text."""
 
 
 def build_system_prompt(
@@ -366,3 +370,99 @@ async def stream_chat(
                     current_tool_input = ""
 
     yield f"event: done\ndata: {json.dumps({'text': full_text, 'tool_calls': tool_calls})}\n\n"
+
+
+async def stream_followup_text(
+    messages: list[dict],
+    tool_calls_summary: list[dict],
+) -> AsyncGenerator[str, None]:
+    """Generate a text-only follow-up when the primary response had tools but no text.
+
+    This is a lightweight second pass — no tool definitions, just text generation.
+    The messages include the original conversation plus a summary of what tools were called.
+    """
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    # Build a summary of what was processed
+    tool_summary_parts = []
+    for tc in tool_calls_summary:
+        tool_summary_parts.append(f"{tc['name']}: {json.dumps(tc['args'])}")
+    tool_summary = "\n".join(tool_summary_parts)
+
+    # Add the tool-call context as an assistant+user turn so Claude knows what happened
+    followup_messages = messages + [
+        {"role": "assistant", "content": f"[I updated the dashboard: {tool_summary}]"},
+        {
+            "role": "user",
+            "content": "Now give me your analysis and advice based on what I told you.",
+        },
+    ]
+
+    full_text = ""
+    with client.messages.stream(
+        model=settings.CLAUDE_MODEL,
+        max_tokens=settings.CLAUDE_MAX_TOKENS,
+        system=FOLLOWUP_SYSTEM_PROMPT,
+        messages=followup_messages,  # type: ignore[arg-type]
+    ) as stream:
+        for event in stream:
+            if event.type == "content_block_delta":
+                if hasattr(event.delta, "type") and event.delta.type == "text_delta":
+                    chunk = event.delta.text
+                    full_text += chunk
+                    yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
+
+    yield f"event: followup_done\ndata: {json.dumps({'text': full_text})}\n\n"
+
+
+async def generate_quick_actions(
+    messages: list[dict], assistant_text: str
+) -> list[dict]:
+    """Generate quick action suggestions based on conversation context.
+
+    This is a non-streaming, lightweight call that returns structured data.
+    Called when the primary response didn't include update_quick_actions.
+    Uses the async client to avoid blocking the event loop.
+    """
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    # Trim assistant text to save tokens — Haiku only needs recent context
+    trimmed_text = (
+        assistant_text[-500:] if len(assistant_text) > 500 else assistant_text
+    )
+
+    context_messages = messages[-3:] + [
+        {"role": "assistant", "content": trimmed_text},
+        {"role": "user", "content": QUICK_ACTIONS_PROMPT},
+    ]
+
+    try:
+        response = await client.messages.create(
+            model=settings.CLAUDE_FAST_MODEL,
+            max_tokens=256,
+            messages=context_messages,  # type: ignore[arg-type]
+        )
+        # Extract text from response, handling different content block types
+        text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                text = block.text.strip()
+                break
+        logger.debug(
+            "Quick actions raw response: %s", text[:200] if text else "(empty)"
+        )
+        if not text:
+            return []
+        # Strip markdown code fences if Haiku wraps the JSON
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        actions = json.loads(text)
+        if isinstance(actions, list):
+            return [
+                {"label": a["label"][:30], "prompt": a["prompt"][:200]}
+                for a in actions[:3]
+                if isinstance(a, dict) and a.get("label") and a.get("prompt")
+            ]
+    except Exception:
+        logger.exception("Failed to generate quick actions")
+    return []

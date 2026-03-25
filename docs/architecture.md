@@ -5,7 +5,7 @@ Greenfield build of a unified AI-powered smartphone app for the car buying exper
 
 The key architectural challenge: the persistent UI (dashboard, scorecard, checklist, vehicle card) must update automatically from the LLM conversation. When a user says "they're offering $34k", the numbers dashboard updates live.
 
-**Solution: Claude's tool_use feature.** Claude returns structured tool calls (e.g. `update_deal_numbers({ their_offer: 34000 })`) alongside conversational text. The backend executes the tool calls (updates DB), streams both text and tool results to the client via SSE, and the frontend updates the Zustand store → dashboard re-renders.
+**Solution: Claude's tool_use feature.** Claude returns structured tool calls (e.g. `update_deal_numbers({ listing_price: 34000 })`) alongside conversational text. The backend executes the tool calls (updates DB), streams both text and tool results to the client via SSE, and the frontend updates the Zustand store → dashboard re-renders.
 
 ---
 
@@ -31,7 +31,7 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble, ChatInput, VoiceButton, WelcomePrompts
+│   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, WelcomePrompts
 │   │   │   ├── dashboard/       # DealPhase, NumbersDash, Checklist,
 │   │   │   │                    # VehicleCard, Scorecard, Timer
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
@@ -42,7 +42,8 @@ dealership-ai/
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend
 │   │       ├── colors.ts        # Centralized color palette
-│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions
+│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds
+│   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.
 │   │       └── types.ts
 │   │
 │   └── backend/                 # FastAPI backend
@@ -76,7 +77,7 @@ dealership-ai/
 **deal_states** — one mutable row per session, the persistent UI state:
 - Buyer context: BuyerContext enum (researching, reviewing_deal, at_dealership) — set at session creation, updatable mid-conversation
 - Phase: DealPhase enum (research → initial_contact → test_drive → negotiation → financing → closing)
-- Numbers: msrp, invoice_price, their_offer, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
+- Numbers: msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
 - Vehicle: year, make, model, trim, vin, mileage, color
 - Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (ScoreStatus enum: red/yellow/green)
 - Checklist: JSON array of {label, done}
@@ -147,12 +148,15 @@ POST   /simulations/{id}/complete     # End + score
 
 **Streaming flow:**
 1. Client POSTs message
-2. Backend loads history + linked session context, calls Claude with tools (system prompt includes a context-aware preamble based on the session's `buyer_context`)
-3. Claude streams text + tool_use blocks
-4. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
-5. Backend persists messages and executes tool calls (UPDATE deal_states)
-6. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render
-7. On send failure, optimistic messages are rolled back from the chat store
+2. Backend loads message history BEFORE saving the user message (avoids duplicate user messages in Claude context), then saves the user message
+3. Backend loads deal state + linked session context, calls Claude with tools (system prompt includes a context-aware preamble based on the session's `buyer_context`)
+4. Claude streams text + tool_use blocks
+5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
+6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
+7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
+8. Backend persists messages (including follow-up text) and executes tool calls (UPDATE deal_states)
+9. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
+10. On send failure, optimistic messages are rolled back from the chat store
 
 **New session flow (buyer):**
 1. Chat screen shows WelcomePrompts — three situation cards: "Researching", "Have a deal to review", "At the dealership"
@@ -172,7 +176,7 @@ POST   /simulations/{id}/complete     # End + score
 - **SSE over WebSockets** — simpler, maps directly to Claude's streaming API, no connection upgrade issues on Railway/Fly
 - **Zustand over Redux** — minimal boilerplate, perfect for this scope
 - **Single mutable deal_states row over event log** — simpler reads for MVP, can add history table later
-- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — balances cost and quality for MVP, with max_tokens: 1024 and history truncated to last 20 messages
+- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (quick action generation)
 - **Cost control** — track token usage per user, enforce daily limits
 
 ---

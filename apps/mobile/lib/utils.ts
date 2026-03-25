@@ -1,3 +1,13 @@
+/** Convert snake_case keys to camelCase. Handles nested objects shallowly. */
+export function snakeToCamel(obj: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {}
+  for (const [key, value] of Object.entries(obj)) {
+    const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+    result[camelKey] = value
+  }
+  return result
+}
+
 export function formatCurrency(value: number | null): string {
   if (value === null) return '—'
   return new Intl.NumberFormat('en-US', {

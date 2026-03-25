@@ -74,7 +74,7 @@ export const SCORE_COLORS = {
 export const EMPTY_DEAL_NUMBERS = {
   msrp: null,
   invoicePrice: null,
-  theirOffer: null,
+  listingPrice: null,
   yourTarget: null,
   walkAwayPrice: null,
   currentOffer: null,
@@ -84,6 +84,14 @@ export const EMPTY_DEAL_NUMBERS = {
   downPayment: null,
   tradeInValue: null,
 } as const
+
+// ─── APR Thresholds ───
+
+/** APR at or below this is considered good. */
+export const APR_GOOD_THRESHOLD = 6.5
+
+/** APR at or above this is considered bad. */
+export const APR_BAD_THRESHOLD = 9
 
 export const EMPTY_SCORECARD = {
   price: null,

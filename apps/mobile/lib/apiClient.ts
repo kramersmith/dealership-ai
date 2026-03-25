@@ -198,7 +198,7 @@ class ApiClient implements ApiService {
       numbers: {
         msrp: ds.msrp,
         invoicePrice: ds.invoice_price,
-        theirOffer: ds.their_offer,
+        listingPrice: ds.listing_price,
         yourTarget: ds.your_target,
         walkAwayPrice: ds.walk_away_price,
         currentOffer: ds.current_offer,

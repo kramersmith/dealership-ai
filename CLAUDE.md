@@ -60,8 +60,10 @@ FastAPI app with layered architecture:
 - **Core** (`app/core/`) — Config (Pydantic Settings), security (JWT + bcrypt), deps (FastAPI DI)
 
 Key patterns:
-- Claude integration (`claude-sonnet-4-6`) uses 7 tool definitions (update_deal_numbers, update_deal_phase, update_scorecard, set_vehicle, update_checklist, update_quick_actions, update_buyer_context) to drive the frontend dashboard and quick actions
-- Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (dashboard updates), `done`
+- Claude integration uses two models: `claude-sonnet-4-6` (`CLAUDE_MODEL`) for primary chat with 7 tool definitions, and `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) for lightweight tasks like quick action generation
+- Two-pass response architecture: if the primary Claude response contains only tool calls and no text, a follow-up text-only call generates the conversational response
+- Server-side quick actions: if Claude doesn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
+- Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (text from two-pass follow-up), `done`
 - Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, Difficulty (all `StrEnum`)
 - Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
 - Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)
@@ -76,7 +78,7 @@ React Native + Expo + Tamagui + Zustand:
 - **Components** (`components/`) — Chat (bubbles, input, voice, WelcomePrompts), Dashboard (phase, numbers, scorecard, vehicle, checklist, timer, quick actions), Shared (cards, buttons, pills, menu)
 - **Stores** (`stores/`) — Zustand: auth, chat, deal, simulation, theme
 - **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls with event-based SSE parsing and optimistic rollback), useScreenWidth (responsive breakpoint)
-- **API** (`lib/`) — API client connecting to the FastAPI backend (no mock layer)
+- **API** (`lib/`) — API client connecting to the FastAPI backend (no mock layer), `snakeToCamel` utility for mapping backend snake_case fields to frontend camelCase
 
 Key patterns:
 - WelcomePrompts component (`components/chat/WelcomePrompts.tsx`) shows 3 situation cards when starting a new buyer chat session; user can skip by typing directly
@@ -86,6 +88,7 @@ Key patterns:
 - RoleGuard component (`components/shared/RoleGuard.tsx`) gates individual screens by role (buyer/dealer)
 - Role is set at registration and cannot be changed in production (role switching is dev-only via `__DEV__`)
 - Quick sign-in buttons on login screen for seed users (dev only via `__DEV__`)
+- Markdown rendering in assistant chat bubbles via `react-native-markdown-display` (user messages render as plain text)
 - Facebook dark mode color palette with light mode support
 - All colors centralized in `lib/colors.ts` — no hardcoded hex in components
 - Mobile-first with responsive desktop layout (dashboard sidebar at ≥768px)
@@ -96,7 +99,7 @@ Key patterns:
 ### Environment
 
 Both apps use `.env` files (copy from `.env.example`). Key variables:
-- Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CORS_ORIGINS`
+- Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_FAST_MODEL`, `CORS_ORIGINS`
 - Frontend: Connects to real FastAPI backend
 
 ## Commit Conventions

@@ -10,6 +10,7 @@ import type {
   ToolCall,
 } from '@/lib/types'
 import { DEFAULT_BUYER_CONTEXT, EMPTY_DEAL_NUMBERS, EMPTY_SCORECARD } from '@/lib/constants'
+import { snakeToCamel } from '@/lib/utils'
 import { api } from '@/lib/api'
 
 interface DealStore {
@@ -60,23 +61,11 @@ export const useDealStore = create<DealStore>((set, get) => ({
 
     switch (toolCall.name) {
       case 'update_deal_numbers': {
-        const updates: Partial<DealNumbers> = {}
-        const args = toolCall.args
-        if (args.msrp !== undefined) updates.msrp = args.msrp
-        if (args.invoicePrice !== undefined) updates.invoicePrice = args.invoicePrice
-        if (args.theirOffer !== undefined) updates.theirOffer = args.theirOffer
-        if (args.yourTarget !== undefined) updates.yourTarget = args.yourTarget
-        if (args.walkAwayPrice !== undefined) updates.walkAwayPrice = args.walkAwayPrice
-        if (args.currentOffer !== undefined) updates.currentOffer = args.currentOffer
-        if (args.monthlyPayment !== undefined) updates.monthlyPayment = args.monthlyPayment
-        if (args.apr !== undefined) updates.apr = args.apr
-        if (args.loanTermMonths !== undefined) updates.loanTermMonths = args.loanTermMonths
-        if (args.downPayment !== undefined) updates.downPayment = args.downPayment
-        if (args.tradeInValue !== undefined) updates.tradeInValue = args.tradeInValue
+        const camelArgs = snakeToCamel(toolCall.args) as Partial<DealNumbers>
         set({
           dealState: {
             ...dealState,
-            numbers: { ...dealState.numbers, ...updates },
+            numbers: { ...dealState.numbers, ...camelArgs },
           },
         })
         break
@@ -93,13 +82,14 @@ export const useDealStore = create<DealStore>((set, get) => ({
       }
 
       case 'update_scorecard': {
+        // Scorecard args have score_ prefix: score_price -> price
+        const camelArgs = snakeToCamel(toolCall.args)
         const updates: Partial<Scorecard> = {}
-        const args = toolCall.args
-        if (args.price !== undefined) updates.price = args.price
-        if (args.financing !== undefined) updates.financing = args.financing
-        if (args.tradeIn !== undefined) updates.tradeIn = args.tradeIn
-        if (args.fees !== undefined) updates.fees = args.fees
-        if (args.overall !== undefined) updates.overall = args.overall
+        if (camelArgs.scorePrice !== undefined) updates.price = camelArgs.scorePrice
+        if (camelArgs.scoreFinancing !== undefined) updates.financing = camelArgs.scoreFinancing
+        if (camelArgs.scoreTradeIn !== undefined) updates.tradeIn = camelArgs.scoreTradeIn
+        if (camelArgs.scoreFees !== undefined) updates.fees = camelArgs.scoreFees
+        if (camelArgs.scoreOverall !== undefined) updates.overall = camelArgs.scoreOverall
         set({
           dealState: {
             ...dealState,
@@ -110,16 +100,7 @@ export const useDealStore = create<DealStore>((set, get) => ({
       }
 
       case 'set_vehicle': {
-        const args = toolCall.args
-        const vehicle: Vehicle = {
-          year: args.year,
-          make: args.make,
-          model: args.model,
-          trim: args.trim,
-          vin: args.vin,
-          mileage: args.mileage,
-          color: args.color,
-        }
+        const vehicle = snakeToCamel(toolCall.args) as Vehicle
         set({
           dealState: { ...dealState, vehicle },
         })
@@ -135,10 +116,11 @@ export const useDealStore = create<DealStore>((set, get) => ({
       }
 
       case 'update_buyer_context': {
+        const camelArgs = snakeToCamel(toolCall.args)
         set({
           dealState: {
             ...dealState,
-            buyerContext: toolCall.args.buyer_context as BuyerContext,
+            buyerContext: camelArgs.buyerContext as BuyerContext,
           },
         })
         break

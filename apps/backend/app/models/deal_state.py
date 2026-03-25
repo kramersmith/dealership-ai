@@ -30,7 +30,7 @@ class DealState(Base):
     # Numbers
     msrp: Mapped[float | None] = mapped_column(Float, nullable=True)
     invoice_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    their_offer: Mapped[float | None] = mapped_column(Float, nullable=True)
+    listing_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     your_target: Mapped[float | None] = mapped_column(Float, nullable=True)
     walk_away_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_offer: Mapped[float | None] = mapped_column(Float, nullable=True)

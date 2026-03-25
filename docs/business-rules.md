@@ -140,7 +140,7 @@ Updates the financial dashboard when prices, payments, rates, or financial terms
 |---|---|---|
 | `msrp` | number | Manufacturer's suggested retail price |
 | `invoice_price` | number | Dealer invoice price |
-| `their_offer` | number | Dealer's current asking/offer price |
+| `listing_price` | number | The price the vehicle is listed or advertised for, before negotiation or fees |
 | `your_target` | number | Buyer's target price |
 | `walk_away_price` | number | Price above which the buyer should walk away |
 | `current_offer` | number | Current negotiation price on the table |
@@ -317,8 +317,9 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 
 | Setting | Value | Description |
 |---|---|---|
-| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Claude model used for all AI interactions |
-| `CLAUDE_MAX_TOKENS` | `1024` | Maximum tokens per response |
+| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat with tool use |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation) |
+| `CLAUDE_MAX_TOKENS` | `4096` | Maximum tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages included in context window |
 
 ### Streaming
@@ -330,9 +331,30 @@ Chat responses are streamed via Server-Sent Events (SSE) with three event types:
 | `text` | `{"chunk": "..."}` | Incremental text from the AI response |
 | `tool_result` | `{"tool": "...", "data": {...}}` | A tool call result for dashboard updates |
 | `done` | `{"text": "...", "tool_calls": [...]}` | Final event with complete text and all tool calls |
+| `followup_done` | `{"text": "..."}` | Follow-up text when primary response had tools but no text (two-pass) |
+
+### Two-Pass Response Architecture
+
+When Claude responds with only tool calls and no conversational text (common when processing deal numbers), the backend fires a lightweight follow-up call:
+
+1. Primary call streams tool results to the client
+2. Backend detects empty text with tool calls present
+3. Follow-up call uses the same model but no tool definitions, with a system prompt asking for analysis/advice based on the tools just called
+4. Follow-up text is streamed as `text` events, with `followup_done` at completion
+5. The combined text (from both passes) is persisted as the assistant message
+
+### Server-Side Quick Actions
+
+If Claude doesn't call `update_quick_actions` during the primary response, the backend generates suggestions:
+
+1. Uses `CLAUDE_FAST_MODEL` (Haiku) with the last 3 messages + assistant response as context
+2. Returns a JSON array of 2-3 quick action objects (label + prompt)
+3. Emitted as a `tool_result` SSE event for `update_quick_actions`
+4. Non-blocking async call to avoid adding latency to the response stream
 
 ### Cost Controls
 
-- Max tokens capped at 1024 per response
+- Max tokens capped at 4096 per response (primary model)
+- Quick action generation capped at 256 tokens (fast model)
 - Message history limited to 20 messages to control context size
 - Linked session context limited to last 10 messages, each truncated to 200 characters

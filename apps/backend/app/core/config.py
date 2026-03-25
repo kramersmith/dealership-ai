@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     # Claude API
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_MODEL: str = "claude-sonnet-4-6"
-    CLAUDE_MAX_TOKENS: int = 1024
+    CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"
+    CLAUDE_MAX_TOKENS: int = 4096
     CLAUDE_MAX_HISTORY: int = 20  # messages to include in context
 
     model_config = SettingsConfigDict(env_file=".env")

@@ -4,6 +4,7 @@ const useNative = Platform.OS !== 'web'
 import { XStack, YStack, Text } from 'tamagui'
 import type { DealNumbers } from '@/lib/types'
 import { formatCurrency, formatPercent } from '@/lib/utils'
+import { APR_GOOD_THRESHOLD, APR_BAD_THRESHOLD } from '@/lib/constants'
 import { colors } from '@/lib/colors'
 import { AppCard } from '@/components/shared'
 
@@ -49,7 +50,8 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
 }
 
 export function NumbersDashboard({ numbers }: NumbersDashboardProps) {
-  const { msrp, yourTarget, walkAwayPrice, currentOffer, monthlyPayment, apr } = numbers
+  const { msrp, listingPrice, yourTarget, walkAwayPrice, currentOffer, monthlyPayment, apr } =
+    numbers
 
   const offerHighlight =
     currentOffer === null || yourTarget === null
@@ -60,22 +62,32 @@ export function NumbersDashboard({ numbers }: NumbersDashboardProps) {
           ? 'bad'
           : 'neutral'
 
-  const aprHighlight = apr === null ? 'neutral' : apr <= 6.5 ? 'good' : apr >= 9 ? 'bad' : 'neutral'
+  const aprHighlight =
+    apr === null
+      ? 'neutral'
+      : apr <= APR_GOOD_THRESHOLD
+        ? 'good'
+        : apr >= APR_BAD_THRESHOLD
+          ? 'bad'
+          : 'neutral'
 
   return (
     <AppCard gap="$3">
       <XStack gap="$4">
-        <NumberCell label="Asking / MSRP" value={formatCurrency(msrp)} />
+        <NumberCell label="Listing Price" value={formatCurrency(listingPrice)} />
+        <NumberCell label="MSRP" value={formatCurrency(msrp)} />
         <NumberCell label="Your Target" value={formatCurrency(yourTarget)} highlight="good" />
-        <NumberCell label="Walk-Away" value={formatCurrency(walkAwayPrice)} highlight="bad" />
       </XStack>
       <XStack gap="$4">
+        <NumberCell label="Walk-Away" value={formatCurrency(walkAwayPrice)} highlight="bad" />
         <NumberCell
           label="Current Offer"
           value={formatCurrency(currentOffer)}
           highlight={offerHighlight}
         />
         <NumberCell label="Monthly" value={formatCurrency(monthlyPayment)} />
+      </XStack>
+      <XStack gap="$4">
         <NumberCell label="APR" value={formatPercent(apr)} highlight={aprHighlight} />
       </XStack>
     </AppCard>

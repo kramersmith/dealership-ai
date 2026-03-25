@@ -9,7 +9,7 @@ class DealStateResponse(BaseModel):
     buyer_context: str
     msrp: float | None
     invoice_price: float | None
-    their_offer: float | None
+    listing_price: float | None
     your_target: float | None
     walk_away_price: float | None
     current_offer: float | None

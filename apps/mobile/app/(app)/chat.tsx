@@ -47,7 +47,8 @@ export default function ChatScreen() {
   } = useChat(activeSessionId)
 
   const storeQuickActions = useChatStore((state) => state.quickActions)
-  const quickActionsMessageIndex = useChatStore((state) => state.quickActionsMessageIndex)
+  const aiResponseCount = useChatStore((state) => state.aiResponseCount)
+  const quickActionsUpdatedAtResponse = useChatStore((state) => state.quickActionsUpdatedAtResponse)
 
   const addGreeting = useChatStore((state) => state.addGreeting)
 
@@ -96,7 +97,8 @@ export default function ChatScreen() {
       activeSessionId: null,
       messages: [],
       quickActions: [],
-      quickActionsMessageIndex: 0,
+      aiResponseCount: 0,
+      quickActionsUpdatedAtResponse: 0,
       _sessionJustCreated: false,
     })
   }
@@ -104,14 +106,13 @@ export default function ChatScreen() {
   const showWelcome = !activeSessionId && !isLoading
 
   // Compute which quick actions to show
-  const assistantMessageCount = messages.filter((message) => message.role === 'assistant').length
-  const hasRealExchange = assistantMessageCount >= 2 // greeting + at least one real AI response
+  const userMessageCount = messages.filter((message) => message.role === 'user').length
+  const hasRealExchange = userMessageCount >= 1 // user has sent at least one message
   const hasDynamicActions = storeQuickActions.length > 0
   const isStaleDynamic =
     hasDynamicActions &&
-    assistantMessageCount - quickActionsMessageIndex >= QUICK_ACTIONS_STALENESS_THRESHOLD
-  const isStaleStatic =
-    !hasDynamicActions && assistantMessageCount >= STATIC_ACTIONS_STALENESS_THRESHOLD
+    aiResponseCount - quickActionsUpdatedAtResponse >= QUICK_ACTIONS_STALENESS_THRESHOLD
+  const isStaleStatic = !hasDynamicActions && aiResponseCount >= STATIC_ACTIONS_STALENESS_THRESHOLD
 
   const effectiveQuickActions = hasDynamicActions
     ? isStaleDynamic

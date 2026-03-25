@@ -31,7 +31,7 @@ export interface Vehicle {
 export interface DealNumbers {
   msrp: number | null
   invoicePrice: number | null
-  theirOffer: number | null
+  listingPrice: number | null
   yourTarget: number | null
   walkAwayPrice: number | null
   currentOffer: number | null
