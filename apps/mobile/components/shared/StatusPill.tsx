@@ -1,6 +1,11 @@
 import { XStack, Text } from 'tamagui'
 import type { ScoreStatus } from '@/lib/types'
-import { SCORE_COLORS } from '@/lib/constants'
+
+const STATUS_TOKEN = {
+  red: '$danger',
+  yellow: '$warning',
+  green: '$positive',
+} as const
 
 interface StatusPillProps {
   status: ScoreStatus
@@ -11,7 +16,7 @@ interface StatusPillProps {
 export function StatusPill({ status, label, size = 'md' }: StatusPillProps) {
   if (!status) return null
 
-  const bgColor = SCORE_COLORS[status]
+  const bgColor = STATUS_TOKEN[status]
   const isSmall = size === 'sm'
 
   return (

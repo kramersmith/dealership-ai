@@ -56,7 +56,7 @@ dealership-ai/
 │       ├── app/          # Expo Router file-based routing
 │       ├── components/   # Chat, Insights, Shared UI
 │       ├── hooks/        # useChat, useScreenWidth
-│       ├── lib/          # Colors, API client
+│       ├── lib/          # Theme (tokens + themes), API client
 │       └── stores/       # Zustand state management
 ├── docs/                 # Project documentation
 ├── docker-compose.yml

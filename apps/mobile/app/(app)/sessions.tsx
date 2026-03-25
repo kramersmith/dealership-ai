@@ -13,7 +13,6 @@ import { useRouter } from 'expo-router'
 import { MessageSquare, Plus, Trash2 } from '@tamagui/lucide-icons'
 import type { Session } from '@/lib/types'
 import { useChatStore } from '@/stores/chatStore'
-import { colors } from '@/lib/colors'
 import { useFadeIn, useSlideIn } from '@/hooks/useAnimatedValue'
 
 const MS_PER_HOUR = 1000 * 60 * 60
@@ -167,7 +166,7 @@ export default function SessionsScreen() {
               activeOpacity={0.6}
               style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Plus size={22} color={colors.brand} />
+              <Plus size={22} color="$brand" />
             </TouchableOpacity>
           </XStack>
 

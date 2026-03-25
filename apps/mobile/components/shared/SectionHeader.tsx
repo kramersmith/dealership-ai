@@ -1,6 +1,5 @@
 import { TouchableOpacity } from 'react-native'
 import { XStack, Text } from 'tamagui'
-import { colors } from '@/lib/colors'
 
 interface SectionHeaderProps {
   title: string
@@ -32,7 +31,7 @@ export function SectionHeader({ title, action, onAction }: SectionHeaderProps) {
             paddingHorizontal: 8,
           }}
         >
-          <Text fontSize={13} fontWeight="600" color={colors.brand}>
+          <Text fontSize={13} fontWeight="600" color="$brand">
             {action}
           </Text>
         </TouchableOpacity>

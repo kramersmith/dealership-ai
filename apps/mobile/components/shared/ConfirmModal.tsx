@@ -1,6 +1,6 @@
 import { Modal, TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
-import { colors } from '@/lib/colors'
+import { palette } from '@/lib/theme/tokens'
 import { AppButton } from './AppButton'
 
 interface ConfirmModalProps {
@@ -25,7 +25,7 @@ export function ConfirmModal({
       <TouchableOpacity
         style={{
           flex: 1,
-          backgroundColor: colors.overlay,
+          backgroundColor: palette.overlay,
           justifyContent: 'center',
           alignItems: 'center',
         }}

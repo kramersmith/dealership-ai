@@ -5,7 +5,6 @@ import type { DealNumbers } from '@/lib/types'
 import { formatCurrency, formatPercent } from '@/lib/utils'
 import { APR_GOOD_THRESHOLD, APR_BAD_THRESHOLD } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import { colors } from '@/lib/colors'
 import { AppCard } from '@/components/shared'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 
@@ -34,7 +33,7 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
   }, [value])
 
   const valueColor =
-    highlight === 'good' ? colors.positive : highlight === 'bad' ? colors.danger : undefined
+    highlight === 'good' ? '$positive' : highlight === 'bad' ? '$danger' : undefined
 
   return (
     <YStack flex={1} gap="$1">

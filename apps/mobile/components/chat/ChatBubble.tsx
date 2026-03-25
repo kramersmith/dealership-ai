@@ -2,7 +2,7 @@ import { Animated, StyleSheet } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
-import { colors } from '@/lib/colors'
+import { palette } from '@/lib/theme/tokens'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 
 interface ChatBubbleProps {
@@ -21,7 +21,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   // while keeping headings/bold (textColor) visually prominent.
   const bodyTextColor = isUser ? '#ffffff' : themeBodyColor
   const codeBg = isUser
-    ? colors.brandPressed
+    ? palette.brandPressed
     : ((theme.backgroundHover?.val as string) ?? '#333333')
   const subtleSurface = isUser
     ? 'rgba(255,255,255,0.1)'
@@ -62,7 +62,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     ordered_list_content: { flex: 1 },
     blockquote: {
       borderLeftWidth: 3,
-      borderLeftColor: colors.brand,
+      borderLeftColor: palette.brand,
       paddingLeft: 12,
       marginVertical: 6,
       paddingVertical: 2,
@@ -135,7 +135,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       borderBottomColor: hrColor,
       marginVertical: 10,
     },
-    link: { color: colors.brand, textDecorationLine: 'underline' },
+    link: { color: palette.brand, textDecorationLine: 'underline' },
     blocklink: {
       borderRadius: 10,
       overflow: 'hidden',
@@ -160,7 +160,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       >
         <YStack
           maxWidth={isUser ? '85%' : '100%'}
-          backgroundColor={isUser ? colors.brand : '$backgroundStrong'}
+          backgroundColor={isUser ? '$brand' : '$backgroundStrong'}
           borderRadius="$4"
           borderBottomRightRadius={isUser ? '$1' : '$4'}
           borderBottomLeftRadius={isUser ? '$4' : '$1'}
@@ -174,12 +174,12 @@ export function ChatBubble({ message }: ChatBubbleProps) {
               width="100%"
               height={150}
               borderRadius="$2"
-              backgroundColor={isUser ? colors.brandPressed : '$backgroundHover'}
+              backgroundColor={isUser ? '$brandPressed' : '$backgroundHover'}
               marginBottom="$2"
               alignItems="center"
               justifyContent="center"
             >
-              <Text fontSize={12} color={isUser ? colors.brandLight : '$placeholderColor'}>
+              <Text fontSize={12} color={isUser ? '$brandLight' : '$placeholderColor'}>
                 [Photo attached]
               </Text>
             </YStack>

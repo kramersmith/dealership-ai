@@ -186,6 +186,25 @@ List violations with `file:line`. Fix them. **Loop until clean.**
 
 ---
 
+### Check 11: Theme Compliance
+
+**Goal:** All frontend colors use the centralized Tamagui theme system — no bypassing it.
+
+Read `apps/mobile/lib/theme/tokens.ts` and `apps/mobile/lib/theme/themes.ts` to understand the token and theme architecture. Then verify changed frontend files:
+
+- **No imports from `@/lib/colors`** — this file no longer exists. All color values live in `lib/theme/tokens.ts`.
+- **No `SCORE_COLORS`** — deleted; use `$danger`, `$warning`, `$positive` tokens instead.
+- **Tamagui component props use `$token` references** (e.g. `color="$brand"`, `backgroundColor="$danger"`) — not raw hex values or `colors.X` imports.
+- **`palette.*` only in non-Tamagui contexts** — `StyleSheet.create()`, RN `Animated.View` `style` props, and RN `Modal` `style` props cannot resolve Tamagui tokens. Only these cases may import `palette` from `@/lib/theme/tokens`.
+- **Semantic surfaces use sub-themes** — for danger/warning/success surface colors, wrap with `<Theme name="danger">` (or warning/success) and use `$background`, `$borderColor`, `$color` — do not hardcode surface hex values.
+- **No hardcoded hex colors** in component files (except `#ffffff`/`white` for text on brand-colored backgrounds, and `rgba()` for semi-transparent overlays).
+- **`useTheme()` minimized** — only use when feeding values to non-Tamagui elements (RN `View` style, `StyleSheet.create`, web `boxShadow`). Prefer `$token` props on Tamagui components.
+- **ThemedSafeArea uses `useTheme()`** — not hardcoded `{ dark: '#...', light: '#...' }`.
+
+List violations with `file:line`. Fix them. **Loop until clean.**
+
+---
+
 ## Stage 2: Sequential Gates (after Stage 1 completes)
 
 These run **one at a time, in order**. Each must pass before the next starts.
@@ -228,6 +247,7 @@ These run **one at a time, in order**. Each must pass before the next starts.
 | **First-version-quality** | Clean architecture, no technical debt (`docs/first-version-quality.md`) |
 | **UI design principles** | Mobile-first, touch >=44px, no hover-only (see `docs/ui-design-principles.md`) |
 | **Logging** | Correct levels, PII safe, structured (see `docs/logging-guidelines.md`) |
+| **Theme compliance** | All colors via Tamagui tokens/themes; no `@/lib/colors`; `palette.*` only in non-Tamagui contexts |
 
 **Loop until no violations remain.**
 
@@ -271,6 +291,7 @@ Stage 1 — Parallel Review (no tests):
 - [ ] Check 8: Error handling
 - [ ] Check 9: Logging
 - [ ] Check 10: Variable names
+- [ ] Check 11: Theme compliance
 
 Stage 2 — Sequential Gates:
 - [ ] Gate 1: Linters, sorters, typechecks (make check-static + tsc)

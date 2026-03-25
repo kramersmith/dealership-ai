@@ -2,7 +2,6 @@ import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { useRouter } from 'expo-router'
 import { ArrowLeftRight, LogOut, Sun, Moon } from '@tamagui/lucide-icons'
-import { colors } from '@/lib/colors'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { AppCard, HamburgerMenu, ThemedSafeArea } from '@/components/shared'
@@ -62,9 +61,9 @@ export default function SettingsScreen() {
               <AppCard>
                 <XStack alignItems="center" gap="$3">
                   {mode === 'dark' ? (
-                    <Sun size={20} color={colors.brand} />
+                    <Sun size={20} color="$brand" />
                   ) : (
-                    <Moon size={20} color={colors.brand} />
+                    <Moon size={20} color="$brand" />
                   )}
                   <YStack flex={1}>
                     <Text fontSize={15} fontWeight="600" color="$color">
@@ -94,7 +93,7 @@ export default function SettingsScreen() {
               <TouchableOpacity onPress={handleSwitchRole} activeOpacity={0.7}>
                 <AppCard>
                   <XStack alignItems="center" gap="$3">
-                    <ArrowLeftRight size={20} color={colors.brand} />
+                    <ArrowLeftRight size={20} color="$brand" />
                     <YStack flex={1}>
                       <Text fontSize={15} fontWeight="600" color="$color">
                         Switch to {role === 'buyer' ? 'Dealer' : 'Buyer'} Mode
@@ -111,8 +110,8 @@ export default function SettingsScreen() {
             <TouchableOpacity onPress={handleLogout} activeOpacity={0.7}>
               <AppCard>
                 <XStack alignItems="center" gap="$3">
-                  <LogOut size={20} color={colors.danger} />
-                  <Text fontSize={15} fontWeight="600" color={colors.danger}>
+                  <LogOut size={20} color="$danger" />
+                  <Text fontSize={15} fontWeight="600" color="$danger">
                     Sign Out
                   </Text>
                 </XStack>

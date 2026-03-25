@@ -255,7 +255,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 **Description:** Dark mode (default) and light mode with a Facebook-inspired dark color palette.
 
-**Implementation status:** Built. All colors centralized in `lib/colors.ts`, theme store with toggle, no hardcoded hex values in components.
+**Implementation status:** Built. Tamagui theme system with centralized tokens (`lib/theme/tokens.ts`), dark/light theme definitions (`lib/theme/themes.ts`), and semantic sub-themes (`danger`, `warning`, `success`) for status surfaces. Theme store with toggle, no hardcoded hex values in components. Components use `useTheme()` or `<Theme name="...">` wrappers.
 
 ### Phase 1 — Technical Infrastructure (Current Build)
 

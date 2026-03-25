@@ -1,9 +1,9 @@
 import { SafeAreaView, type SafeAreaViewProps } from 'react-native-safe-area-context'
-import { useThemeStore } from '@/stores/themeStore'
-
-const BG = { dark: '#18191A', light: '#F0F2F5' } as const
+import { useTheme } from 'tamagui'
+import { darkTheme } from '@/lib/theme/themes'
 
 export function ThemedSafeArea({ style, ...props }: SafeAreaViewProps) {
-  const mode = useThemeStore((s) => s.mode)
-  return <SafeAreaView style={[{ flex: 1, backgroundColor: BG[mode] }, style]} {...props} />
+  const theme = useTheme()
+  const backgroundColor = (theme.background?.val as string) ?? darkTheme.background
+  return <SafeAreaView style={[{ flex: 1, backgroundColor }, style]} {...props} />
 }

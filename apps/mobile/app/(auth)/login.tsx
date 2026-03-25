@@ -3,7 +3,6 @@ import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text, Input, Button, H2, Separator } from 'tamagui'
 import { ThemedSafeArea } from '@/components/shared'
 import { useRouter } from 'expo-router'
-import { colors } from '@/lib/colors'
 import { useAuthStore } from '@/stores/authStore'
 
 function QuickSignInButton({ label, onPress }: { label: string; onPress: () => void }) {
@@ -147,10 +146,10 @@ export default function LoginScreen() {
 
         <Button
           size="$5"
-          backgroundColor={colors.brand}
+          backgroundColor="$brand"
           onPress={handleLogin}
           disabled={isLoading}
-          pressStyle={{ backgroundColor: colors.brandPressed }}
+          pressStyle={{ backgroundColor: '$brandPressed' }}
         >
           <Button.Text color="white" fontWeight="600">
             {isLoading ? 'Signing in...' : 'Sign In'}
@@ -164,7 +163,7 @@ export default function LoginScreen() {
         >
           <XStack gap="$2">
             <Text color="$placeholderColor">Don't have an account?</Text>
-            <Text color={colors.brand} fontWeight="600">
+            <Text color="$brand" fontWeight="600">
               Register
             </Text>
           </XStack>

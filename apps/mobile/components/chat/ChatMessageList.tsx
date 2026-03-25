@@ -2,7 +2,6 @@ import { useRef, useEffect, type ReactNode } from 'react'
 import { FlatList, Animated } from 'react-native'
 import { YStack, Text, Spinner } from 'tamagui'
 import type { Message } from '@/lib/types'
-import { colors } from '@/lib/colors'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { ChatBubble } from './ChatBubble'
 
@@ -65,7 +64,7 @@ export function ChatMessageList({
         <>
           {isSending ? (
             <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
-              <Spinner size="small" color={colors.brand} />
+              <Spinner size="small" color="$brand" />
             </YStack>
           ) : null}
           {footer}

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { TouchableOpacity, Alert, Platform } from 'react-native'
 import { XStack, Input } from 'tamagui'
 import { Camera, Send } from '@tamagui/lucide-icons'
-import { colors } from '@/lib/colors'
 import { VoiceButton } from './VoiceButton'
 
 interface ChatInputProps {
@@ -83,7 +82,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
             width={44}
             height={44}
             borderRadius={100}
-            backgroundColor={colors.brand}
+            backgroundColor="$brand"
             alignItems="center"
             justifyContent="center"
             opacity={disabled ? 0.5 : 1}

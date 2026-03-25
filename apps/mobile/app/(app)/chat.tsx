@@ -13,7 +13,7 @@ import {
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { ThemedSafeArea, LoadingIndicator, HamburgerMenu, RoleGuard } from '@/components/shared'
 import { Plus, X } from '@tamagui/lucide-icons'
-import { colors } from '@/lib/colors'
+import { palette } from '@/lib/theme/tokens'
 import {
   DEFAULT_BUYER_CONTEXT,
   FALLBACK_QUICK_ACTIONS,
@@ -219,7 +219,6 @@ export default function ChatScreen() {
       : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? [])
 
   const showQuickActions = !showWelcome && hasRealExchange && effectiveQuickActions.length > 0
-  const newChatButtonBg = (theme.backgroundHover?.val as string) ?? '$backgroundHover'
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewTitle = dealState?.vehicle ? vehicleSummary(dealState.vehicle) : 'Insights'
   const previewDetail = getInsightsPreviewDetail(dealState)
@@ -261,11 +260,11 @@ export default function ChatScreen() {
           borderRadius={12}
           alignItems="center"
           justifyContent="center"
-          backgroundColor={newChatButtonBg as string}
+          backgroundColor="$backgroundHover"
           borderWidth={1}
           borderColor="$borderColor"
         >
-          <Plus size={18} color={colors.brand} />
+          <Plus size={18} color="$brand" />
         </YStack>
       </TouchableOpacity>
     </XStack>
@@ -442,7 +441,7 @@ export default function ChatScreen() {
                 onPress={() => setIsInsightsOpen(false)}
                 style={{
                   flex: 1,
-                  backgroundColor: colors.overlay,
+                  backgroundColor: palette.overlay,
                 }}
               />
             </Animated.View>

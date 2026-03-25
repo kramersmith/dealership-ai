@@ -3,7 +3,6 @@ import { TouchableOpacity, Modal, View, Animated, Platform, Dimensions } from 'r
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { Menu, X, MessageSquare, List, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
-import { colors } from '@/lib/colors'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -180,8 +179,8 @@ export function HamburgerMenu() {
             {/* Logout */}
             <TouchableOpacity onPress={handleLogout} activeOpacity={0.6} style={{ minHeight: 44 }}>
               <XStack gap="$3" alignItems="center" paddingVertical="$3" paddingHorizontal="$4">
-                <LogOut size={18} color={colors.danger} />
-                <Text fontSize={15} color={colors.danger} fontWeight="500">
+                <LogOut size={18} color="$danger" />
+                <Text fontSize={15} color="$danger" fontWeight="500">
                   Sign Out
                 </Text>
               </XStack>

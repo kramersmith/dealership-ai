@@ -2,9 +2,8 @@ import { useRef, useEffect } from 'react'
 import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 import type { Scorecard, DealNumbers } from '@/lib/types'
-import { SCORE_COLORS } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import { colors } from '@/lib/colors'
+import { palette } from '@/lib/theme/tokens'
 import { StatusPill, AppCard } from '@/components/shared'
 
 interface NegotiationScorecardProps {
@@ -67,10 +66,10 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
 
   const progressColor =
     progressPercent <= 33
-      ? SCORE_COLORS.green
+      ? palette.positive
       : progressPercent <= 66
-        ? SCORE_COLORS.yellow
-        : SCORE_COLORS.red
+        ? palette.warning
+        : palette.danger
 
   const animatedWidth = progressAnim.interpolate({
     inputRange: [0, 100],
@@ -100,13 +99,13 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
             />
           </XStack>
           <XStack justifyContent="space-between">
-            <Text fontSize={10} color={colors.positive} fontWeight="600">
+            <Text fontSize={10} color="$positive" fontWeight="600">
               Target
             </Text>
             <Text fontSize={10} color="$placeholderColor" fontWeight="500">
               Current
             </Text>
-            <Text fontSize={10} color={colors.danger} fontWeight="600">
+            <Text fontSize={10} color="$danger" fontWeight="600">
               Walk-Away
             </Text>
           </XStack>

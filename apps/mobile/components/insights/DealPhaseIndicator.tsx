@@ -1,7 +1,6 @@
 import { XStack, YStack, Text } from 'tamagui'
 import type { DealPhase } from '@/lib/types'
 import { DEAL_PHASES } from '@/lib/constants'
-import { colors } from '@/lib/colors'
 
 interface DealPhaseIndicatorProps {
   currentPhase: DealPhase
@@ -24,7 +23,7 @@ export function DealPhaseIndicator({ currentPhase }: DealPhaseIndicatorProps) {
                 <XStack
                   flex={1}
                   height={2}
-                  backgroundColor={isCompleted || isCurrent ? colors.brand : '$borderColor'}
+                  backgroundColor={isCompleted || isCurrent ? '$brand' : '$borderColor'}
                   marginRight={-2}
                 />
               )}
@@ -32,17 +31,15 @@ export function DealPhaseIndicator({ currentPhase }: DealPhaseIndicatorProps) {
                 width={isCurrent ? 12 : 8}
                 height={isCurrent ? 12 : 8}
                 borderRadius={100}
-                backgroundColor={
-                  isCompleted ? colors.brand : isCurrent ? colors.brand : '$borderColor'
-                }
+                backgroundColor={isCompleted ? '$brand' : isCurrent ? '$brand' : '$borderColor'}
                 borderWidth={isCurrent ? 2 : 0}
-                borderColor={isCurrent ? colors.brandLight : undefined}
+                borderColor={isCurrent ? '$brandLight' : undefined}
               />
               {index < DEAL_PHASES.length - 1 && (
                 <XStack
                   flex={1}
                   height={2}
-                  backgroundColor={isCompleted ? colors.brand : '$borderColor'}
+                  backgroundColor={isCompleted ? '$brand' : '$borderColor'}
                   marginLeft={-2}
                 />
               )}
@@ -50,7 +47,7 @@ export function DealPhaseIndicator({ currentPhase }: DealPhaseIndicatorProps) {
             <Text
               fontSize={10}
               fontWeight={isCurrent ? '700' : '400'}
-              color={isCurrent ? colors.brand : isFuture ? '$placeholderColor' : '$color'}
+              color={isCurrent ? '$brand' : isFuture ? '$placeholderColor' : '$color'}
               textAlign="center"
               numberOfLines={1}
             >

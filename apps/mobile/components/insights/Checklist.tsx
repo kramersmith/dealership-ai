@@ -3,7 +3,6 @@ import { Animated, TouchableOpacity } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 import type { ChecklistItem } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import { colors } from '@/lib/colors'
 import { AppCard, SectionHeader } from '@/components/shared'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 
@@ -44,8 +43,8 @@ function ChecklistRow({
             height={24}
             borderRadius={6}
             borderWidth={2}
-            borderColor={item.done ? colors.brand : '$placeholderColor'}
-            backgroundColor={item.done ? colors.brand : 'transparent'}
+            borderColor={item.done ? '$brand' : '$placeholderColor'}
+            backgroundColor={item.done ? '$brand' : 'transparent'}
             alignItems="center"
             justifyContent="center"
           >

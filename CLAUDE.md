@@ -90,7 +90,7 @@ Key patterns:
 - Quick sign-in buttons on login screen for seed users (dev only via `__DEV__`)
 - Markdown rendering in assistant chat bubbles via `react-native-markdown-display` (user messages render as plain text)
 - Facebook dark mode color palette with light mode support
-- All colors centralized in `lib/colors.ts` — no hardcoded hex in components
+- Tamagui theme system with centralized tokens (`lib/theme/tokens.ts`) and theme definitions (`lib/theme/themes.ts`) — no hardcoded hex in components. Semantic sub-themes (`danger`, `warning`, `success`) for status surfaces. Components use `useTheme()` or `<Theme name="...">` wrappers.
 - Mobile-first with responsive desktop layout (insights sidebar at ≥768px)
 - Micro-interactions on all interactive elements (animations, feedback)
 - Touch targets ≥44px on all interactive elements
@@ -112,7 +112,7 @@ When reviewing or finalizing changes, verify: correctness (edge cases, null safe
 
 ## UI Standards
 
-Mobile-first, touch targets ≥44px, no hover-only interactions, no hardcoded colors (use theme tokens or `lib/colors.ts`), micro-interactions on all interactive elements. See `docs/ui-design-principles.md`.
+Mobile-first, touch targets ≥44px, no hover-only interactions, no hardcoded colors (use Tamagui theme tokens from `lib/theme/tokens.ts` or semantic sub-themes), micro-interactions on all interactive elements. See `docs/ui-design-principles.md`.
 
 ## Updating Documentation
 

@@ -65,12 +65,6 @@ export const DEAL_PHASES: { key: DealPhase; label: string }[] = [
   { key: 'closing', label: 'Signing' },
 ]
 
-export const SCORE_COLORS = {
-  red: '#EF4444',
-  yellow: '#EAB308',
-  green: '#22C55E',
-} as const
-
 export const EMPTY_DEAL_NUMBERS = {
   msrp: null,
   invoicePrice: null,

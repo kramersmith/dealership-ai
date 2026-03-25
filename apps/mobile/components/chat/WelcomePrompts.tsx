@@ -1,7 +1,6 @@
 import { TouchableOpacity, Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { Search, FileText, MapPin } from '@tamagui/lucide-icons'
-import { colors } from '@/lib/colors'
 import type { BuyerContext } from '@/lib/types'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 
@@ -75,11 +74,11 @@ export function WelcomePrompts({ onSelect }: WelcomePromptsProps) {
                   width={40}
                   height={40}
                   borderRadius="$2"
-                  backgroundColor={colors.brandSubtle}
+                  backgroundColor="$brandSubtle"
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Icon size={20} color={colors.brand} />
+                  <Icon size={20} color="$brand" />
                 </YStack>
                 <YStack flex={1} gap="$1">
                   <Text fontSize={15} fontWeight="600" color="$color">

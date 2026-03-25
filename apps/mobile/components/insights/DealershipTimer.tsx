@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { Animated } from 'react-native'
-import { XStack, Text } from 'tamagui'
+import { XStack, Text, Theme } from 'tamagui'
 import { Clock } from '@tamagui/lucide-icons'
 import { formatElapsedTime } from '@/lib/utils'
 import { TIMER_WARNING_MINUTES, TIMER_LONG_MINUTES } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import { colors } from '@/lib/colors'
 
 interface DealershipTimerProps {
   startedAt: string | null
@@ -60,7 +59,10 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
 
   if (!startedAt) return null
 
-  return (
+  const timerTheme = isLong ? 'danger' : isWarning ? 'warning' : undefined
+  const hasTheme = timerTheme != null
+
+  const content = (
     <Animated.View style={{ transform: [{ scale }], alignSelf: 'flex-start' }}>
       <XStack
         alignItems="center"
@@ -68,36 +70,27 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
         paddingHorizontal="$3"
         paddingVertical="$2"
         borderRadius="$2"
-        backgroundColor={
-          isLong
-            ? colors.dangerSurfaceDark
-            : isWarning
-              ? colors.warningSurfaceDark
-              : '$backgroundStrong'
-        }
+        backgroundColor={hasTheme ? '$background' : '$backgroundStrong'}
         borderWidth={1}
-        borderColor={
-          isLong ? colors.dangerBorderDark : isWarning ? colors.warningBorderDark : '$borderColor'
-        }
+        borderColor="$borderColor"
       >
-        <Clock
-          size={14}
-          color={isLong ? colors.danger : isWarning ? colors.warning : '$placeholderColor'}
-        />
+        <Clock size={14} color={hasTheme ? '$color' : '$placeholderColor'} />
         <Text
           fontSize={13}
           fontWeight="600"
-          color={isLong ? colors.danger : isWarning ? colors.warning : '$placeholderColor'}
+          color={hasTheme ? '$color' : '$placeholderColor'}
           fontVariant={['tabular-nums']}
         >
           {elapsed}
         </Text>
         {isLong && (
-          <Text fontSize={11} color={colors.danger}>
+          <Text fontSize={11} color="$color">
             Long wait — could be a tactic
           </Text>
         )}
       </XStack>
     </Animated.View>
   )
+
+  return timerTheme ? <Theme name={timerTheme}>{content}</Theme> : content
 }

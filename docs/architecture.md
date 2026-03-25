@@ -41,7 +41,9 @@ dealership-ai/
 │   │   ├── stores/              # Zustand: auth, chat, deal, simulation, theme
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend
-│   │       ├── colors.ts        # Centralized color palette
+│   │       ├── theme/
+│   │       │   ├── tokens.ts    # Centralized color palette + token colors
+│   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
 │   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds, animation/layout constants
 │       ├── platform.ts      # Platform-specific constants (USE_NATIVE_DRIVER)
 │   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.

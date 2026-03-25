@@ -1,6 +1,6 @@
 # UI Design Principles for Dealership AI
 
-**Last updated:** 2026-03-24
+**Last updated:** 2026-03-25
 
 This document explains core UX concepts that drive the frontend design. AI agents and engineers should reference it when building or refining interfaces to ensure consistent, trustworthy, and low-friction user experiences.
 
@@ -13,7 +13,8 @@ This document explains core UX concepts that drive the frontend design. AI agent
 - [3. Engineering First Impressions](#3-engineering-first-impressions)
 - [4. War on Cognitive Load](#4-war-on-cognitive-load)
 - [5. Micro-interactions](#5-micro-interactions)
-- [6. Quick Reference for Agents](#6-quick-reference-for-agents)
+- [6. Theme Architecture](#6-theme-architecture)
+- [7. Quick Reference for Agents](#7-quick-reference-for-agents)
 
 ---
 
@@ -152,7 +153,37 @@ Micro-interactions should be **subtle and fast**. Avoid:
 
 ---
 
-## 6. Quick Reference for Agents
+## 6. Theme Architecture
+
+### Structure
+
+All colors are defined in the Tamagui theme system, split into two files under `lib/theme/`:
+
+- **`tokens.ts`** -- Defines the raw color palette (`palette`) and maps palette values to semantic token names (`tokenColors`). This is the single source of truth for every color in the app.
+- **`themes.ts`** -- Defines dark and light themes by mapping token names to theme keys, plus semantic sub-themes (`danger`, `warning`, `success`) for status surfaces in both modes.
+
+The `tamagui.config.ts` file imports from these theme files and registers everything with Tamagui.
+
+### Usage Rules
+
+| Rule | Implementation |
+|------|----------------|
+| **No hardcoded hex values** | Every color must come from the theme system. Never write `#FF0000` or `rgb(...)` in a component. |
+| **Use `useTheme()` for dynamic values** | When you need a color in JavaScript (e.g., for `Animated.View` or non-Tamagui components), call `useTheme()` and reference the theme key. |
+| **Use `<Theme name="...">` for semantic surfaces** | Wrap components in `<Theme name="danger">`, `<Theme name="warning">`, or `<Theme name="success">` to apply status-colored backgrounds and text. The sub-theme sets `background` and `color` automatically. |
+| **Use Tamagui style props for simple cases** | For Tamagui components, use props like `backgroundColor="$background"` or `color="$color"` to reference theme tokens directly. |
+| **Score/status colors via sub-themes** | Scorecard ratings (`red`, `yellow`, `green`) and similar status indicators should use the `danger`, `warning`, `success` sub-themes rather than mapping colors manually. |
+
+### Adding New Colors
+
+1. Add the raw color to `palette` in `tokens.ts`.
+2. Map it to a semantic token name in `tokenColors`.
+3. Reference the token in `themes.ts` for both dark and light themes.
+4. If it represents a status, add or update the corresponding sub-theme.
+
+---
+
+## 7. Quick Reference for Agents
 
 When building or refining UI:
 
@@ -161,4 +192,5 @@ When building or refining UI:
 3. **First impressions** – Establish clear hierarchy, spacing, and focal points. Make the primary action obvious.
 4. **Cognitive load** – Chunk content, limit choices per screen, use clear labels and familiar patterns. Buyers are stressed — reduce their mental effort.
 5. **Micro-interactions** – Add tap/active feedback, entrance animations, and loading states. Keep them fast and subtle. Touch is primary; hover is enhancement only.
-6. **Touch targets** – All interactive elements must be at least 44×44px.
+6. **Theme compliance** – No hardcoded hex values. Use Tamagui theme tokens (`$background`, `$color`, etc.), `useTheme()` for JS values, and `<Theme name="danger|warning|success">` wrappers for status surfaces. All colors defined in `lib/theme/tokens.ts`.
+7. **Touch targets** – All interactive elements must be at least 44×44px.

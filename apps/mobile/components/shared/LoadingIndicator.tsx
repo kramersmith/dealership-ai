@@ -1,6 +1,5 @@
 import { Animated } from 'react-native'
 import { YStack, Spinner, Text } from 'tamagui'
-import { colors } from '@/lib/colors'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 
 interface LoadingIndicatorProps {
@@ -13,7 +12,7 @@ export function LoadingIndicator({ message }: LoadingIndicatorProps) {
   return (
     <Animated.View style={{ flex: 1, opacity }}>
       <YStack flex={1} justifyContent="center" alignItems="center" gap="$3">
-        <Spinner size="large" color={colors.brand} />
+        <Spinner size="large" color="$brand" />
         {message && (
           <Text color="$placeholderColor" fontSize={14}>
             {message}

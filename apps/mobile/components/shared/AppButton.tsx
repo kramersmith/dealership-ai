@@ -1,6 +1,5 @@
 import { Button, type ButtonProps } from 'tamagui'
 import type { ReactNode } from 'react'
-import { colors } from '@/lib/colors'
 
 interface AppButtonProps extends Omit<ButtonProps, 'variant'> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
@@ -10,8 +9,8 @@ interface AppButtonProps extends Omit<ButtonProps, 'variant'> {
 const variantStyles = {
   primary: {
     button: {
-      backgroundColor: colors.brand,
-      pressStyle: { backgroundColor: colors.brandPressed },
+      backgroundColor: '$brand',
+      pressStyle: { backgroundColor: '$brandPressed' },
     },
     text: { color: 'white' as const, fontWeight: '600' as const },
   },
@@ -19,10 +18,10 @@ const variantStyles = {
     button: {
       backgroundColor: 'transparent',
       borderWidth: 1,
-      borderColor: colors.brand,
-      pressStyle: { backgroundColor: colors.brandSubtle },
+      borderColor: '$brand',
+      pressStyle: { backgroundColor: '$brandSubtle' },
     },
-    text: { color: colors.brand as string, fontWeight: '600' as const },
+    text: { color: '$brand' as string, fontWeight: '600' as const },
   },
   ghost: {
     button: {
@@ -33,8 +32,8 @@ const variantStyles = {
   },
   danger: {
     button: {
-      backgroundColor: colors.danger,
-      pressStyle: { backgroundColor: colors.dangerPressed },
+      backgroundColor: '$danger',
+      pressStyle: { backgroundColor: '$dangerPressed' },
     },
     text: { color: 'white' as const, fontWeight: '600' as const },
   },

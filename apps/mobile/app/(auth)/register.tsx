@@ -3,7 +3,6 @@ import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text, Input, Button, H2 } from 'tamagui'
 import { ThemedSafeArea } from '@/components/shared'
 import { useRouter } from 'expo-router'
-import { colors } from '@/lib/colors'
 import { useAuthStore } from '@/stores/authStore'
 
 export default function RegisterScreen() {
@@ -68,8 +67,8 @@ export default function RegisterScreen() {
           <Button
             flex={1}
             size="$5"
-            backgroundColor={role === 'buyer' ? colors.brand : '$backgroundStrong'}
-            borderColor={role === 'buyer' ? colors.brand : '$borderColor'}
+            backgroundColor={role === 'buyer' ? '$brand' : '$backgroundStrong'}
+            borderColor={role === 'buyer' ? '$brand' : '$borderColor'}
             borderWidth={1}
             onPress={() => setRole('buyer')}
             pressStyle={{ opacity: 0.85, scale: 0.98 }}
@@ -81,8 +80,8 @@ export default function RegisterScreen() {
           <Button
             flex={1}
             size="$5"
-            backgroundColor={role === 'dealer' ? colors.brand : '$backgroundStrong'}
-            borderColor={role === 'dealer' ? colors.brand : '$borderColor'}
+            backgroundColor={role === 'dealer' ? '$brand' : '$backgroundStrong'}
+            borderColor={role === 'dealer' ? '$brand' : '$borderColor'}
             borderWidth={1}
             onPress={() => setRole('dealer')}
             pressStyle={{ opacity: 0.85, scale: 0.98 }}
@@ -123,10 +122,10 @@ export default function RegisterScreen() {
 
         <Button
           size="$5"
-          backgroundColor={colors.brand}
+          backgroundColor="$brand"
           onPress={handleRegister}
           disabled={isLoading}
-          pressStyle={{ backgroundColor: colors.brandPressed }}
+          pressStyle={{ backgroundColor: '$brandPressed' }}
         >
           <Button.Text color="white" fontWeight="600">
             {isLoading ? 'Creating account...' : 'Create Account'}
@@ -140,7 +139,7 @@ export default function RegisterScreen() {
         >
           <XStack gap="$2">
             <Text color="$placeholderColor">Already have an account?</Text>
-            <Text color={colors.brand} fontWeight="600">
+            <Text color="$brand" fontWeight="600">
               Sign In
             </Text>
           </XStack>
