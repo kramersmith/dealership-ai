@@ -32,8 +32,8 @@ dealership-ai/
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
 │   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, WelcomePrompts
-│   │   │   ├── dashboard/       # DealPhase, NumbersDash, Checklist,
-│   │   │   │                    # VehicleCard, Scorecard, Timer
+│   │   │   ├── insights/        # InsightsPanel, NumbersSummary, DealPhaseIndicator,
+│   │   │   │                    # VehicleCard, NegotiationScorecard, Checklist, DealershipTimer, QuickActions
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
@@ -42,7 +42,8 @@ dealership-ai/
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend
 │   │       ├── colors.ts        # Centralized color palette
-│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds
+│   │       ├── constants.ts     # Buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds, animation/layout constants
+│       ├── platform.ts      # Platform-specific constants (USE_NATIVE_DRIVER)
 │   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.
 │   │       └── types.ts
 │   │
@@ -187,7 +188,7 @@ POST   /simulations/{id}/complete     # End + score
 |-------|------|------|
 | 0 | Project scaffolding (Expo, FastAPI, PostgreSQL, env) | 1 |
 | 1 | Auth + session CRUD | 2-3 |
-| 2 | **Core chat loop** — text chat, Claude with tools, SSE streaming, NumbersDashboard + DealPhaseIndicator updating live | 4-7 |
+| 2 | **Core chat loop** — text chat, Claude with tools, SSE streaming, NumbersSummary + DealPhaseIndicator updating live | 4-7 |
 | 3 | Remaining dashboard UI — scorecard, vehicle card, checklist, timer, quick actions, session linking | 8-10 |
 | 4 | Photo upload (Claude vision) + voice input (expo-speech-recognition) | 11-13 |
 | 5 | Dealer training simulations | 14-16 |

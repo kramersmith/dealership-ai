@@ -54,7 +54,7 @@ dealership-ai/
 │   │   └── migrations/   # Alembic database migrations
 │   └── mobile/           # Expo React Native application
 │       ├── app/          # Expo Router file-based routing
-│       ├── components/   # Chat, Dashboard, Shared UI
+│       ├── components/   # Chat, Insights, Shared UI
 │       ├── hooks/        # useChat, useScreenWidth
 │       ├── lib/          # Colors, API client
 │       └── stores/       # Zustand state management
@@ -73,7 +73,7 @@ graph TB
         Screens["Screens<br/>(Expo Router)"]
         Stores["Stores<br/>(Zustand)"]
         Hooks["Hooks<br/>(useChat)"]
-        Components["Components<br/>(Chat / Dashboard)"]
+        Components["Components<br/>(Chat / Insights)"]
         Screens <--> Stores <--> Hooks
         Screens --- Components
     end

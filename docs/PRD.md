@@ -186,14 +186,14 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 **Description:** A set of dashboard components that display the current state of the deal alongside the chat. Updated automatically by the AI through structured tool calls, so the buyer always sees their deal status without having to ask.
 
-**Implementation status:** Built. All dashboard components implemented with collapsible panel, responsive desktop sidebar layout at 768px+ breakpoints. Dashboard panel ordering and quick actions adapt to the buyer's situational context.
+**Implementation status:** Built. All insights components implemented with collapsible panel (`InsightsPanel`), responsive desktop sidebar layout at 768px+ breakpoints. Panel ordering and quick actions adapt to the buyer's situational context.
 
 **Components:**
 
 | Component | Purpose | Tool |
 |-----------|---------|------|
 | Deal Phase Indicator | Shows current stage: Researching, At Dealership, Negotiating, F&I, Signing, Post-Purchase | `update_deal_phase` |
-| Numbers Dashboard | Listing price, MSRP, target price, walk-away price, current offer, monthly payment, APR (with named threshold constants for color-coding) | `update_deal_numbers` |
+| Numbers Summary | Listing price, MSRP, target price, walk-away price, current offer, monthly payment, APR (with named threshold constants for color-coding) | `update_deal_numbers` |
 | Vehicle Card | Year, make, model, trim, VIN, mileage, color of the vehicle under consideration | `set_vehicle` |
 | Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality | `update_scorecard` |
 | Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |

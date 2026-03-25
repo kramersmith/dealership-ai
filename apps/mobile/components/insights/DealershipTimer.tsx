@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { Animated, Platform } from 'react-native'
-const useNative = Platform.OS !== 'web'
+import { Animated } from 'react-native'
 import { XStack, Text } from 'tamagui'
 import { Clock } from '@tamagui/lucide-icons'
 import { formatElapsedTime } from '@/lib/utils'
+import { TIMER_WARNING_MINUTES, TIMER_LONG_MINUTES } from '@/lib/constants'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { colors } from '@/lib/colors'
 
 interface DealershipTimerProps {
@@ -31,8 +32,8 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
   }, [startedAt])
 
   // Pulse when crossing thresholds
-  const isWarning = minutes >= 60
-  const isLong = minutes >= 120
+  const isWarning = minutes >= TIMER_WARNING_MINUTES
+  const isLong = minutes >= TIMER_LONG_MINUTES
 
   useEffect(() => {
     const shouldPulse = (isWarning && !prevWarning.current) || (isLong && !prevLong.current)
@@ -41,10 +42,18 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
 
     if (shouldPulse) {
       Animated.sequence([
-        Animated.timing(scale, { toValue: 1.06, duration: 120, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1, duration: 120, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1.06, duration: 120, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1, duration: 120, useNativeDriver: useNative }),
+        Animated.timing(scale, {
+          toValue: 1.06,
+          duration: 120,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(scale, { toValue: 1, duration: 120, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(scale, {
+          toValue: 1.06,
+          duration: 120,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(scale, { toValue: 1, duration: 120, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start()
     }
   }, [isWarning, isLong])

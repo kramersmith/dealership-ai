@@ -4,9 +4,8 @@ import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { Menu, X, MessageSquare, List, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { colors } from '@/lib/colors'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useAuthStore } from '@/stores/authStore'
-
-const useNative = Platform.OS !== 'web'
 
 interface MenuItem {
   label: string
@@ -28,7 +27,7 @@ export function HamburgerMenu() {
     Animated.timing(rotation, {
       toValue: isOpen ? 1 : 0,
       duration: 200,
-      useNativeDriver: useNative,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start()
   }, [isOpen])
 

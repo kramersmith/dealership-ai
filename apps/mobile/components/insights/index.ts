@@ -1,6 +1,6 @@
-export { DashboardPanel } from './DashboardPanel'
+export { InsightsPanel } from './InsightsPanel'
 export { DealPhaseIndicator } from './DealPhaseIndicator'
-export { NumbersDashboard } from './NumbersDashboard'
+export { NumbersSummary } from './NumbersSummary'
 export { NegotiationScorecard } from './NegotiationScorecard'
 export { VehicleCard } from './VehicleCard'
 export { Checklist } from './Checklist'

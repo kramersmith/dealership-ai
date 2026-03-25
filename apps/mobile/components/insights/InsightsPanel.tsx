@@ -1,42 +1,28 @@
-import { useState, useCallback } from 'react'
-import { ScrollView, TouchableOpacity } from 'react-native'
-import { YStack, XStack, Text } from 'tamagui'
-import { ChevronDown, ChevronUp } from '@tamagui/lucide-icons'
+import { YStack } from 'tamagui'
 import type { DealState } from '@/lib/types'
 import { DEFAULT_BUYER_CONTEXT, WIDGET_ORDER_BY_CONTEXT } from '@/lib/constants'
 import { DealPhaseIndicator } from './DealPhaseIndicator'
-import { NumbersDashboard } from './NumbersDashboard'
+import { NumbersSummary } from './NumbersSummary'
 import { NegotiationScorecard } from './NegotiationScorecard'
 import { VehicleCard } from './VehicleCard'
 import { Checklist } from './Checklist'
 import { DealershipTimer } from './DealershipTimer'
 
-interface DashboardPanelProps {
+interface InsightsPanelProps {
   dealState: DealState
   onToggleChecklist: (index: number) => void
   mode?: 'mobile' | 'sidebar'
 }
 
-export function DashboardPanel({
+export function InsightsPanel({
   dealState,
   onToggleChecklist,
   mode = 'mobile',
-}: DashboardPanelProps) {
-  const [isExpanded, setIsExpanded] = useState(true)
+}: InsightsPanelProps) {
   const isSidebar = mode === 'sidebar'
 
-  const toggle = useCallback(() => {
-    setIsExpanded((prev) => !prev)
-  }, [])
-
-  const hasNumbers = Object.values(dealState.numbers).some((v) => v !== null)
-  const hasScorecard = Object.values(dealState.scorecard).some((v) => v !== null)
-  const hasContent =
-    dealState.vehicle ||
-    hasNumbers ||
-    hasScorecard ||
-    dealState.checklist.length > 0 ||
-    dealState.timerStartedAt
+  const hasNumbers = Object.values(dealState.numbers).some((value) => value !== null)
+  const hasScorecard = Object.values(dealState.scorecard).some((value) => value !== null)
 
   // Build widgets in order determined by buyer context
   const widgets: { key: string; element: React.ReactNode }[] = []
@@ -54,7 +40,7 @@ export function DashboardPanel({
       ? { key: 'vehicle', element: <VehicleCard vehicle={dealState.vehicle} /> }
       : null,
     numbers: hasNumbers
-      ? { key: 'numbers', element: <NumbersDashboard numbers={dealState.numbers} /> }
+      ? { key: 'numbers', element: <NumbersSummary numbers={dealState.numbers} /> }
       : null,
     scorecard: hasScorecard
       ? {
@@ -80,7 +66,7 @@ export function DashboardPanel({
     if (widget) widgets.push(widget)
   }
 
-  const dashboardWidgets = (
+  const insightWidgets = (
     <YStack paddingHorizontal="$4" gap="$3" paddingVertical="$3">
       {widgets.map((widget) => (
         <YStack key={widget.key}>{widget.element}</YStack>
@@ -88,57 +74,28 @@ export function DashboardPanel({
     </YStack>
   )
 
-  // Sidebar mode (desktop): always expanded, no toggle, no max height
   if (isSidebar) {
     return (
       <YStack flex={1}>
         <YStack paddingHorizontal="$4" paddingTop="$3" paddingBottom="$2">
           <DealPhaseIndicator currentPhase={dealState.phase} />
         </YStack>
-        {dashboardWidgets}
+        {insightWidgets}
       </YStack>
     )
   }
 
-  // Mobile mode: collapsible with max height
   return (
-    <YStack>
-      {/* Phase indicator always visible */}
+    <YStack flex={1}>
       <YStack
         paddingHorizontal="$4"
-        paddingTop="$2"
+        paddingTop="$3"
         paddingBottom="$2"
         backgroundColor="$background"
       >
         <DealPhaseIndicator currentPhase={dealState.phase} />
       </YStack>
-
-      {/* Collapse toggle */}
-      {hasContent && (
-        <TouchableOpacity
-          onPress={toggle}
-          activeOpacity={0.6}
-          style={{ minHeight: 44, justifyContent: 'center' }}
-        >
-          <XStack justifyContent="center" alignItems="center" gap="$1">
-            <Text fontSize={12} color="$placeholderColor" fontWeight="500">
-              {isExpanded ? 'Hide Dashboard' : 'Show Dashboard'}
-            </Text>
-            {isExpanded ? (
-              <ChevronUp size={16} color="$placeholderColor" />
-            ) : (
-              <ChevronDown size={16} color="$placeholderColor" />
-            )}
-          </XStack>
-        </TouchableOpacity>
-      )}
-
-      {/* Collapsible content */}
-      {isExpanded && hasContent && (
-        <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
-          {dashboardWidgets}
-        </ScrollView>
-      )}
+      {insightWidgets}
     </YStack>
   )
 }

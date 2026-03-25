@@ -8,7 +8,7 @@ interface DealPhaseIndicatorProps {
 }
 
 export function DealPhaseIndicator({ currentPhase }: DealPhaseIndicatorProps) {
-  const currentIndex = DEAL_PHASES.findIndex((p) => p.key === currentPhase)
+  const currentIndex = DEAL_PHASES.findIndex((phase) => phase.key === currentPhase)
 
   return (
     <XStack justifyContent="space-between" alignItems="center" gap="$1">

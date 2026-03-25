@@ -1,14 +1,15 @@
 import { useRef, useEffect } from 'react'
-import { Animated, Platform } from 'react-native'
-const useNative = Platform.OS !== 'web'
+import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 import type { DealNumbers } from '@/lib/types'
 import { formatCurrency, formatPercent } from '@/lib/utils'
 import { APR_GOOD_THRESHOLD, APR_BAD_THRESHOLD } from '@/lib/constants'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { colors } from '@/lib/colors'
 import { AppCard } from '@/components/shared'
+import { useSlideIn } from '@/hooks/useAnimatedValue'
 
-interface NumbersDashboardProps {
+interface NumbersSummaryProps {
   numbers: DealNumbers
 }
 
@@ -27,7 +28,7 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
       Animated.timing(flash, {
         toValue: 0,
         duration: 600,
-        useNativeDriver: useNative,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }).start()
     }
   }, [value])
@@ -49,7 +50,8 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
   )
 }
 
-export function NumbersDashboard({ numbers }: NumbersDashboardProps) {
+export function NumbersSummary({ numbers }: NumbersSummaryProps) {
+  const { opacity, translateY } = useSlideIn(320)
   const { msrp, listingPrice, yourTarget, walkAwayPrice, currentOffer, monthlyPayment, apr } =
     numbers
 
@@ -72,24 +74,26 @@ export function NumbersDashboard({ numbers }: NumbersDashboardProps) {
           : 'neutral'
 
   return (
-    <AppCard gap="$3">
-      <XStack gap="$4">
-        <NumberCell label="Listing Price" value={formatCurrency(listingPrice)} />
-        <NumberCell label="MSRP" value={formatCurrency(msrp)} />
-        <NumberCell label="Your Target" value={formatCurrency(yourTarget)} highlight="good" />
-      </XStack>
-      <XStack gap="$4">
-        <NumberCell label="Walk-Away" value={formatCurrency(walkAwayPrice)} highlight="bad" />
-        <NumberCell
-          label="Current Offer"
-          value={formatCurrency(currentOffer)}
-          highlight={offerHighlight}
-        />
-        <NumberCell label="Monthly" value={formatCurrency(monthlyPayment)} />
-      </XStack>
-      <XStack gap="$4">
-        <NumberCell label="APR" value={formatPercent(apr)} highlight={aprHighlight} />
-      </XStack>
-    </AppCard>
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      <AppCard gap="$3">
+        <XStack gap="$4">
+          <NumberCell label="Listing Price" value={formatCurrency(listingPrice)} />
+          <NumberCell label="MSRP" value={formatCurrency(msrp)} />
+          <NumberCell label="Your Target" value={formatCurrency(yourTarget)} highlight="good" />
+        </XStack>
+        <XStack gap="$4">
+          <NumberCell label="Walk-Away" value={formatCurrency(walkAwayPrice)} highlight="bad" />
+          <NumberCell
+            label="Current Offer"
+            value={formatCurrency(currentOffer)}
+            highlight={offerHighlight}
+          />
+          <NumberCell label="Monthly" value={formatCurrency(monthlyPayment)} />
+        </XStack>
+        <XStack gap="$4">
+          <NumberCell label="APR" value={formatPercent(apr)} highlight={aprHighlight} />
+        </XStack>
+      </AppCard>
+    </Animated.View>
   )
 }

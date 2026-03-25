@@ -1,8 +1,6 @@
 import { useRef, useEffect } from 'react'
-import { Animated, Platform } from 'react-native'
-
-// On web, useNativeDriver is not supported — fall back to JS driver silently
-const useNative = Platform.OS !== 'web'
+import { Animated } from 'react-native'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 
 /** Animates a numeric value smoothly when it changes */
 export function useAnimatedNumber(value: number, duration = 300) {
@@ -28,7 +26,7 @@ export function useFadeIn(duration = 400, delay = 0) {
       toValue: 1,
       duration,
       delay,
-      useNativeDriver: useNative,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start()
   }, [])
 
@@ -46,13 +44,13 @@ export function useSlideIn(duration = 300, delay = 0) {
         toValue: 1,
         duration,
         delay,
-        useNativeDriver: useNative,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(translateY, {
         toValue: 0,
         duration,
         delay,
-        useNativeDriver: useNative,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start()
   }, [])
@@ -67,10 +65,18 @@ export function usePulse(trigger: boolean) {
   useEffect(() => {
     if (trigger) {
       Animated.sequence([
-        Animated.timing(scale, { toValue: 1.05, duration: 150, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1.05, duration: 150, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: useNative }),
+        Animated.timing(scale, {
+          toValue: 1.05,
+          duration: 150,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(scale, {
+          toValue: 1.05,
+          duration: 150,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start()
     }
   }, [trigger])

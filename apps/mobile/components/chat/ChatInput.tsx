@@ -44,7 +44,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
       paddingVertical="$2"
       gap="$2"
       alignItems="flex-end"
-      backgroundColor="$background"
+      backgroundColor="$backgroundStrong"
       borderTopWidth={1}
       borderTopColor="$borderColor"
     >
@@ -53,7 +53,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
           width={44}
           height={44}
           borderRadius={100}
-          backgroundColor="$backgroundStrong"
+          backgroundColor="$backgroundHover"
           borderWidth={1}
           borderColor="$borderColor"
           alignItems="center"
@@ -71,7 +71,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         onChangeText={setText}
         onSubmitEditing={handleSend}
         returnKeyType="send"
-        backgroundColor="$backgroundStrong"
+        backgroundColor="$backgroundHover"
         borderColor="$borderColor"
         borderRadius="$5"
         disabled={disabled}

@@ -100,3 +100,27 @@ export const EMPTY_SCORECARD = {
   fees: null,
   overall: null,
 } as const
+
+// ─── Vehicle Mileage Thresholds ───
+
+/** Mileage above this is flagged as "High Mileage". */
+export const HIGH_MILEAGE_THRESHOLD = 100_000
+
+/** Mileage above this is flagged as "Very High Miles". */
+export const VERY_HIGH_MILEAGE_THRESHOLD = 150_000
+
+// ─── Dealership Timer Thresholds (minutes) ───
+
+/** Minutes at dealership before warning state. */
+export const TIMER_WARNING_MINUTES = 60
+
+/** Minutes at dealership before long-wait state. */
+export const TIMER_LONG_MINUTES = 120
+
+// ─── Mobile Insights Panel ───
+
+/** Fraction of screen width for the slide-out insights panel. */
+export const MOBILE_INSIGHTS_WIDTH_RATIO = 0.9
+
+/** Maximum width in pixels for the slide-out insights panel. */
+export const MOBILE_INSIGHTS_MAX_WIDTH = 420

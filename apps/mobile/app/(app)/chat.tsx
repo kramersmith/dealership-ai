@@ -1,21 +1,71 @@
-import { useRef } from 'react'
-import { KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView } from 'react-native'
-import { YStack, XStack, Text } from 'tamagui'
+import { useRef, useState, useEffect } from 'react'
+import {
+  KeyboardAvoidingView,
+  Platform,
+  TouchableOpacity,
+  Pressable,
+  ScrollView,
+  Modal,
+  View,
+  Animated,
+  Dimensions,
+} from 'react-native'
+import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { ThemedSafeArea, LoadingIndicator, HamburgerMenu, RoleGuard } from '@/components/shared'
-import { Plus } from '@tamagui/lucide-icons'
+import { Plus, X } from '@tamagui/lucide-icons'
 import { colors } from '@/lib/colors'
 import {
   DEFAULT_BUYER_CONTEXT,
   FALLBACK_QUICK_ACTIONS,
   QUICK_ACTIONS_STALENESS_THRESHOLD,
   STATIC_ACTIONS_STALENESS_THRESHOLD,
+  MOBILE_INSIGHTS_WIDTH_RATIO,
+  MOBILE_INSIGHTS_MAX_WIDTH,
 } from '@/lib/constants'
-import type { BuyerContext } from '@/lib/types'
+import type { BuyerContext, DealState } from '@/lib/types'
+import { formatCurrency, vehicleSummary } from '@/lib/utils'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useChatStore } from '@/stores/chatStore'
 import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { DashboardPanel, QuickActions } from '@/components/dashboard'
+import { InsightsPanel, QuickActions } from '@/components/insights'
 import { ChatMessageList, ChatInput, WelcomePrompts } from '@/components/chat'
+
+function useMobileInsightsWidth() {
+  const [width, setWidth] = useState(
+    Math.min(
+      Dimensions.get('window').width * MOBILE_INSIGHTS_WIDTH_RATIO,
+      MOBILE_INSIGHTS_MAX_WIDTH
+    )
+  )
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setWidth(Math.min(window.width * MOBILE_INSIGHTS_WIDTH_RATIO, MOBILE_INSIGHTS_MAX_WIDTH))
+    })
+    return () => subscription.remove()
+  }, [])
+
+  return width
+}
+
+function getInsightsPreviewDetail(dealState: DealState | null): string {
+  if (!dealState) return 'Live buying guidance'
+  if (dealState.timerStartedAt) return 'Live dealership timer running'
+  if (dealState.numbers.currentOffer != null) {
+    return `Current offer ${formatCurrency(dealState.numbers.currentOffer)}`
+  }
+  if (dealState.numbers.listingPrice != null) {
+    return `Listing ${formatCurrency(dealState.numbers.listingPrice)}`
+  }
+  if (dealState.checklist.length > 0) {
+    const done = dealState.checklist.filter((item) => item.done).length
+    return `${done}/${dealState.checklist.length} checklist items done`
+  }
+  const phaseLabel = dealState.phase.replace(/_/g, ' ')
+  if (phaseLabel) return `Phase: ${phaseLabel}`
+  return 'Live buying guidance'
+}
 
 const GREETING_MESSAGES: Record<BuyerContext, string> = {
   researching:
@@ -33,8 +83,20 @@ const GREETING_MESSAGES: Record<BuyerContext, string> = {
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
   const createSession = useChatStore((state) => state.createSession)
+  const addGreeting = useChatStore((state) => state.addGreeting)
+  const storeQuickActions = useChatStore((state) => state.quickActions)
+  const aiResponseCount = useChatStore((state) => state.aiResponseCount)
+  const quickActionsUpdatedAtResponse = useChatStore((state) => state.quickActionsUpdatedAtResponse)
+
   const { isDesktop } = useScreenWidth()
   const isCreating = useRef(false)
+  const theme = useTheme()
+  const mobileInsightsWidth = useMobileInsightsWidth()
+  const [isInsightsOpen, setIsInsightsOpen] = useState(false)
+  const [isInsightsVisible, setIsInsightsVisible] = useState(false)
+  const [mobileInsightsPreviewHeight, setMobileInsightsPreviewHeight] = useState(0)
+  const insightsSlide = useRef(new Animated.Value(mobileInsightsWidth)).current
+  const insightsBackdropOpacity = useRef(new Animated.Value(0)).current
 
   const {
     messages,
@@ -46,13 +108,51 @@ export default function ChatScreen() {
     toggleChecklistItem,
   } = useChat(activeSessionId)
 
-  const storeQuickActions = useChatStore((state) => state.quickActions)
-  const aiResponseCount = useChatStore((state) => state.aiResponseCount)
-  const quickActionsUpdatedAtResponse = useChatStore((state) => state.quickActionsUpdatedAtResponse)
+  const showWelcome = !activeSessionId && !isLoading
+  const showMobileInsightsToggle = !isDesktop && !!dealState && !showWelcome
 
-  const addGreeting = useChatStore((state) => state.addGreeting)
+  useEffect(() => {
+    if (!showMobileInsightsToggle && isInsightsOpen) {
+      setIsInsightsOpen(false)
+    }
+  }, [showMobileInsightsToggle, isInsightsOpen])
 
-  // Create session with a buyer context (from card tap)
+  useEffect(() => {
+    if (isInsightsOpen) {
+      setIsInsightsVisible(true)
+      Animated.parallel([
+        Animated.timing(insightsSlide, {
+          toValue: 0,
+          duration: 240,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(insightsBackdropOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]).start()
+      return
+    }
+
+    Animated.parallel([
+      Animated.timing(insightsSlide, {
+        toValue: mobileInsightsWidth,
+        duration: 220,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(insightsBackdropOpacity, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setIsInsightsVisible(false)
+      }
+    })
+  }, [insightsBackdropOpacity, insightsSlide, isInsightsOpen, mobileInsightsWidth])
+
   const handleContextSelect = async (context: BuyerContext) => {
     if (isCreating.current) return
     isCreating.current = true
@@ -69,7 +169,6 @@ export default function ChatScreen() {
     }
   }
 
-  // Create session without context (user typed or uploaded directly)
   const handleDirectSend = async (content: string, imageUri?: string) => {
     if (!activeSessionId) {
       if (isCreating.current) return
@@ -90,9 +189,9 @@ export default function ChatScreen() {
     }
   }
 
-  // New session button (+) — resets to welcome state
   const handleNewSession = () => {
     if (isCreating.current) return
+    setIsInsightsOpen(false)
     useChatStore.setState({
       activeSessionId: null,
       messages: [],
@@ -103,11 +202,8 @@ export default function ChatScreen() {
     })
   }
 
-  const showWelcome = !activeSessionId && !isLoading
-
-  // Compute which quick actions to show
   const userMessageCount = messages.filter((message) => message.role === 'user').length
-  const hasRealExchange = userMessageCount >= 1 // user has sent at least one message
+  const hasRealExchange = userMessageCount >= 1
   const hasDynamicActions = storeQuickActions.length > 0
   const isStaleDynamic =
     hasDynamicActions &&
@@ -123,6 +219,10 @@ export default function ChatScreen() {
       : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? [])
 
   const showQuickActions = !showWelcome && hasRealExchange && effectiveQuickActions.length > 0
+  const newChatButtonBg = (theme.backgroundHover?.val as string) ?? '$backgroundHover'
+  const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
+  const previewTitle = dealState?.vehicle ? vehicleSummary(dealState.vehicle) : 'Insights'
+  const previewDetail = getInsightsPreviewDetail(dealState)
 
   if (isLoading && messages.length === 0) {
     return (
@@ -151,12 +251,70 @@ export default function ChatScreen() {
       <TouchableOpacity
         onPress={handleNewSession}
         activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityLabel="Start new chat"
         style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
       >
-        <Plus size={22} color={colors.brand} />
+        <YStack
+          width={36}
+          height={36}
+          borderRadius={12}
+          alignItems="center"
+          justifyContent="center"
+          backgroundColor={newChatButtonBg as string}
+          borderWidth={1}
+          borderColor="$borderColor"
+        >
+          <Plus size={18} color={colors.brand} />
+        </YStack>
       </TouchableOpacity>
     </XStack>
   )
+
+  const mobileInsightsPreview =
+    showMobileInsightsToggle && dealState ? (
+      <Pressable
+        onPress={() => setIsInsightsOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Open insights"
+        style={{
+          marginHorizontal: 12,
+          marginTop: 8,
+          marginBottom: 6,
+          minHeight: 44,
+          backgroundColor: 'transparent',
+          borderWidth: 0,
+          borderColor: 'transparent',
+          ...(Platform.OS === 'web'
+            ? {
+                outlineWidth: 0,
+                boxShadow: 'none',
+                appearance: 'none',
+              }
+            : null),
+        }}
+      >
+        <XStack
+          alignItems="center"
+          gap="$3"
+          paddingHorizontal="$3"
+          paddingVertical="$2"
+          backgroundColor="$backgroundStrong"
+          borderRadius="$4"
+          borderWidth={1}
+          borderColor="$borderColor"
+        >
+          <YStack flex={1} gap={2}>
+            <Text fontSize={13} fontWeight="700" color="$color" numberOfLines={1}>
+              {previewTitle}
+            </Text>
+            <Text fontSize={11} color="$placeholderColor" numberOfLines={1}>
+              {previewDetail}
+            </Text>
+          </YStack>
+        </XStack>
+      </Pressable>
+    ) : null
 
   const chatColumn = (
     <YStack flex={1}>
@@ -165,17 +323,46 @@ export default function ChatScreen() {
           <WelcomePrompts onSelect={handleContextSelect} />
         </YStack>
       ) : (
-        <YStack flex={1}>
-          <ChatMessageList messages={messages} isSending={isSending} />
-        </YStack>
-      )}
-      {showQuickActions && (
-        <YStack paddingHorizontal="$4">
-          <QuickActions
-            actions={effectiveQuickActions}
-            onAction={handleQuickAction}
-            disabled={isSending}
+        <YStack flex={1} position="relative">
+          <ChatMessageList
+            messages={messages}
+            isSending={isSending}
+            topPadding={mobileChatTopInset}
+            bottomPadding={12}
+            footer={
+              showQuickActions ? (
+                <YStack paddingHorizontal="$4" paddingTop="$2" paddingBottom="$1">
+                  <QuickActions
+                    actions={effectiveQuickActions}
+                    onAction={handleQuickAction}
+                    disabled={isSending}
+                  />
+                </YStack>
+              ) : null
+            }
           />
+          {mobileInsightsPreview ? (
+            <YStack
+              position="absolute"
+              top={0}
+              left={0}
+              right={0}
+              zIndex={2}
+              pointerEvents="box-none"
+            >
+              <YStack
+                onLayout={(event) => {
+                  const nextHeight = Math.ceil(event.nativeEvent.layout.height)
+                  if (nextHeight !== mobileInsightsPreviewHeight) {
+                    setMobileInsightsPreviewHeight(nextHeight)
+                  }
+                }}
+                pointerEvents="box-none"
+              >
+                {mobileInsightsPreview}
+              </YStack>
+            </YStack>
+          ) : null}
         </YStack>
       )}
       <ChatInput
@@ -186,7 +373,6 @@ export default function ChatScreen() {
     </YStack>
   )
 
-  // Desktop: side-by-side layout
   if (isDesktop) {
     return (
       <RoleGuard role="buyer">
@@ -195,8 +381,7 @@ export default function ChatScreen() {
             {header}
 
             <XStack flex={1}>
-              {/* Left: Dashboard sidebar */}
-              {dealState && !showWelcome && (
+              {dealState && !showWelcome ? (
                 <YStack
                   width={360}
                   borderRightWidth={1}
@@ -204,16 +389,15 @@ export default function ChatScreen() {
                   backgroundColor="$backgroundStrong"
                 >
                   <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-                    <DashboardPanel
+                    <InsightsPanel
                       dealState={dealState}
                       onToggleChecklist={toggleChecklistItem}
                       mode="sidebar"
                     />
                   </ScrollView>
                 </YStack>
-              )}
+              ) : null}
 
-              {/* Right: Chat */}
               {chatColumn}
             </XStack>
           </YStack>
@@ -222,7 +406,6 @@ export default function ChatScreen() {
     )
   }
 
-  // Mobile: stacked layout
   return (
     <RoleGuard role="buyer">
       <ThemedSafeArea edges={['top']}>
@@ -233,19 +416,119 @@ export default function ChatScreen() {
         >
           <YStack flex={1} backgroundColor="$background">
             {header}
-
-            {/* Dashboard Panel (collapsible on mobile) */}
-            {dealState && !showWelcome && (
-              <DashboardPanel dealState={dealState} onToggleChecklist={toggleChecklistItem} />
-            )}
-
-            {/* Divider */}
-            {!showWelcome && <YStack height={1} backgroundColor="$borderColor" />}
-
-            {/* Chat */}
             {chatColumn}
           </YStack>
         </KeyboardAvoidingView>
+
+        <Modal
+          visible={showMobileInsightsToggle && isInsightsVisible}
+          transparent
+          animationType="none"
+          onRequestClose={() => setIsInsightsOpen(false)}
+        >
+          <View style={{ flex: 1 }}>
+            <Animated.View
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                opacity: insightsBackdropOpacity,
+              }}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => setIsInsightsOpen(false)}
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.overlay,
+                }}
+              />
+            </Animated.View>
+
+            <Animated.View
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: mobileInsightsWidth,
+                transform: [{ translateX: insightsSlide }],
+              }}
+            >
+              <YStack
+                flex={1}
+                backgroundColor="$backgroundStrong"
+                borderLeftWidth={1}
+                borderLeftColor="$borderColor"
+                {...(Platform.OS === 'web'
+                  ? {
+                      style: {
+                        boxShadow: `-8px 0 24px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}`,
+                      },
+                    }
+                  : {
+                      shadowColor: theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)',
+                      shadowOffset: { width: -4, height: 0 },
+                      shadowOpacity: 1,
+                      shadowRadius: 12,
+                      elevation: 12,
+                    })}
+              >
+                <ThemedSafeArea edges={['top']}>
+                  <YStack flex={1} backgroundColor="$backgroundStrong">
+                    <XStack
+                      alignItems="center"
+                      justifyContent="space-between"
+                      paddingHorizontal="$4"
+                      paddingVertical="$3"
+                      borderBottomWidth={1}
+                      borderBottomColor="$borderColor"
+                    >
+                      <Text fontSize={18} fontWeight="700" color="$color">
+                        Insights
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setIsInsightsOpen(false)}
+                        activeOpacity={0.6}
+                        accessibilityRole="button"
+                        accessibilityLabel="Close insights"
+                        style={{
+                          width: 44,
+                          height: 44,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <YStack
+                          width={36}
+                          height={36}
+                          borderRadius={12}
+                          alignItems="center"
+                          justifyContent="center"
+                          backgroundColor="$backgroundHover"
+                        >
+                          <X size={18} color="$color" />
+                        </YStack>
+                      </TouchableOpacity>
+                    </XStack>
+
+                    <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+                      {dealState ? (
+                        <InsightsPanel
+                          dealState={dealState}
+                          onToggleChecklist={toggleChecklistItem}
+                          mode="mobile"
+                        />
+                      ) : null}
+                    </ScrollView>
+                  </YStack>
+                </ThemedSafeArea>
+              </YStack>
+            </Animated.View>
+          </View>
+        </Modal>
       </ThemedSafeArea>
     </RoleGuard>
   )

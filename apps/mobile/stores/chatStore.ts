@@ -198,7 +198,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({ isSending: false })
       }
 
-      // Process tool calls -> update dashboard and quick actions
+      // Process tool calls -> update insights and quick actions
       if (assistantMessage.toolCalls) {
         for (const toolCall of assistantMessage.toolCalls) {
           if (toolCall.name === 'update_quick_actions') {

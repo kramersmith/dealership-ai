@@ -1,9 +1,9 @@
 import { useRef, useEffect } from 'react'
-import { Animated, Platform } from 'react-native'
-const useNative = Platform.OS !== 'web'
+import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 import type { Scorecard, DealNumbers } from '@/lib/types'
 import { SCORE_COLORS } from '@/lib/constants'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { colors } from '@/lib/colors'
 import { StatusPill, AppCard } from '@/components/shared'
 
@@ -23,8 +23,8 @@ function ScoreItem({ label, status }: ScoreItemProps) {
   useEffect(() => {
     if (status) {
       Animated.sequence([
-        Animated.timing(scale, { toValue: 1.2, duration: 150, useNativeDriver: useNative }),
-        Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: useNative }),
+        Animated.timing(scale, { toValue: 1.2, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start()
     }
   }, [status])

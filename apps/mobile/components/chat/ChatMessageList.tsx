@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, type ReactNode } from 'react'
 import { FlatList, Animated } from 'react-native'
 import { YStack, Text, Spinner } from 'tamagui'
 import type { Message } from '@/lib/types'
@@ -9,6 +9,9 @@ import { ChatBubble } from './ChatBubble'
 interface ChatMessageListProps {
   messages: Message[]
   isSending: boolean
+  topPadding?: number
+  bottomPadding?: number
+  footer?: ReactNode
 }
 
 function EmptyState() {
@@ -22,14 +25,20 @@ function EmptyState() {
         </Text>
         <Text fontSize={14} color="$placeholderColor" textAlign="center" lineHeight={22}>
           Tell me about the vehicle you're looking at — year, make, model, and price — and I'll set
-          up your dashboard.
+          up your insights.
         </Text>
       </YStack>
     </Animated.View>
   )
 }
 
-export function ChatMessageList({ messages, isSending }: ChatMessageListProps) {
+export function ChatMessageList({
+  messages,
+  isSending,
+  topPadding = 8,
+  bottomPadding = 8,
+  footer,
+}: ChatMessageListProps) {
   const flatListRef = useRef<FlatList>(null)
 
   useEffect(() => {
@@ -50,14 +59,17 @@ export function ChatMessageList({ messages, isSending }: ChatMessageListProps) {
       data={messages}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => <ChatBubble message={item} />}
-      contentContainerStyle={{ paddingVertical: 8 }}
+      contentContainerStyle={{ paddingTop: topPadding, paddingBottom: bottomPadding }}
       showsVerticalScrollIndicator={false}
       ListFooterComponent={
-        isSending ? (
-          <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
-            <Spinner size="small" color={colors.brand} />
-          </YStack>
-        ) : null
+        <>
+          {isSending ? (
+            <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
+              <Spinner size="small" color={colors.brand} />
+            </YStack>
+          ) : null}
+          {footer}
+        </>
       }
       onContentSizeChange={() => {
         flatListRef.current?.scrollToEnd({ animated: true })

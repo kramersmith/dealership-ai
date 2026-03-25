@@ -1,12 +1,11 @@
 import { useRef } from 'react'
-import { Animated, TouchableOpacity, Platform } from 'react-native'
+import { Animated, TouchableOpacity } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
-
-const useNative = Platform.OS !== 'web'
 import type { ChecklistItem } from '@/lib/types'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { colors } from '@/lib/colors'
 import { AppCard, SectionHeader } from '@/components/shared'
-import { useFadeIn } from '@/hooks/useAnimatedValue'
+import { useSlideIn } from '@/hooks/useAnimatedValue'
 
 interface ChecklistProps {
   items: ChecklistItem[]
@@ -26,8 +25,8 @@ function ChecklistRow({
 
   const handlePress = () => {
     Animated.sequence([
-      Animated.timing(scale, { toValue: 0.95, duration: 80, useNativeDriver: useNative }),
-      Animated.timing(scale, { toValue: 1, duration: 80, useNativeDriver: useNative }),
+      Animated.timing(scale, { toValue: 0.95, duration: 80, useNativeDriver: USE_NATIVE_DRIVER }),
+      Animated.timing(scale, { toValue: 1, duration: 80, useNativeDriver: USE_NATIVE_DRIVER }),
     ]).start()
     onToggle(index)
   }
@@ -71,11 +70,11 @@ function ChecklistRow({
 }
 
 export function Checklist({ items, onToggle }: ChecklistProps) {
-  const opacity = useFadeIn(400)
+  const { opacity, translateY } = useSlideIn(340)
 
   if (items.length === 0) {
     return (
-      <Animated.View style={{ opacity }}>
+      <Animated.View style={{ opacity, transform: [{ translateY }] }}>
         <AppCard>
           <Text fontSize={13} color="$placeholderColor" textAlign="center">
             Your checklist will appear here as the AI identifies things to check.
@@ -85,7 +84,7 @@ export function Checklist({ items, onToggle }: ChecklistProps) {
     )
   }
 
-  const doneCount = items.filter((i) => i.done).length
+  const doneCount = items.filter((item) => item.done).length
 
   return (
     <AppCard gap="$2">
