@@ -108,6 +108,7 @@ export default function ChatScreen() {
     messages,
     isSending,
     isLoading,
+    streamingText,
     dealState,
     send,
     handleQuickAction,
@@ -347,6 +348,7 @@ export default function ChatScreen() {
           <ChatMessageList
             messages={messages}
             isSending={isSending}
+            streamingText={streamingText}
             topPadding={mobileChatTopInset}
             bottomPadding={12}
             footer={

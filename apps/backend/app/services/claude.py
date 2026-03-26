@@ -320,12 +320,12 @@ async def stream_chat(
     - event: tool_result\ndata: {"tool": "...", "data": {...}}\n\n
     - event: done\ndata: {}\n\n
     """
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     full_text = ""
     tool_calls = []
 
-    with client.messages.stream(
+    async with client.messages.stream(
         model=settings.CLAUDE_MODEL,
         max_tokens=settings.CLAUDE_MAX_TOKENS,
         system=system_prompt,
@@ -335,7 +335,7 @@ async def stream_chat(
         current_tool_input = ""
         current_tool_name = ""
 
-        for event in stream:
+        async for event in stream:
             if event.type == "content_block_start":
                 if hasattr(event.content_block, "type"):
                     if event.content_block.type == "tool_use":
@@ -381,7 +381,7 @@ async def stream_followup_text(
     This is a lightweight second pass — no tool definitions, just text generation.
     The messages include the original conversation plus a summary of what tools were called.
     """
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     # Build a summary of what was processed
     tool_summary_parts = []
@@ -399,13 +399,13 @@ async def stream_followup_text(
     ]
 
     full_text = ""
-    with client.messages.stream(
+    async with client.messages.stream(
         model=settings.CLAUDE_MODEL,
         max_tokens=settings.CLAUDE_MAX_TOKENS,
         system=FOLLOWUP_SYSTEM_PROMPT,
         messages=followup_messages,  # type: ignore[arg-type]
     ) as stream:
-        for event in stream:
+        async for event in stream:
             if event.type == "content_block_delta":
                 if hasattr(event.delta, "type") and event.delta.type == "text_delta":
                     chunk = event.delta.text

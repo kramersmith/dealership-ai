@@ -3,7 +3,8 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 
 export function useChat(sessionId: string | null) {
-  const { messages, isSending, isLoading, setActiveSession, sendMessage } = useChatStore()
+  const { messages, isSending, isLoading, streamingText, setActiveSession, sendMessage } =
+    useChatStore()
 
   const dealState = useDealStore((s) => s.dealState)
   const toggleChecklistItem = useDealStore((s) => s.toggleChecklistItem)
@@ -41,6 +42,7 @@ export function useChat(sessionId: string | null) {
     messages,
     isSending,
     isLoading,
+    streamingText,
     dealState,
     send,
     handleQuickAction,

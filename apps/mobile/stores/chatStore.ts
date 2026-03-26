@@ -17,6 +17,8 @@ interface ChatState {
   aiResponseCount: number
   /** The aiResponseCount when quick actions were last updated. */
   quickActionsUpdatedAtResponse: number
+  /** The accumulated text of the assistant response currently being streamed. */
+  streamingText: string
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
    *  wiping optimistic messages or greeting messages. */
@@ -48,6 +50,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   quickActions: [],
   aiResponseCount: 0,
   quickActionsUpdatedAtResponse: 0,
+  streamingText: '',
   _sessionJustCreated: false,
 
   loadSessions: async () => {
@@ -187,12 +190,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, userMessage],
       isSending: true,
+      streamingText: '',
       sendError: null,
     }))
 
     try {
-      // Get assistant response
-      const assistantMessage = await api.sendMessage(activeSessionId, content, imageUri)
+      // Get assistant response — stream text chunks to the store for live display
+      const assistantMessage = await api.sendMessage(activeSessionId, content, imageUri, (text) =>
+        set({ streamingText: text })
+      )
 
       // Track every AI response for staleness calculation (including tool-only)
       const newResponseCount = get().aiResponseCount + 1
@@ -204,9 +210,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set((state) => ({
           messages: [...state.messages, assistantMessage],
           isSending: false,
+          streamingText: '',
         }))
       } else {
-        set({ isSending: false })
+        set({ isSending: false, streamingText: '' })
       }
 
       // Process tool calls -> update insights and quick actions
@@ -235,6 +242,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         messages: state.messages.filter((msg) => msg.id !== userMessage.id),
         isSending: false,
+        streamingText: '',
         sendError: message,
       }))
     }

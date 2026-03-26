@@ -167,7 +167,12 @@ export interface ApiService {
 
   // Chat
   getMessages(sessionId: string): Promise<Message[]>
-  sendMessage(sessionId: string, content: string, imageUri?: string): Promise<Message>
+  sendMessage(
+    sessionId: string,
+    content: string,
+    imageUri?: string,
+    onChunk?: (text: string) => void
+  ): Promise<Message>
 
   // Deal state
   getDealState(sessionId: string): Promise<DealState>

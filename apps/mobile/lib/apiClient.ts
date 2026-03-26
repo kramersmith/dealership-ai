@@ -146,45 +146,40 @@ class ApiClient implements ApiService {
     }))
   }
 
-  async sendMessage(sessionId: string, content: string, imageUri?: string): Promise<Message> {
-    // This method sends and consumes the SSE stream, returning the final message
-    const res = await fetch(`${API_BASE}/chat/${sessionId}/message`, {
-      method: 'POST',
-      headers: headers(),
-      body: JSON.stringify({ content, image_url: imageUri }),
-    })
+  sendMessage(
+    sessionId: string,
+    content: string,
+    imageUri?: string,
+    onChunk?: (text: string) => void
+  ): Promise<Message> {
+    // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
+    // is buffered by React Native's polyfill and doesn't deliver chunks live.
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `${API_BASE}/chat/${sessionId}/message`)
+      xhr.setRequestHeader('Content-Type', 'application/json')
+      if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`)
 
-    if (!res.ok) {
-      throw new Error(`Chat API ${res.status}`)
-    }
+      let fullText = ''
+      const toolCalls: ToolCall[] = []
+      let processed = 0
 
-    // Read SSE stream
-    const reader = res.body?.getReader()
-    const decoder = new TextDecoder()
+      xhr.onprogress = () => {
+        const newData = xhr.responseText.slice(processed)
+        processed = xhr.responseText.length
 
-    let fullText = ''
-    const toolCalls: ToolCall[] = []
-    let buffer = ''
-    let currentEvent = ''
-
-    if (reader) {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+        const lines = newData.split('\n')
+        let currentEvent = ''
 
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim()
           } else if (line.startsWith('data: ')) {
-            const payload = line.slice(6)
             try {
-              const data = JSON.parse(payload)
+              const data = JSON.parse(line.slice(6))
               if (currentEvent === 'text' && data.chunk) {
                 fullText += data.chunk
+                onChunk?.(fullText)
               } else if (currentEvent === 'tool_result' && data.tool) {
                 toolCalls.push({ name: data.tool as ToolCall['name'], args: data.data })
               }
@@ -195,16 +190,27 @@ class ApiClient implements ApiService {
           }
         }
       }
-    }
 
-    return {
-      id: Math.random().toString(36).substring(2),
-      sessionId,
-      role: 'assistant',
-      content: fullText,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      createdAt: new Date().toISOString(),
-    }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // Process any remaining data not caught by onprogress
+          xhr.onprogress?.(null as any)
+          resolve({
+            id: Math.random().toString(36).substring(2),
+            sessionId,
+            role: 'assistant',
+            content: fullText,
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            createdAt: new Date().toISOString(),
+          })
+        } else {
+          reject(new Error(`Chat API ${xhr.status}`))
+        }
+      }
+
+      xhr.onerror = () => reject(new Error('Network error'))
+      xhr.send(JSON.stringify({ content, image_url: imageUri }))
+    })
   }
 
   // ─── Deal State ───

@@ -10,7 +10,7 @@ import { ChatMessageList, ChatInput } from '@/components/chat'
 export default function SimulationChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
-  const { messages, isSending, setActiveSession, sendMessage } = useChatStore()
+  const { messages, isSending, streamingText, setActiveSession, sendMessage } = useChatStore()
 
   useEffect(() => {
     if (id) {
@@ -56,7 +56,11 @@ export default function SimulationChatScreen() {
 
             {/* Chat */}
             <YStack flex={1}>
-              <ChatMessageList messages={messages} isSending={isSending} />
+              <ChatMessageList
+                messages={messages}
+                isSending={isSending}
+                streamingText={streamingText}
+              />
             </YStack>
 
             {/* Input */}

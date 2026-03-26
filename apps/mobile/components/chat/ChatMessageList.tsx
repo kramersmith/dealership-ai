@@ -4,10 +4,12 @@ import { YStack, Text, Spinner } from 'tamagui'
 import type { Message } from '@/lib/types'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { ChatBubble } from './ChatBubble'
+import { StreamingBubble } from './StreamingBubble'
 
 interface ChatMessageListProps {
   messages: Message[]
   isSending: boolean
+  streamingText?: string
   topPadding?: number
   bottomPadding?: number
   footer?: ReactNode
@@ -34,6 +36,7 @@ function EmptyState() {
 export function ChatMessageList({
   messages,
   isSending,
+  streamingText = '',
   topPadding = 8,
   bottomPadding = 8,
   footer,
@@ -56,6 +59,7 @@ export function ChatMessageList({
     <FlatList
       ref={flatListRef}
       data={messages}
+      extraData={streamingText}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => <ChatBubble message={item} />}
       contentContainerStyle={{ paddingTop: topPadding, paddingBottom: bottomPadding }}
@@ -63,9 +67,13 @@ export function ChatMessageList({
       ListFooterComponent={
         <>
           {isSending ? (
-            <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
-              <Spinner size="small" color="$brand" />
-            </YStack>
+            streamingText ? (
+              <StreamingBubble text={streamingText} />
+            ) : (
+              <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
+                <Spinner size="small" color="$brand" />
+              </YStack>
+            )
           ) : null}
           {footer}
         </>
