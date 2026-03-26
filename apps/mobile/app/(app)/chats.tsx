@@ -105,11 +105,20 @@ export default function SessionsScreen() {
   const isCreating = useRef(false)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const loadSessionsWithError = useCallback(async () => {
+    setLoadError(false)
+    try {
+      await loadSessions()
+    } catch {
+      setLoadError(true)
+    }
+  }, [loadSessions])
+
   // Initial load
   const hasAutoNavigated = useRef(false)
   useEffect(() => {
     loadSessionsWithError()
-  }, [])
+  }, [loadSessionsWithError])
 
   // Single-session fast-path: auto-navigate to chat if exactly 1 session.
   // Only fires once after the initial load to avoid surprising re-redirects
@@ -122,16 +131,7 @@ export default function SessionsScreen() {
         router.replace('/(app)/chat')
       })
     }
-  }, [isLoading, sessions.length])
-
-  async function loadSessionsWithError() {
-    setLoadError(false)
-    try {
-      await loadSessions()
-    } catch {
-      setLoadError(true)
-    }
-  }
+  }, [isLoading, sessions, searchQuery, setActiveSession, router])
 
   // Clean up debounce timer on unmount
   useEffect(() => {

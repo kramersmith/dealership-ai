@@ -26,7 +26,7 @@ export function QuickActions({ actions, onAction, disabled }: QuickActionsProps)
         useNativeDriver: USE_NATIVE_DRIVER,
       }).start()
     }
-  }, [actionsKey])
+  }, [actionsKey, actions.length, opacity])
 
   if (actions.length === 0) return null
 

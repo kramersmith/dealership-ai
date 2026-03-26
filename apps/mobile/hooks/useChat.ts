@@ -14,7 +14,7 @@ export function useChat(sessionId: string | null) {
     if (sessionId) {
       setActiveSession(sessionId)
     }
-  }, [sessionId])
+  }, [sessionId, setActiveSession])
 
   const send = async (content: string, imageUri?: string) => {
     await sendMessage(content, imageUri)

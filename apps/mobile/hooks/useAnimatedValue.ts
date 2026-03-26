@@ -13,7 +13,7 @@ export function useAnimatedNumber(value: number, duration = 300) {
       duration,
       useNativeDriver: false, // layout props can't use native driver
     }).start()
-  }, [value])
+  }, [value, anim, duration])
 
   return anim
 }
@@ -29,7 +29,7 @@ export function useFadeIn(duration = 400, delay = 0) {
       delay,
       useNativeDriver: USE_NATIVE_DRIVER,
     }).start()
-  }, [])
+  }, [opacity, duration, delay])
 
   return opacity
 }
@@ -54,7 +54,7 @@ export function useSlideIn(duration = 300, delay = 0) {
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start()
-  }, [])
+  }, [opacity, translateY, duration, delay])
 
   return { opacity, translateY }
 }
@@ -83,7 +83,7 @@ export function useIconEntrance(duration = 150) {
           useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ]).start()
-    }, [])
+    }, [opacity, rotation, duration])
   )
 
   const rotate = rotation.interpolate({
@@ -115,7 +115,7 @@ export function usePulse(trigger: boolean) {
         Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start()
     }
-  }, [trigger])
+  }, [trigger, scale])
 
   return scale
 }

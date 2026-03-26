@@ -16,7 +16,7 @@ export default function SimulationChatScreen() {
     if (id) {
       setActiveSession(id)
     }
-  }, [id])
+  }, [id, setActiveSession])
 
   return (
     <RoleGuard role="dealer">

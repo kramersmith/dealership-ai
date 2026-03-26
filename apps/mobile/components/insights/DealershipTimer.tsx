@@ -55,7 +55,7 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
         Animated.timing(scale, { toValue: 1, duration: 120, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start()
     }
-  }, [isWarning, isLong])
+  }, [isWarning, isLong, scale])
 
   if (!startedAt) return null
 

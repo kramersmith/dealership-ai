@@ -30,7 +30,7 @@ function NumberCell({ label, value, highlight = 'neutral' }: NumberCellProps) {
         useNativeDriver: USE_NATIVE_DRIVER,
       }).start()
     }
-  }, [value])
+  }, [value, flash])
 
   const valueColor =
     highlight === 'good' ? '$positive' : highlight === 'bad' ? '$danger' : undefined

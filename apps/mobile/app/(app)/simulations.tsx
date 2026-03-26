@@ -30,7 +30,7 @@ export default function SimulationsScreen() {
 
   useEffect(() => {
     loadScenarios()
-  }, [])
+  }, [loadScenarios])
 
   const isStarting = useRef(false)
 

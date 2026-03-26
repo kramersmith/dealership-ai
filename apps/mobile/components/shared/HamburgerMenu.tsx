@@ -28,7 +28,7 @@ export function HamburgerMenu() {
       duration: 200,
       useNativeDriver: USE_NATIVE_DRIVER,
     }).start()
-  }, [isOpen])
+  }, [isOpen, rotation])
 
   const rotateInterpolate = rotation.interpolate({
     inputRange: [0, 1],

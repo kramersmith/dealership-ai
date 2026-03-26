@@ -26,7 +26,7 @@ function ScoreItem({ label, status }: ScoreItemProps) {
         Animated.timing(scale, { toValue: 1, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start()
     }
-  }, [status])
+  }, [status, scale])
 
   return (
     <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
@@ -62,7 +62,7 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
       duration: 500,
       useNativeDriver: false,
     }).start()
-  }, [progressPercent])
+  }, [progressPercent, progressAnim])
 
   const progressColor =
     progressPercent <= 33
