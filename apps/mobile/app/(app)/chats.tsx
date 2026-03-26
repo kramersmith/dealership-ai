@@ -10,12 +10,12 @@ import {
 } from '@/components/shared'
 import { useRouter } from 'expo-router'
 import { Plus, Search, Settings } from '@tamagui/lucide-icons'
-import type { BuyerContext, Session } from '@/lib/types'
+import type { Session } from '@/lib/types'
 import { APP_NAME } from '@/lib/constants'
 import { useChatStore } from '@/stores/chatStore'
+import { useFocusEffect } from 'expo-router'
 import { useFadeIn, useIconEntrance } from '@/hooks/useAnimatedValue'
 import { SessionCard } from '@/components/chats'
-import { WelcomePrompts } from '@/components/chat'
 
 // ─── Section builder: active deals above, past deals below ───
 
@@ -38,13 +38,23 @@ function buildSections(sessions: Session[]) {
   return sections
 }
 
-// ─── Empty state with embedded WelcomePrompts ───
+// ─── Empty state ───
 
-function EmptySessionsState({ onContextSelect }: { onContextSelect: (ctx: BuyerContext) => void }) {
+function EmptySessionsState({ onNewChat }: { onNewChat: () => void }) {
   const opacity = useFadeIn(500)
   return (
     <Animated.View style={{ flex: 1, opacity }}>
-      <WelcomePrompts onSelect={onContextSelect} />
+      <YStack flex={1} justifyContent="center" alignItems="center" padding="$6" gap="$3">
+        <Text fontSize={18} fontWeight="700" color="$color" textAlign="center">
+          No chats yet
+        </Text>
+        <Text fontSize={14} color="$placeholderColor" textAlign="center" lineHeight={22}>
+          Start a new chat to get help with your car deal.
+        </Text>
+        <YStack paddingTop="$2">
+          <AppButton onPress={onNewChat}>Start a Chat</AppButton>
+        </YStack>
+      </YStack>
     </Animated.View>
   )
 }
@@ -82,6 +92,10 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   )
 }
 
+// Module-level flag: prevents the single-session fast-path from re-triggering
+// when the user navigates back from chat. Persists across remounts.
+let didAutoNavigate = false
+
 // ─── Main screen ───
 
 export default function SessionsScreen() {
@@ -91,7 +105,6 @@ export default function SessionsScreen() {
   const isLoading = useChatStore((state) => state.isLoading)
   const loadSessions = useChatStore((state) => state.loadSessions)
   const setActiveSession = useChatStore((state) => state.setActiveSession)
-  const createSession = useChatStore((state) => state.createSession)
   const deleteSession = useChatStore((state) => state.deleteSession)
   const searchSessions = useChatStore((state) => state.searchSessions)
 
@@ -102,7 +115,6 @@ export default function SessionsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const isCreating = useRef(false)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadSessionsWithError = useCallback(async () => {
@@ -114,22 +126,24 @@ export default function SessionsScreen() {
     }
   }, [loadSessions])
 
-  // Initial load
-  const hasAutoNavigated = useRef(false)
-  useEffect(() => {
-    loadSessionsWithError()
-  }, [loadSessionsWithError])
+  // Reload sessions every time the screen gains focus (including back-navigation)
+  useFocusEffect(
+    useCallback(() => {
+      loadSessionsWithError()
+    }, [loadSessionsWithError])
+  )
 
   // Single-session fast-path: auto-navigate to chat if exactly 1 session.
-  // Only fires once after the initial load to avoid surprising re-redirects
-  // (e.g. after deleting sessions down to 1).
+  // Uses module-level flag so navigating back from chat never re-triggers.
   useEffect(() => {
-    if (hasAutoNavigated.current) return
-    if (!isLoading && sessions.length === 1 && !searchQuery) {
-      hasAutoNavigated.current = true
-      setActiveSession(sessions[0].id).then(() => {
-        router.replace('/(app)/chat')
-      })
+    if (didAutoNavigate) return
+    if (!isLoading && sessions.length >= 1) {
+      didAutoNavigate = true
+      if (sessions.length === 1 && !searchQuery) {
+        setActiveSession(sessions[0].id).then(() => {
+          router.replace('/(app)/chat')
+        })
+      }
     }
   }, [isLoading, sessions, searchQuery, setActiveSession, router])
 
@@ -189,30 +203,16 @@ export default function SessionsScreen() {
     }
   }
 
-  const handleNew = async () => {
-    if (isCreating.current) return
-    isCreating.current = true
-    try {
-      await createSession('buyer_chat')
-      router.push('/(app)/chat')
-    } catch {
-      // Error already logged
-    } finally {
-      isCreating.current = false
-    }
-  }
-
-  const handleContextSelect = async (context: BuyerContext) => {
-    if (isCreating.current) return
-    isCreating.current = true
-    try {
-      await createSession('buyer_chat', undefined, context)
-      router.push('/(app)/chat')
-    } catch {
-      // Error already logged
-    } finally {
-      isCreating.current = false
-    }
+  const handleNew = () => {
+    useChatStore.setState({
+      activeSessionId: null,
+      messages: [],
+      quickActions: [],
+      aiResponseCount: 0,
+      quickActionsUpdatedAtResponse: 0,
+      _sessionJustCreated: false,
+    })
+    router.push('/(app)/chat')
   }
 
   const confirmDelete = async () => {
@@ -315,7 +315,7 @@ export default function SessionsScreen() {
           ) : loadError ? (
             <ErrorState onRetry={loadSessionsWithError} />
           ) : showEmptyState ? (
-            <EmptySessionsState onContextSelect={handleContextSelect} />
+            <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
           ) : showSearchError ? (
             <ErrorState onRetry={() => handleSearchChange(searchQuery)} />
           ) : showEmptySearch ? (

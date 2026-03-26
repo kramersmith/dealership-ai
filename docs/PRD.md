@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03-25
+**Last updated:** 2026-03-26
 
 ---
 
@@ -193,20 +193,20 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 | Component | Purpose | Tool |
 |-----------|---------|------|
 | Deal Phase Indicator | Shows current stage: Researching, At Dealership, Negotiating, F&I, Signing, Post-Purchase | `update_deal_phase` |
-| Numbers Summary | Listing price, MSRP, target price, walk-away price, current offer, monthly payment, APR (with named threshold constants for color-coding) | `update_deal_numbers` |
-| Vehicle Card | Year, make, model, trim, VIN, mileage, color of the vehicle under consideration | `set_vehicle` |
+| Deal Health Card | Overall deal health assessment (good/fair/concerning/bad) with summary | `update_deal_health` |
+| Red Flags Card | Specific deal problems with severity (warning/critical), dismissible per session | `update_red_flags` |
+| Key Numbers | Financial figures with inline editing — listing price, MSRP, target, walk-away, current offer, monthly payment, APR | `update_deal_numbers` |
+| Information Gaps Card | Missing data that would improve assessment, with priority and tappable prompts | `update_information_gaps` |
+| Savings Summary | Estimated buyer savings (shown in closing phase) | N/A (derived from first_offer vs current_offer) |
+| Vehicle Card | Year, make, model, trim, VIN, mileage, color with inline editing | `set_vehicle` |
 | Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality | `update_scorecard` |
 | Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |
 | Dealership Timer | Tracks time at the dealership; surfaces awareness cues about wait-time tactics | N/A (client-side) |
 | Quick Actions | LLM-generated contextual prompts (2-3 buttons) that update as conversation shifts; static fallbacks shown before first AI exchange or when dynamic actions go stale | `update_quick_actions` |
 
-**Dashboard panel ordering by buyer context:**
+**Data-driven panel composition:** The InsightsPanel uses `getPanelWidgets()` to determine which widgets to show based on available deal data (e.g., DealHealthCard appears when both an offer and target exist; RedFlagsCard only when there are undismissed flags). This replaced the previous static context-based widget ordering (`WIDGET_ORDER_BY_CONTEXT`).
 
-| Context | Widget order (after timer) |
-|---------|---------------------------|
-| Researching | Vehicle, Numbers, Scorecard, Checklist |
-| Reviewing Deal | Numbers, Scorecard, Vehicle, Checklist |
-| At Dealership | Scorecard, Numbers, Vehicle, Checklist |
+**Inline editing:** Users can tap to correct AI-extracted values on KeyNumbers and VehicleCard. Corrections are debounced and synced to the backend via `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment of deal health and red flags.
 
 #### 4.3 Session Management (Buyer)
 
@@ -271,7 +271,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 **Implementation status:** Built. Auth, sessions, chat (SSE streaming), deals, and simulations routes all implemented.
 
 **Key details:**
-- Claude API integration with two models: Sonnet (primary, with 7 tool definitions) and Haiku (fast, for quick action generation)
+- Claude API integration with two models: Sonnet (primary, with 10 tool definitions) and Haiku (fast, for quick action generation, session titles, and deal assessment safety net)
 - Two-pass response architecture: tool-only responses trigger a follow-up text generation call
 - SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (two-pass text), `done` events
 - SQLite for local development, PostgreSQL via Docker for production
@@ -340,7 +340,7 @@ These capabilities are explicitly excluded from the current MVP. They require ad
 |---------|-------------|
 | **Record and analyze mode** | Buyer records dealership conversation from their phone. AI processes audio to extract verbal price agreements, F&I disclosures, add-on pitches, pressure tactics, and contradictions with paperwork. Requires consent flow implementation. |
 | **Dealer app launch** | Training simulations available to dealer subscribers. Scenario library expansion. Team management for sales managers. |
-| **Onboarding flows** | ~~Two entry points: "Prep mode" and "I'm here now".~~ **Shipped in Phase 1** as buyer context selection (WelcomePrompts with three situation cards). |
+| **Onboarding flows** | ~~Two entry points: "Prep mode" and "I'm here now".~~ **Shipped in Phase 1** as buyer context selection (ContextPicker with three situation cards). |
 | **Post-deal features** | Contract review (photo upload of final contract, AI cross-checks against verbal agreements), post-purchase checklist, refinance timing reminders. |
 | **Analytics foundation** | Begin tracking deal outcomes, tactic effectiveness, and pattern recognition for AI improvement. |
 

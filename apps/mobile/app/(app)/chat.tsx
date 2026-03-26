@@ -28,10 +28,11 @@ import { formatCurrency, vehicleSummary } from '@/lib/utils'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
+import { useDealStore } from '@/stores/dealStore'
 import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { InsightsPanel, QuickActions } from '@/components/insights'
-import { ChatMessageList, ChatInput, WelcomePrompts } from '@/components/chat'
+import { ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
 function useMobileInsightsWidth() {
   const [width, setWidth] = useState(
@@ -115,8 +116,13 @@ export default function ChatScreen() {
     toggleChecklistItem,
   } = useChat(activeSessionId)
 
-  const showWelcome = !activeSessionId && !isLoading
-  const showMobileInsightsToggle = !isDesktop && !!dealState && !showWelcome
+  const dismissedFlagIds = useDealStore((s) => s.dismissedFlagIds)
+  const dismissRedFlag = useDealStore((s) => s.dismissRedFlag)
+  const correctNumber = useDealStore((s) => s.correctNumber)
+  const correctVehicleField = useDealStore((s) => s.correctVehicleField)
+
+  const showContextPicker = !activeSessionId && !isLoading
+  const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
 
   useEffect(() => {
     if (!showMobileInsightsToggle && isInsightsOpen) {
@@ -165,7 +171,7 @@ export default function ChatScreen() {
     isCreating.current = true
 
     try {
-      const session = await createSession('buyer_chat', 'New Deal', context)
+      const session = await createSession('buyer_chat', undefined, context)
       if (session) {
         addGreeting(GREETING_MESSAGES[context])
       }
@@ -182,7 +188,7 @@ export default function ChatScreen() {
       isCreating.current = true
 
       try {
-        const session = await createSession('buyer_chat', 'New Deal')
+        const session = await createSession('buyer_chat')
         if (session) {
           await send(content, imageUri)
         }
@@ -225,7 +231,7 @@ export default function ChatScreen() {
       ? []
       : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? [])
 
-  const showQuickActions = !showWelcome && hasRealExchange && effectiveQuickActions.length > 0
+  const showQuickActions = !showContextPicker && hasRealExchange && effectiveQuickActions.length > 0
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewTitle = dealState?.vehicle ? vehicleSummary(dealState.vehicle) : 'Insights'
   const previewDetail = getInsightsPreviewDetail(dealState)
@@ -338,11 +344,11 @@ export default function ChatScreen() {
     ) : null
 
   const chatColumn = (
-    <YStack flex={1}>
-      {showWelcome ? (
-        <YStack flex={1} justifyContent="center">
-          <WelcomePrompts onSelect={handleContextSelect} />
-        </YStack>
+    <View style={{ flex: 1, overflow: 'hidden' }}>
+      {showContextPicker ? (
+        <View style={{ flex: 1, justifyContent: 'center', overflow: 'auto' as any }}>
+          <ContextPicker onSelect={handleContextSelect} />
+        </View>
       ) : (
         <YStack flex={1} position="relative">
           <ChatMessageList
@@ -390,9 +396,9 @@ export default function ChatScreen() {
       <ChatInput
         onSend={handleDirectSend}
         disabled={isSending}
-        placeholder={showWelcome ? 'Or just tell me what\u2019s going on' : undefined}
+        placeholder={showContextPicker ? 'Or just tell me what\u2019s going on' : undefined}
       />
-    </YStack>
+    </View>
   )
 
   if (isDesktop) {
@@ -403,22 +409,42 @@ export default function ChatScreen() {
             {header}
 
             <XStack flex={1}>
-              {dealState && !showWelcome ? (
-                <YStack
-                  width={360}
-                  borderRightWidth={1}
-                  borderRightColor="$borderColor"
-                  backgroundColor="$backgroundStrong"
-                >
-                  <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-                    <InsightsPanel
-                      dealState={dealState}
-                      onToggleChecklist={toggleChecklistItem}
-                      mode="sidebar"
-                    />
-                  </ScrollView>
-                </YStack>
-              ) : null}
+              <Animated.View
+                style={{
+                  width: dealState && !showContextPicker ? 360 : 0,
+                  overflow: 'hidden',
+                  borderRightWidth: dealState && !showContextPicker ? 1 : 0,
+                  borderRightColor: theme.borderColor?.val as string,
+                  backgroundColor: theme.backgroundStrong?.val as string,
+                  // CSS transition for smooth slide
+                  ...(Platform.OS === 'web' ? { transition: 'width 250ms ease-out' } : {}),
+                }}
+              >
+                {dealState ? (
+                  <View style={{ width: 360, flex: 1 }}>
+                    <ScrollView
+                      showsVerticalScrollIndicator
+                      style={
+                        {
+                          flex: 1,
+                          scrollbarWidth: 'thin',
+                          scrollbarColor: 'rgba(255,255,255,0.15) transparent',
+                        } as any
+                      }
+                    >
+                      <InsightsPanel
+                        dealState={dealState}
+                        dismissedFlagIds={dismissedFlagIds}
+                        onToggleChecklist={toggleChecklistItem}
+                        onDismissFlag={dismissRedFlag}
+                        onCorrectNumber={correctNumber}
+                        onCorrectVehicleField={correctVehicleField}
+                        mode="sidebar"
+                      />
+                    </ScrollView>
+                  </View>
+                ) : null}
+              </Animated.View>
 
               {chatColumn}
             </XStack>
@@ -540,7 +566,11 @@ export default function ChatScreen() {
                       {dealState ? (
                         <InsightsPanel
                           dealState={dealState}
+                          dismissedFlagIds={dismissedFlagIds}
                           onToggleChecklist={toggleChecklistItem}
+                          onDismissFlag={dismissRedFlag}
+                          onCorrectNumber={correctNumber}
+                          onCorrectVehicleField={correctVehicleField}
                           mode="mobile"
                         />
                       ) : null}

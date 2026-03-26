@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -8,12 +9,13 @@ from starlette.responses import StreamingResponse
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, MessageRole
+from app.models.enums import BuyerContext, DealPhase, HealthStatus, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.chat import ChatMessageRequest, MessageResponse
 from app.services.claude import (
+    assess_deal_state,
     build_messages,
     build_system_prompt,
     generate_quick_actions,
@@ -46,8 +48,23 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
             if field in tool_data:
                 setattr(deal_state, field, tool_data[field])
 
+        # Snapshot first offer for savings tracking
+        if (
+            "current_offer" in tool_data
+            and deal_state.first_offer is None
+            and deal_state.current_offer is not None
+        ):
+            deal_state.first_offer = deal_state.current_offer
+
     elif tool_name == "update_deal_phase":
         if "phase" in tool_data:
+            # Snapshot pre-F&I price when entering financing phase
+            if (
+                tool_data["phase"] == DealPhase.FINANCING
+                and deal_state.pre_fi_price is None
+                and deal_state.current_offer is not None
+            ):
+                deal_state.pre_fi_price = deal_state.current_offer
             deal_state.phase = tool_data["phase"]
 
     elif tool_name == "update_scorecard":
@@ -91,6 +108,27 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
                 return
             deal_state.buyer_context = validated
 
+    elif tool_name == "update_deal_health":
+        if "status" in tool_data:
+            try:
+                deal_state.health_status = HealthStatus(tool_data["status"])
+            except ValueError:
+                logger.warning(
+                    "Invalid health_status from tool call: %s",
+                    tool_data["status"],
+                )
+                return
+        if "summary" in tool_data:
+            deal_state.health_summary = tool_data["summary"]
+
+    elif tool_name == "update_red_flags":
+        if "flags" in tool_data:
+            deal_state.red_flags = tool_data["flags"]
+
+    elif tool_name == "update_information_gaps":
+        if "gaps" in tool_data:
+            deal_state.information_gaps = tool_data["gaps"]
+
     elif tool_name == "update_quick_actions":
         # Quick actions are ephemeral UI state handled client-side only — no persistence needed.
         pass
@@ -130,6 +168,12 @@ def _deal_state_to_dict(ds: DealState) -> dict:
             "fees": ds.score_fees,
             "overall": ds.score_overall,
         },
+        "health": {
+            "status": ds.health_status,
+            "summary": ds.health_summary,
+        },
+        "red_flags": ds.red_flags or [],
+        "information_gaps": ds.information_gaps or [],
         "checklist": ds.checklist or [],
     }
 
@@ -233,12 +277,44 @@ async def send_message(
                     "Follow-up text generation failed: session_id=%s", session_id
                 )
 
-        # Generate quick actions if Claude didn't call update_quick_actions
+        # Apply primary tool calls to deal state BEFORE safety-net checks
+        # so the assessment sees updated numbers
+        if deal_state and all_tool_calls:
+            for tc in all_tool_calls:
+                logger.debug("Applying tool call: %s args=%s", tc["name"], tc["args"])
+                _apply_tool_call(deal_state, tc["name"], tc["args"])
+
+        # Determine what safety-net calls are needed
         called_quick_actions = any(
             tc["name"] == "update_quick_actions" for tc in all_tool_calls
         )
-        if not called_quick_actions:
-            quick_actions = await generate_quick_actions(messages, full_text)
+        numbers_changed = any(
+            tc["name"] == "update_deal_numbers" for tc in all_tool_calls
+        )
+        health_updated = any(
+            tc["name"] == "update_deal_health" for tc in all_tool_calls
+        )
+        flags_updated = any(tc["name"] == "update_red_flags" for tc in all_tool_calls)
+        needs_assessment = (
+            numbers_changed
+            and (not health_updated or not flags_updated)
+            and deal_state is not None
+        )
+
+        # Run safety-net calls concurrently
+        qa_task = (
+            asyncio.create_task(generate_quick_actions(messages, full_text))
+            if not called_quick_actions
+            else None
+        )
+        assess_task = (
+            asyncio.create_task(assess_deal_state(_deal_state_to_dict(deal_state)))
+            if needs_assessment
+            else None
+        )
+
+        if qa_task:
+            quick_actions = await qa_task
             if quick_actions:
                 qa_tool_call = {
                     "name": "update_quick_actions",
@@ -247,8 +323,34 @@ async def send_message(
                 all_tool_calls.append(qa_tool_call)
                 yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_quick_actions', 'data': {'actions': quick_actions}})}\n\n"
                 logger.debug(
-                    "Generated quick actions: %s", [a["label"] for a in quick_actions]
+                    "Generated quick actions: %s",
+                    [a["label"] for a in quick_actions],
                 )
+
+        if assess_task:
+            assessment = await assess_task
+            if assessment.get("health") and not health_updated:
+                health = assessment["health"]
+                _apply_tool_call(deal_state, "update_deal_health", health)
+                health_tc = {
+                    "name": "update_deal_health",
+                    "args": health,
+                }
+                all_tool_calls.append(health_tc)
+                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_deal_health', 'data': health})}\n\n"
+                logger.debug(
+                    "Assessment generated deal health: %s", health.get("status")
+                )
+            if assessment.get("flags") and not flags_updated:
+                flags = assessment["flags"]
+                _apply_tool_call(deal_state, "update_red_flags", {"flags": flags})
+                flags_tc = {
+                    "name": "update_red_flags",
+                    "args": {"flags": flags},
+                }
+                all_tool_calls.append(flags_tc)
+                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_red_flags', 'data': {'flags': flags}})}\n\n"
+                logger.debug("Assessment generated %d red flags", len(flags))
 
         # Persist assistant message
         assistant_msg = Message(
@@ -259,25 +361,23 @@ async def send_message(
         )
         db.add(assistant_msg)
 
-        # Apply tool calls to deal state
-        if deal_state and all_tool_calls:
-            for tc in all_tool_calls:
-                logger.debug("Applying tool call: %s args=%s", tc["name"], tc["args"])
-                _apply_tool_call(deal_state, tc["name"], tc["args"])
-
         # Update session metadata (preview + title)
         all_messages = [*history_dicts, {"role": "user", "content": body.content}]
         if full_text:
             all_messages.append({"role": "assistant", "content": full_text})
-        await update_session_metadata(
-            session=session,
-            deal_state=deal_state,
-            messages=all_messages,
-            tool_calls=all_tool_calls,
-            response_text=full_text,
-            user_message=body.content,
-        )
-
+        try:
+            await update_session_metadata(
+                session=session,
+                deal_state=deal_state,
+                messages=all_messages,
+                tool_calls=all_tool_calls,
+                response_text=full_text,
+                user_message=body.content,
+            )
+        except Exception:
+            logger.exception(
+                "Session metadata update failed: session_id=%s", session_id
+            )
         # Update session timestamp
         session.updated_at = datetime.now(timezone.utc)
 

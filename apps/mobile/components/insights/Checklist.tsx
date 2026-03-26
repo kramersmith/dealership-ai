@@ -49,7 +49,7 @@ function ChecklistRow({
             justifyContent="center"
           >
             {item.done && (
-              <Text color="white" fontSize={14} fontWeight="700" marginTop={-1}>
+              <Text color="$white" fontSize={14} fontWeight="700" marginTop={-1}>
                 ✓
               </Text>
             )}

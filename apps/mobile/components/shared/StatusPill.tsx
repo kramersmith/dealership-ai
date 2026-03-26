@@ -29,7 +29,7 @@ export function StatusPill({ status, label, size = 'md' }: StatusPillProps) {
       gap="$1"
     >
       {label && (
-        <Text color="white" fontSize={isSmall ? 11 : 13} fontWeight="600">
+        <Text color="$white" fontSize={isSmall ? 11 : 13} fontWeight="600">
           {label}
         </Text>
       )}
@@ -38,7 +38,7 @@ export function StatusPill({ status, label, size = 'md' }: StatusPillProps) {
           width={isSmall ? 8 : 10}
           height={isSmall ? 8 : 10}
           borderRadius={100}
-          backgroundColor="white"
+          backgroundColor="$white"
           opacity={0.9}
         />
       )}

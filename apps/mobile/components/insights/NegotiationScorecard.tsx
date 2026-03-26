@@ -1,9 +1,8 @@
 import { useRef, useEffect } from 'react'
 import { Animated } from 'react-native'
-import { XStack, YStack, Text } from 'tamagui'
+import { XStack, YStack, Text, useTheme } from 'tamagui'
 import type { Scorecard, DealNumbers } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import { palette } from '@/lib/theme/tokens'
 import { StatusPill, AppCard } from '@/components/shared'
 
 interface NegotiationScorecardProps {
@@ -43,6 +42,7 @@ function ScoreItem({ label, status }: ScoreItemProps) {
 export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecardProps) {
   const { yourTarget, currentOffer, walkAwayPrice } = numbers
   const progressAnim = useRef(new Animated.Value(50)).current
+  const theme = useTheme()
 
   let progressPercent = 50
   if (
@@ -66,10 +66,10 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
 
   const progressColor =
     progressPercent <= 33
-      ? palette.positive
+      ? ((theme.positive?.val as string) ?? '#22C55E')
       : progressPercent <= 66
-        ? palette.warning
-        : palette.danger
+        ? ((theme.warning?.val as string) ?? '#EAB308')
+        : ((theme.danger?.val as string) ?? '#EF4444')
 
   const animatedWidth = progressAnim.interpolate({
     inputRange: [0, 100],

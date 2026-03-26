@@ -3,8 +3,11 @@ import { YStack, XStack, Text, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
+import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { buildMarkdownStyles } from './markdownStyles'
+import { CopyableBlock } from './CopyableBlock'
+import { extractTextFromNode } from './markdownUtils'
 
 interface ChatBubbleProps {
   message: Message
@@ -56,7 +59,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
         paddingVertical={isUser ? '$1' : '$0.5'}
       >
         <YStack
-          maxWidth={isUser ? '85%' : '100%'}
+          style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
           backgroundColor={isUser ? '$brand' : '$backgroundStrong'}
           borderRadius="$4"
           borderBottomRightRadius={isUser ? '$1' : '$4'}
@@ -86,7 +89,18 @@ export function ChatBubble({ message }: ChatBubbleProps) {
               {message.content}
             </Text>
           ) : (
-            <Markdown style={markdownStyles}>{message.content}</Markdown>
+            <Markdown
+              style={markdownStyles}
+              rules={{
+                blockquote: (node, children) => (
+                  <CopyableBlock key={node.key} text={extractTextFromNode(node)}>
+                    {children}
+                  </CopyableBlock>
+                ),
+              }}
+            >
+              {message.content}
+            </Markdown>
           )}
           <Text
             fontSize={10}

@@ -5,7 +5,14 @@ from collections.abc import AsyncGenerator
 import anthropic
 
 from app.core.config import settings
-from app.models.enums import BuyerContext, DealPhase, ScoreStatus
+from app.models.enums import (
+    BuyerContext,
+    DealPhase,
+    GapPriority,
+    HealthStatus,
+    RedFlagSeverity,
+    ScoreStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +209,121 @@ DEAL_TOOLS = [
             "required": ["buyer_context"],
         },
     },
+    {
+        "name": "update_deal_health",
+        "description": (
+            "Update the overall deal health assessment. Call after any significant "
+            "change to deal numbers, offers, or terms. Status must be grounded in "
+            "the user's own data — never reference market prices you cannot verify."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [s.value for s in HealthStatus],
+                    "description": "Overall deal health signal",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "1-2 sentence explanation grounded in the user's data. "
+                        "Example: 'Strong deal — offer is $1,200 below listing price' "
+                        "or 'Concerning — APR of 7.9% on a 72-month term adds $4,200 "
+                        "in interest'"
+                    ),
+                },
+            },
+            "required": ["status", "summary"],
+        },
+    },
+    {
+        "name": "update_red_flags",
+        "description": (
+            "Surface concerns about the deal. Each flag must reference specific data "
+            "from the conversation — never flag based on general market knowledge you "
+            "cannot verify. Replaces the full list each time (pass empty array to clear). "
+            "Common flags: monthly payment quoted without term length, fees that appeared "
+            "unexpectedly, correlated trade-in/price changes, pressure tactics, numbers "
+            "that changed from what was verbally agreed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "flags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": (
+                                    "Stable identifier, e.g. 'apr_high', 'hidden_doc_fee'"
+                                ),
+                            },
+                            "severity": {
+                                "type": "string",
+                                "enum": [s.value for s in RedFlagSeverity],
+                                "description": (
+                                    "warning = be aware; critical = stop and address now"
+                                ),
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "User-facing explanation, 1-2 sentences",
+                            },
+                        },
+                        "required": ["id", "severity", "message"],
+                    },
+                    "description": "Full list of current flags (empty array to clear all)",
+                },
+            },
+            "required": ["flags"],
+        },
+    },
+    {
+        "name": "update_information_gaps",
+        "description": (
+            "Identify missing information that would improve deal assessment quality. "
+            "Always give your best advice with available data FIRST — then surface gaps "
+            "as ways to sharpen the assessment. Never gate-keep help behind 'I need more "
+            "information.' Replaces the full list each time. During research, always "
+            "include pre-approval status as a high-priority gap with why it matters."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "gaps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": (
+                                    "What's missing, e.g. 'Credit score range'"
+                                ),
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": (
+                                    "Brief explanation of WHY this information would "
+                                    "improve the assessment. E.g. 'Helps assess whether "
+                                    "the APR they offer is competitive for your credit tier.'"
+                                ),
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": [p.value for p in GapPriority],
+                            },
+                        },
+                        "required": ["label", "reason", "priority"],
+                    },
+                },
+            },
+            "required": ["gaps"],
+        },
+    },
 ]
 
 CONTEXT_PREAMBLES = {
@@ -220,27 +342,70 @@ CONTEXT_PREAMBLES = {
     ),
 }
 
-SYSTEM_PROMPT = """You are a car buying advisor helping a buyer get the best deal at a dealership. You are direct, concise, and tactical — not verbose.
+SYSTEM_PROMPT = """You are a car buying advisor helping a buyer get the best deal. You are direct, concise, and tactical.
+
+GROUNDING RULES (critical — violating these erodes user trust):
+- NEVER state a specific market price as fact. You do not have real-time market data. Frame pricing relative to the user's own data: "Their offer is $3,000 above listing" NOT "The market price is $23,000."
+- Red flags must reference specific data from the conversation. Good: "The APR of 7.9% on a 72-month term means $4,200 in interest." Bad: "This price is above average for your area."
+- Always give your best assessment with available data FIRST, then surface information gaps as ways to sharpen the assessment. Never say "I need more information before I can help."
+- Use blockquotes (> ) for negotiation scripts the buyer should say word-for-word.
 
 Your job:
-- Help the buyer understand deal numbers, spot overcharges, and negotiate effectively
-- Provide specific scripts and talking points they can use word-for-word
+- Help buyers understand deal numbers, spot overcharges, and negotiate effectively
+- Provide specific scripts in blockquotes they can use word-for-word
 - Tell them when to walk away
 - Analyze deal sheets, CARFAX reports, and financing terms
-- Keep advice practical and actionable
 
-RESPONSE FORMAT: First, write your advice/analysis/script to the user. Then call any relevant tools to update the dashboard. Text comes first, tools come second.
+DEALER TACTICS TO RECOGNIZE:
+- "Let me talk to my manager" — standard negotiation step. Flag as warning and coach buyer to prepare their next counter while waiting.
+- Monthly payment focus — if the dealer leads with monthly instead of total price, flag it. They may be stretching the term to hide the real cost.
+- Trade-in inflation — if trade-in value and vehicle price both increase, flag the net change. "They offered $2,000 more for your trade-in but raised the price by $1,500 — net improvement is only $500."
+- Time pressure — if the buyer has been there 2+ hours or mentions feeling rushed, flag it as a tactic.
+- F&I upsells — VIN etching, fabric protection, inflated warranty prices are high-margin items. Flag when mentioned. Remind buyer: "Everything in F&I is negotiable."
 
-Tool usage:
-- Whenever the user mentions a vehicle (year, make, model), call set_vehicle
-- Whenever financial numbers are discussed (price, offer, APR, payment), call update_deal_numbers
-- When the conversation indicates a phase change (arriving at dealer, test driving, negotiating, in F&I, signing), call update_deal_phase
-- When the buyer's situation changes (e.g., they arrive at the dealership, or mention having a quote), call update_buyer_context
-- After assessing the deal quality, call update_scorecard with red/yellow/green ratings
-- When you give advice about what to check/do, call update_checklist with relevant items
-- Call update_quick_actions on your FIRST response and whenever the conversation context shifts. You do not need to call it after every response — but always call it on the first message and when suggestions should change. Order by relevance — most useful action first. Labels must be specific and actionable (not generic like "Tell me more" or "What else?"). Think of them as button text, not sentences.
-- Call tools proactively — don't wait to be asked
-- You can call multiple tools in a single response
+PHASE-SPECIFIC BEHAVIOR:
+- When phase is financing: aggressively flag F&I add-ons, track how they change the total.
+- When phase is closing: call update_checklist with post-purchase items (title arrival in 30 days, first statement review, trade-in payoff confirmation).
+- During research: surface pre-approval as a high-priority information gap. Explain why: "Getting pre-approved forces the dealer to compete on price alone and gives you a rate floor."
+
+RED FLAGS vs. INFORMATION GAPS (critical distinction):
+- RED FLAGS = something is WRONG with the deal. A problem the buyer should act on.
+  Examples: APR is unusually high, hidden fees appeared, dealer is using pressure tactics,
+  monthly payment quoted without mentioning term length, numbers changed from verbal agreement.
+  NEVER flag missing information as a red flag. "No vehicle selected" is NOT a red flag.
+- INFORMATION GAPS = data that would IMPROVE the assessment. Things the buyer hasn't shared yet.
+  Examples: credit score range, pre-approval status, year/mileage of the vehicle, budget.
+  These are helpful to have, not problems to fix. Always include a suggested prompt the buyer
+  can tap to provide the information.
+
+TOOL USAGE — call proactively, multiple tools per response:
+- set_vehicle: when user mentions year/make/model
+- update_deal_numbers: when any financial figure is discussed
+- update_deal_health: after ANY significant number/offer/term change — this is the buyer's #1 signal
+- update_red_flags: ONLY for actual deal problems — not missing data (use update_information_gaps for that)
+- update_information_gaps: what's missing that would sharpen the assessment. Include a tappable prompt for each gap.
+- update_deal_phase / update_buyer_context: when situation changes
+- update_scorecard: after assessing deal quality dimensions
+- update_checklist: preparation/verification items
+- update_quick_actions: on FIRST response and when context shifts. Labels: 2-5 words, specific, actionable. Order by relevance.
+
+TOOL PRIORITY (most important first):
+1. update_red_flags — surface actual deal problems immediately (NOT missing data)
+2. update_deal_health — update after any significant change
+3. update_information_gaps — identify missing data that would improve advice
+4. update_deal_numbers — capture every financial figure
+5. update_deal_phase / update_buyer_context — when situation changes
+6. update_quick_actions — when context shifts (not every response)
+7. update_scorecard / update_checklist — assessment details and action items
+
+RESPONSE FORMAT (critical — buyers scan, they don't read essays):
+- LEAD WITH THE CONCLUSION. First sentence = your assessment or answer. Never bury the point.
+- Keep responses SHORT. 3-5 short paragraphs max. If the buyer is at the dealership, 1-2 paragraphs.
+- Never "think out loud" or change your mind mid-response. Work out the math internally, then present the conclusion.
+- Use bullet points for lists, not paragraphs.
+- Put actionable scripts in blockquotes (> ).
+- End with ONE clear next step, not multiple options.
+- Text first, then tool calls.
 
 {deal_state_context}
 {linked_context}"""
@@ -263,7 +428,39 @@ def build_system_prompt(
 
     deal_context = ""
     if deal_state_dict:
-        deal_context = f"\nCurrent deal state:\n```json\n{json.dumps(deal_state_dict, indent=2, default=str)}\n```"
+        # Lead with health/flags/gaps summary for attention priority
+        health = deal_state_dict.get("health", {})
+        health_status = health.get("status") if health else None
+        health_summary = health.get("summary") if health else None
+        red_flags = deal_state_dict.get("red_flags", [])
+        info_gaps = deal_state_dict.get("information_gaps", [])
+        critical_count = sum(
+            1 for f in red_flags if f.get("severity") == RedFlagSeverity.CRITICAL
+        )
+
+        summary_lines = []
+        if health_status:
+            summary_lines.append(
+                f"Deal health: {health_status}"
+                + (f" — {health_summary}" if health_summary else "")
+            )
+        if red_flags:
+            summary_lines.append(
+                f"Active red flags: {len(red_flags)}"
+                + (f" ({critical_count} critical)" if critical_count else "")
+            )
+        if info_gaps:
+            summary_lines.append(f"Information gaps: {len(info_gaps)} remaining")
+
+        state_summary = "\n".join(summary_lines)
+        if state_summary:
+            state_summary = f"\n{state_summary}"
+
+        deal_context = (
+            f"{state_summary}"
+            f"\nCurrent deal state:\n```json\n"
+            f"{json.dumps(deal_state_dict, indent=2, default=str)}\n```"
+        )
 
     linked_context = ""
     if linked_messages:
@@ -466,3 +663,90 @@ async def generate_quick_actions(
     except Exception:
         logger.exception("Failed to generate quick actions")
     return []
+
+
+ASSESS_DEAL_PROMPT = """You are a car deal assessment engine. Given the current deal state, provide:
+1. An overall health status: "good", "fair", "concerning", or "bad"
+2. A 1-2 sentence summary grounded in the data (never reference market prices you cannot verify)
+3. Any red flags — ONLY actual deal problems (high APR, hidden fees, pressure tactics, numbers that changed). Missing information is NOT a red flag.
+
+Return ONLY a JSON object with this shape:
+{
+  "health": {"status": "good|fair|concerning|bad", "summary": "..."},
+  "flags": [{"id": "unique_id", "severity": "warning|critical", "message": "..."}]
+}
+Return empty flags array if no actual deal problems. Return ONLY the JSON, no other text."""
+
+
+async def assess_deal_state(deal_state_dict: dict) -> dict:
+    """Lightweight deal assessment via Haiku.
+
+    Called when the primary model updated numbers but didn't call
+    update_deal_health or update_red_flags. Returns a dict with
+    optional 'health' and 'flags' keys.
+    """
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    state_json = json.dumps(deal_state_dict, indent=2, default=str)
+
+    try:
+        response = await client.messages.create(
+            model=settings.CLAUDE_FAST_MODEL,
+            max_tokens=512,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Deal state:\n```json\n{state_json}\n```\n\n{ASSESS_DEAL_PROMPT}",
+                }
+            ],
+        )
+        text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                text = block.text.strip()
+                break
+        logger.debug(
+            "Deal assessment raw response: %s", text[:200] if text else "(empty)"
+        )
+        if not text:
+            return {}
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        result = json.loads(text)
+        if not isinstance(result, dict):
+            return {}
+        # Validate health status
+        health = result.get("health")
+        if health and isinstance(health, dict):
+            status = health.get("status")
+            if status:
+                try:
+                    HealthStatus(status)
+                except ValueError:
+                    logger.warning(
+                        "Assessment returned invalid health status: %s", status
+                    )
+                    result.pop("health", None)
+        # Validate red flags structure
+        flags = result.get("flags")
+        if flags is not None:
+            if not isinstance(flags, list):
+                result.pop("flags", None)
+            else:
+                validated_flags = []
+                for f in flags:
+                    if not isinstance(f, dict):
+                        continue
+                    if not all(k in f for k in ("id", "severity", "message")):
+                        continue
+                    try:
+                        RedFlagSeverity(f["severity"])
+                    except ValueError:
+                        continue
+                    validated_flags.append(f)
+                result["flags"] = validated_flags
+        return result
+    except Exception:
+        logger.exception("Failed to assess deal state")
+        return {}

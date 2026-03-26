@@ -38,6 +38,24 @@ class BuyerContext(StrEnum):
     AT_DEALERSHIP = "at_dealership"
 
 
+class HealthStatus(StrEnum):
+    GOOD = "good"
+    FAIR = "fair"
+    CONCERNING = "concerning"
+    BAD = "bad"
+
+
+class RedFlagSeverity(StrEnum):
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class GapPriority(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class Difficulty(StrEnum):
     EASY = "easy"
     MEDIUM = "medium"

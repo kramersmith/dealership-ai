@@ -56,6 +56,21 @@ class DealState(Base):
     score_fees: Mapped[str | None] = mapped_column(String, nullable=True)
     score_overall: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Deal health (Tier 2 — AI-assessed)
+    health_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    health_summary: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Red flags (Tier 2 — AI-assessed)
+    red_flags: Mapped[list] = mapped_column(JSON, default=list)
+
+    # Information gaps (Tier 2 — AI-assessed)
+    information_gaps: Mapped[list] = mapped_column(JSON, default=list)
+
+    # Offer history — snapshots for savings and F&I tracking
+    first_offer: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pre_fi_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    savings_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # Checklist
     checklist: Mapped[list] = mapped_column(JSON, default=list)
 

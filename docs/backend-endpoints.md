@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03-25
+Last updated: 2026-03-26
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -503,6 +503,13 @@ Get the current deal state for a session.
   "score_trade_in": null,
   "score_fees": null,
   "score_overall": null,
+  "health_status": null,
+  "health_summary": null,
+  "red_flags": [],
+  "information_gaps": [],
+  "first_offer": null,
+  "pre_fi_price": null,
+  "savings_estimate": null,
   "checklist": [],
   "timer_started_at": null,
   "updated_at": "2026-03-24T12:00:00Z"
@@ -513,6 +520,60 @@ Get the current deal state for a session.
 
 | Status | Detail |
 |---|---|
+| `404` | Session not found |
+| `404` | Deal state not found |
+
+---
+
+### PATCH /api/deal/{session_id}
+
+Apply user-initiated corrections to deal state fields (numbers and vehicle). After applying corrections, the backend re-assesses the deal via Haiku and returns updated health status and red flags.
+
+**Auth required:** Yes
+
+**Path parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `session_id` | string | Session UUID |
+
+**Request body:**
+
+```json
+{
+  "listing_price": 34000,
+  "vehicle_year": 2024,
+  "vehicle_make": "Toyota"
+}
+```
+
+All fields are optional. Only provided fields are updated. Correctable number fields: `msrp`, `invoice_price`, `listing_price`, `your_target`, `walk_away_price`, `current_offer`, `monthly_payment`, `apr`, `loan_term_months`, `down_payment`, `trade_in_value`. Correctable vehicle fields: `vehicle_year`, `vehicle_make`, `vehicle_model`, `vehicle_trim`, `vehicle_vin`, `vehicle_mileage`, `vehicle_color`.
+
+**Response:** `200 OK`
+
+```json
+{
+  "health_status": "good",
+  "health_summary": "Strong deal — offer is $1,200 below listing price",
+  "red_flags": []
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `health_status` | string | Updated deal health: `good`, `fair`, `concerning`, `bad` (nullable) |
+| `health_summary` | string | 1-2 sentence explanation (nullable) |
+| `red_flags` | array | Updated list of red flag objects: `{id, severity, message}` |
+
+**Side effects:**
+- If `current_offer` is set and `first_offer` is null, `first_offer` is snapshotted
+- After applying corrections, `assess_deal_state()` runs via Haiku to update health status and red flags
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `400` | No corrections provided |
 | `404` | Session not found |
 | `404` | Deal state not found |
 

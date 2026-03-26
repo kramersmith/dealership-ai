@@ -19,6 +19,9 @@ export const palette = {
   danger: '#EF4444',
   dangerPressed: '#DC2626',
 
+  /** For text/icons on colored surfaces (status pills, brand buttons). */
+  white: '#FFFFFF',
+
   overlay: 'rgba(0,0,0,0.6)',
 } as const
 
@@ -32,4 +35,5 @@ export const tokenColors = {
   warning: palette.warning,
   danger: palette.danger,
   dangerPressed: palette.dangerPressed,
+  white: palette.white,
 } as const

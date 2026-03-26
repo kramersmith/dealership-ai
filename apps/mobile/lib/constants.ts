@@ -1,4 +1,4 @@
-import type { BuyerContext, DealPhase, QuickAction } from './types'
+import type { BuyerContext, ChecklistItem, DealPhase, QuickAction } from './types'
 
 // ─── App ───
 
@@ -7,13 +7,6 @@ export const APP_NAME = 'DealershipAI'
 // ─── Buyer Context ───
 
 export const DEFAULT_BUYER_CONTEXT: BuyerContext = 'researching'
-
-/** Widget display order per buyer context (timer is always first, handled separately). */
-export const WIDGET_ORDER_BY_CONTEXT: Record<BuyerContext, string[]> = {
-  researching: ['vehicle', 'numbers', 'scorecard', 'checklist'],
-  reviewing_deal: ['numbers', 'scorecard', 'vehicle', 'checklist'],
-  at_dealership: ['scorecard', 'numbers', 'vehicle', 'checklist'],
-}
 
 // ─── Quick Actions ───
 
@@ -122,3 +115,17 @@ export const MOBILE_INSIGHTS_WIDTH_RATIO = 0.9
 
 /** Maximum width in pixels for the slide-out insights panel. */
 export const MOBILE_INSIGHTS_MAX_WIDTH = 420
+
+/** Maximum width in pixels for chat bubbles (keeps text readable on wide screens). */
+export const CHAT_BUBBLE_MAX_WIDTH = 600
+
+// ─── Post-Purchase ───
+
+/** Default post-purchase checklist items, used as fallback when AI doesn't provide them. */
+export const POST_PURCHASE_CHECKLIST: ChecklistItem[] = [
+  { label: 'Title arrives within 30 days', done: false },
+  { label: 'Review first loan statement — verify terms match', done: false },
+  { label: 'Confirm trade-in payoff was processed', done: false },
+  { label: 'Save all signed documents', done: false },
+  { label: 'Check for any post-sale charges', done: false },
+]

@@ -54,13 +54,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   _sessionJustCreated: false,
 
   loadSessions: async () => {
-    set({ isLoading: true })
+    // Only show loading state if we have no sessions yet (initial load).
+    // Background refreshes (after sending a message) should not trigger
+    // loading indicators or cause re-renders that disrupt the chat input.
+    const hasExistingSessions = get().sessions.length > 0
+    if (!hasExistingSessions) set({ isLoading: true })
     try {
       const sessions = await api.getSessions()
       set({ sessions, isLoading: false })
     } catch (err) {
       console.error('[chatStore] loadSessions failed:', err instanceof Error ? err.message : err)
-      set({ isLoading: false })
+      if (!hasExistingSessions) set({ isLoading: false })
       throw err
     }
   },

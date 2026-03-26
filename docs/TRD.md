@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-03-25**
+**Last updated: 2026-03-26**
 
 ---
 
@@ -98,17 +98,18 @@ graph TB
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
 4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, and linked session context.
-5. Backend opens a streaming connection to the Claude API (Sonnet) with 7 tool definitions.
+5. Backend opens a streaming connection to the Claude API (Sonnet) with 10 tool definitions.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays each chunk as an SSE event to the client:
   - `event: text` -- conversation text chunks
-  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions)
+  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps)
   - `event: done` -- final payload with full text and all tool calls
 8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
-11. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
-11. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+10. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to generate health status and red flags.
+11. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
+12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
+13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
 
 ---
 
@@ -194,6 +195,7 @@ graph TB
 | `POST`   | `/api/chat/{session_id}/message`  | Yes  | Send message, receive SSE stream    |
 | `GET`    | `/api/chat/{session_id}/messages` | Yes  | Get message history for session     |
 | `GET`    | `/api/deal/{session_id}`          | Yes  | Get deal state for session          |
+| `PATCH`  | `/api/deal/{session_id}`          | Yes  | User corrections → Haiku re-assessment |
 | `GET`    | `/api/simulations/scenarios`      | Yes  | List available simulation scenarios |
 
 
@@ -254,18 +256,21 @@ Scorecard dimensions: **price**, **financing**, **trade_in**, **fees**, **overal
 
 ### Claude Tool Definitions
 
-The AI advisor uses 7 tools to drive the frontend dashboard and quick actions in real time:
+The AI advisor uses 10 tools to drive the frontend dashboard and quick actions in real time:
 
 
-| Tool                  | Purpose                                    | Required Fields                  |
-| --------------------- | ------------------------------------------ | -------------------------------- |
-| `update_deal_numbers` | Update financial figures on the dashboard  | None (all optional)              |
-| `update_deal_phase`   | Advance deal to a new phase                | `phase`                          |
-| `update_scorecard`    | Set red/yellow/green ratings               | None (all optional)              |
-| `set_vehicle`         | Set or update the vehicle under discussion | `make`, `model`                  |
-| `update_checklist`    | Update buyer's action item checklist       | `items` (array of {label, done}) |
-| `update_quick_actions` | Suggest 2-3 dynamic quick action buttons  | `actions` (array of {label, prompt}) |
-| `update_buyer_context` | Change buyer's situational context mid-conversation | `buyer_context` |
+| Tool                     | Purpose                                    | Required Fields                  |
+| ------------------------ | ------------------------------------------ | -------------------------------- |
+| `update_deal_numbers`    | Update financial figures on the dashboard  | None (all optional)              |
+| `update_deal_phase`      | Advance deal to a new phase                | `phase`                          |
+| `update_scorecard`       | Set red/yellow/green ratings               | None (all optional)              |
+| `set_vehicle`            | Set or update the vehicle under discussion | `make`, `model`                  |
+| `update_checklist`       | Update buyer's action item checklist       | `items` (array of {label, done}) |
+| `update_quick_actions`   | Suggest 2-3 dynamic quick action buttons   | `actions` (array of {label, prompt}) |
+| `update_buyer_context`   | Change buyer's situational context mid-conversation | `buyer_context` |
+| `update_deal_health`     | Overall deal health assessment (status + summary) | `status`, `summary` |
+| `update_red_flags`       | Surface specific deal problems with severity | `flags` (array of {id, severity, message}) |
+| `update_information_gaps` | Identify missing data to improve assessment | `gaps` (array of {label, reason, priority}) |
 
 
 ### Session Linking
@@ -344,6 +349,9 @@ erDiagram
         int loan_term_months
         float down_payment
         float trade_in_value
+        float first_offer
+        float pre_fi_price
+        float savings_estimate
         string vehicle_year
         string vehicle_make
         string vehicle_model
@@ -351,6 +359,10 @@ erDiagram
         string vehicle_vin
         int vehicle_mileage
         string vehicle_color
+        string health_status "good | fair | concerning | bad"
+        string health_summary
+        json red_flags "array of {id, severity, message}"
+        json information_gaps "array of {label, reason, priority}"
         int score_price
         int score_financing
         int score_trade_in
@@ -451,6 +463,13 @@ erDiagram
 | `score_trade_in`   | String   | Nullable                                | `red`, `yellow`, or `green` |
 | `score_fees`       | String   | Nullable                                | `red`, `yellow`, or `green` |
 | `score_overall`    | String   | Nullable                                | `red`, `yellow`, or `green` |
+| `health_status`    | String   | Nullable                                | `good`, `fair`, `concerning`, `bad` |
+| `health_summary`   | String   | Nullable                                | 1-2 sentence explanation    |
+| `red_flags`        | JSON     | default empty list                      | Array of {id, severity, message} |
+| `information_gaps` | JSON     | default empty list                      | Array of {label, reason, priority} |
+| `first_offer`      | Float    | Nullable                                | Snapshot of first current_offer |
+| `pre_fi_price`     | Float    | Nullable                                | Price before F&I stage      |
+| `savings_estimate` | Float    | Nullable                                | Estimated buyer savings     |
 | `checklist`        | JSON     | default empty list                      | Array of {label, done}      |
 | `timer_started_at` | DateTime | Nullable                                | Negotiation timer           |
 | `updated_at`       | DateTime | default now(UTC), on update             |                             |
@@ -493,15 +512,15 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation, deal assessment safety net |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
-| Tool use       | 7 tool definitions (primary model only)    |
+| Tool use       | 10 tool definitions (primary model only)   |
 | Streaming      | Yes (messages.stream)  |
 | Image input    | Supported (URL-based)  |
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. Quick action generation and session title generation both use the async Anthropic client with the fast model (Haiku).
+The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. Quick action generation, session title generation, and deal assessment safety net (`assess_deal_state`) all use the async Anthropic client with the fast model (Haiku).
 
 ### No Other External Integrations (v1)
 
@@ -547,6 +566,9 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 | `DealPhase` | `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
 | `ScoreStatus` | `red`, `yellow`, `green` |
 | `BuyerContext` | `researching`, `reviewing_deal`, `at_dealership` |
+| `HealthStatus` | `good`, `fair`, `concerning`, `bad` |
+| `RedFlagSeverity` | `warning`, `critical` |
+| `GapPriority` | `high`, `medium`, `low` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 
 ### Frontend Patterns

@@ -1,6 +1,6 @@
 # Operational Guidelines
 
-**Last updated:** 2026-03-24
+**Last updated:** 2026-03-26
 
 ---
 
@@ -72,6 +72,7 @@ See `docs/logging-guidelines.md` for log level reference, PII rules, and configu
 ## 5. Claude API Cost Control
 
 - Default model: `claude-sonnet-4-6` (balances cost and quality)
-- Max tokens per response: 1024
+- Max tokens per response: 4096
 - Message history truncated to last 20 messages per request
+- Deal assessment safety net: 512 max tokens (Haiku fast model)
 - Future: per-user daily token limits, usage tracking table

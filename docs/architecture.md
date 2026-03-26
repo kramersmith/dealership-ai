@@ -31,13 +31,16 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, WelcomePrompts
+│   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, ContextPicker, CopyableBlock
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
-│   │   │   ├── insights/        # InsightsPanel, NumbersSummary, DealPhaseIndicator,
-│   │   │   │                    # VehicleCard, NegotiationScorecard, Checklist, DealershipTimer, QuickActions
+│   │   │   ├── insights/        # InsightsPanel (data-driven via getPanelWidgets), DealHealthCard,
+│   │   │   │                    # RedFlagsCard, KeyNumbers, InformationGapsCard, SavingsSummary,
+│   │   │   │                    # DealPhaseIndicator, VehicleCard, NegotiationScorecard, Checklist,
+│   │   │   │                    # DealershipTimer, QuickActions
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
+│   │   │   ├── useEditableField.ts # Inline editing with debounced backend sync
 │   │   │   ├── useAnimatedValue.ts # useIconEntrance (animated icon transitions)
 │   │   │   └── useScreenWidth.ts # Responsive breakpoint hook
 │   │   ├── stores/              # Zustand: auth, chat, deal, simulation, theme
@@ -46,7 +49,8 @@ dealership-ai/
 │   │       ├── theme/
 │   │       │   ├── tokens.ts    # Centralized color palette + token colors
 │   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
-│   │       ├── constants.ts     # APP_NAME, buyer context defaults, widget ordering, deal phases, fallback quick actions, APR thresholds, animation/layout constants
+│   │       ├── constants.ts     # APP_NAME, buyer context defaults, deal phases, fallback quick actions, APR thresholds, animation/layout constants
+│   │       ├── dealComputations.ts # Derived deal metrics (savings calculations)
 │       ├── platform.ts      # Platform-specific constants (USE_NATIVE_DRIVER)
 │   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.
 │   │       └── types.ts
@@ -85,7 +89,11 @@ dealership-ai/
 - Buyer context: BuyerContext enum (researching, reviewing_deal, at_dealership) — set at session creation, updatable mid-conversation
 - Phase: DealPhase enum (research → initial_contact → test_drive → negotiation → financing → closing)
 - Numbers: msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
+- Price history: first_offer, pre_fi_price, savings_estimate
 - Vehicle: year, make, model, trim, vin, mileage, color
+- Deal health: health_status (HealthStatus enum: good/fair/concerning/bad), health_summary
+- Red flags: JSON array of {id, severity, message} (RedFlagSeverity enum: warning/critical)
+- Information gaps: JSON array of {label, reason, priority} (GapPriority enum: high/medium/low)
 - Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (ScoreStatus enum: red/yellow/green)
 - Checklist: JSON array of {label, done}
 - Timer: timer_started_at
@@ -104,6 +112,9 @@ All domain values use Python `StrEnum` for type safety:
 | `DealPhase` | `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
 | `ScoreStatus` | `red`, `yellow`, `green` |
 | `BuyerContext` | `researching`, `reviewing_deal`, `at_dealership` |
+| `HealthStatus` | `good`, `fair`, `concerning`, `bad` |
+| `RedFlagSeverity` | `warning`, `critical` |
+| `GapPriority` | `high`, `medium`, `low` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 
 ### Seed Users (Development Only)
@@ -133,6 +144,7 @@ PATCH  /sessions/{id}                 # Update title, link sessions
 DELETE /sessions/{id}                 # Delete
 
 GET    /deal/{session_id}             # Get current deal state
+PATCH  /deal/{session_id}             # User corrections → re-assessment
 
 GET    /simulations/scenarios         # List scenario templates
 POST   /simulations                   # Start simulation
@@ -144,7 +156,7 @@ POST   /simulations/{id}/complete     # End + score
 
 ## Core Architecture: Claude Tool Use → Dashboard Updates
 
-**7 tools registered with every Claude call:**
+**10 tools registered with every Claude call:**
 1. `update_deal_numbers` — prices, payments, rates (all fields optional, only update what changed)
 2. `update_deal_phase` — progression through deal phases
 3. `update_scorecard` — red/yellow/green ratings
@@ -152,6 +164,9 @@ POST   /simulations/{id}/complete     # End + score
 5. `update_checklist` — array of {label, done} items
 6. `update_quick_actions` — suggest 2-3 dynamic quick action buttons (label + prompt) based on conversation context
 7. `update_buyer_context` — change the buyer's situational context mid-conversation (researching, reviewing_deal, at_dealership)
+8. `update_deal_health` — overall deal health assessment (status + summary), grounded in user's data
+9. `update_red_flags` — surface specific deal problems with severity (warning/critical), replaces full list
+10. `update_information_gaps` — identify missing data that would improve assessment, with priority (high/medium/low)
 
 **Streaming flow:**
 1. Client POSTs message
@@ -161,13 +176,14 @@ POST   /simulations/{id}/complete     # End + score
 5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
 6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
 7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
-8. Backend persists messages (including follow-up text) and executes tool calls (UPDATE deal_states)
-9. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
-10. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
-11. On send failure, optimistic messages are rolled back from the chat store
+8. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to fill in health status and red flags
+9. Backend persists messages (including follow-up text) and executes tool calls (UPDATE deal_states)
+10. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
+11. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
+12. On send failure, optimistic messages are rolled back from the chat store
 
 **New session flow (buyer):**
-1. Buyer lands on the chats list (`/(app)/chats`), the buyer home screen. If no sessions exist, WelcomePrompts shows as an empty state with three situation cards: "Researching", "Have a deal to review", "At the dealership".
+1. Buyer lands on the chats list (`/(app)/chats`), the buyer home screen. If no sessions exist, ContextPicker shows as an empty state with three situation cards: "Researching", "Have a deal to review", "At the dealership".
 2. User taps a card (or skips by typing/uploading directly, which defaults to `researching`)
 3. Frontend calls `POST /api/sessions` with the selected `buyer_context`
 4. A hardcoded greeting message (per context) is injected client-side — no LLM call needed
@@ -185,7 +201,7 @@ POST   /simulations/{id}/complete     # End + score
 - **SSE over WebSockets** — simpler, maps directly to Claude's streaming API, no connection upgrade issues on Railway/Fly
 - **Zustand over Redux** — minimal boilerplate, perfect for this scope
 - **Single mutable deal_states row over event log** — simpler reads for MVP, can add history table later
-- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (quick action generation, session title generation)
+- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (quick action generation, session title generation, deal assessment safety net)
 - **Cost control** — track token usage per user, enforce daily limits
 
 ---

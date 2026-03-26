@@ -12,7 +12,7 @@ const variantStyles = {
       backgroundColor: '$brand',
       pressStyle: { backgroundColor: '$brandPressed' },
     },
-    text: { color: 'white' as const, fontWeight: '600' as const },
+    text: { color: '$white' as const, fontWeight: '600' as const },
   },
   secondary: {
     button: {
@@ -35,7 +35,7 @@ const variantStyles = {
       backgroundColor: '$danger',
       pressStyle: { backgroundColor: '$dangerPressed' },
     },
-    text: { color: 'white' as const, fontWeight: '600' as const },
+    text: { color: '$white' as const, fontWeight: '600' as const },
   },
 }
 

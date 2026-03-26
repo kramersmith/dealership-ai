@@ -1,6 +1,6 @@
 # Development Guide
 
-**Last updated:** 2026-03-25
+**Last updated:** 2026-03-26
 
 ---
 
@@ -81,7 +81,7 @@ make dev-frontend
 | `CORS_ORIGINS` | `["http://localhost:8081"]` | Allowed CORS origins |
 | `ANTHROPIC_API_KEY` | `` | Claude API key (required for chat) |
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat |
-| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for quick action generation |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for quick actions, titles, deal assessment |
 | `CLAUDE_MAX_TOKENS` | `4096` | Max tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages to include in context |
 | `LOG_LEVEL` | `INFO` | Logging level |

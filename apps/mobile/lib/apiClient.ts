@@ -4,6 +4,7 @@ import type {
   Session,
   Message,
   DealState,
+  RedFlag,
   Scenario,
   ToolCall,
 } from './types'
@@ -254,6 +255,41 @@ class ApiClient implements ApiService {
       },
       checklist: ds.checklist || [],
       timerStartedAt: ds.timer_started_at,
+      health: ds.health_status
+        ? { status: ds.health_status, summary: ds.health_summary ?? '' }
+        : null,
+      redFlags: (ds.red_flags ?? []).map((f: any) => ({
+        id: f.id,
+        severity: f.severity,
+        message: f.message,
+      })),
+      informationGaps: (ds.information_gaps ?? []).map((g: any) => ({
+        label: g.label,
+        reason: g.reason,
+        priority: g.priority,
+      })),
+      firstOffer: ds.first_offer ?? null,
+      preFiPrice: ds.pre_fi_price ?? null,
+      savingsEstimate: ds.savings_estimate ?? null,
+    }
+  }
+
+  async correctDealState(
+    sessionId: string,
+    corrections: Record<string, string | number | null>
+  ): Promise<{ healthStatus: string | null; healthSummary: string | null; redFlags: RedFlag[] }> {
+    const res = await request<any>(`/deal/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(corrections),
+    })
+    return {
+      healthStatus: res.health_status ?? null,
+      healthSummary: res.health_summary ?? null,
+      redFlags: (res.red_flags ?? []).map((f: any) => ({
+        id: f.id,
+        severity: f.severity,
+        message: f.message,
+      })),
     }
   }
 

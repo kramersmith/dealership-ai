@@ -4,7 +4,7 @@ import { Search, FileText, MapPin } from '@tamagui/lucide-icons'
 import type { BuyerContext } from '@/lib/types'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 
-interface WelcomePromptsProps {
+interface ContextPickerProps {
   onSelect: (context: BuyerContext) => void
 }
 
@@ -34,11 +34,11 @@ const CONTEXT_OPTIONS: {
   },
 ]
 
-export function WelcomePrompts({ onSelect }: WelcomePromptsProps) {
+export function ContextPicker({ onSelect }: ContextPickerProps) {
   const opacity = useFadeIn(400)
 
   return (
-    <Animated.View style={{ opacity }}>
+    <Animated.View style={{ flex: 1, opacity }}>
       <YStack
         flex={1}
         justifyContent="center"

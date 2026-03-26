@@ -59,6 +59,35 @@ export interface ChecklistItem {
   done: boolean
 }
 
+// ─── Deal Health ───
+
+export type HealthStatus = 'good' | 'fair' | 'concerning' | 'bad'
+
+export interface DealHealth {
+  status: HealthStatus
+  summary: string
+}
+
+// ─── Red Flags ───
+
+export type RedFlagSeverity = 'warning' | 'critical'
+
+export interface RedFlag {
+  id: string
+  severity: RedFlagSeverity
+  message: string
+}
+
+// ─── Information Gaps ───
+
+export type GapPriority = 'high' | 'medium' | 'low'
+
+export interface InformationGap {
+  label: string
+  reason: string
+  priority: GapPriority
+}
+
 // ─── Deal State (persistent UI) ───
 
 export interface DealState {
@@ -70,6 +99,14 @@ export interface DealState {
   scorecard: Scorecard
   checklist: ChecklistItem[]
   timerStartedAt: string | null
+  // Tier 2 — AI-assessed
+  health: DealHealth | null
+  redFlags: RedFlag[]
+  informationGaps: InformationGap[]
+  // Offer history
+  firstOffer: number | null
+  preFiPrice: number | null
+  savingsEstimate: number | null
 }
 
 // ─── Quick Actions ───
@@ -90,6 +127,9 @@ export interface ToolCall {
     | 'update_checklist'
     | 'update_buyer_context'
     | 'update_quick_actions'
+    | 'update_deal_health'
+    | 'update_red_flags'
+    | 'update_information_gaps'
   args: Record<string, any>
 }
 
@@ -176,6 +216,10 @@ export interface ApiService {
 
   // Deal state
   getDealState(sessionId: string): Promise<DealState>
+  correctDealState(
+    sessionId: string,
+    corrections: Record<string, string | number | null>
+  ): Promise<{ healthStatus: string | null; healthSummary: string | null; redFlags: RedFlag[] }>
 
   // Simulations
   getScenarios(): Promise<Scenario[]>

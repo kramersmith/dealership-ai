@@ -1,7 +1,10 @@
 import { useRef, useState, useEffect } from 'react'
 import { YStack, XStack, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
+import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { buildMarkdownStyles } from './markdownStyles'
+import { CopyableBlock } from './CopyableBlock'
+import { extractTextFromNode } from './markdownUtils'
 
 interface StreamingBubbleProps {
   text: string
@@ -67,7 +70,7 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
   return (
     <XStack justifyContent="flex-start" paddingHorizontal="$4" paddingVertical="$0.5">
       <YStack
-        maxWidth="100%"
+        style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
         backgroundColor="$backgroundStrong"
         borderRadius="$4"
         borderBottomLeftRadius="$1"
@@ -76,7 +79,18 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
         borderWidth={0}
         borderColor="transparent"
       >
-        <Markdown style={markdownStyles}>{visibleText}</Markdown>
+        <Markdown
+          style={markdownStyles}
+          rules={{
+            blockquote: (node, children) => (
+              <CopyableBlock key={node.key} text={extractTextFromNode(node)}>
+                {children}
+              </CopyableBlock>
+            ),
+          }}
+        >
+          {visibleText}
+        </Markdown>
       </YStack>
     </XStack>
   )

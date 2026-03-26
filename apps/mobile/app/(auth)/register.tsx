@@ -24,7 +24,7 @@ export default function RegisterScreen() {
     if (role === 'dealer') {
       router.replace('/(app)/simulations')
     } else {
-      router.replace('/(app)/chats')
+      router.replace('/(app)/chat')
     }
   }
 
