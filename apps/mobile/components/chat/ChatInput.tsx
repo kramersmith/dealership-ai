@@ -1,8 +1,21 @@
-import { useState } from 'react'
-import { TouchableOpacity, Alert, Platform } from 'react-native'
-import { XStack, Input } from 'tamagui'
+import { useState, useCallback } from 'react'
+import {
+  TouchableOpacity,
+  Alert,
+  Platform,
+  TextInput,
+  View,
+  type NativeSyntheticEvent,
+  type TextInputContentSizeChangeEventData,
+  type TextInputKeyPressEventData,
+} from 'react-native'
+import { XStack, useTheme } from 'tamagui'
 import { Camera, Send } from '@tamagui/lucide-icons'
+import { palette } from '@/lib/theme/tokens'
 import { VoiceButton } from './VoiceButton'
+
+const MIN_INPUT_HEIGHT = 44
+const MAX_INPUT_HEIGHT = 118
 
 interface ChatInputProps {
   onSend: (content: string, imageUri?: string) => void
@@ -12,13 +25,46 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   const [text, setText] = useState('')
+  const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT)
+  const [focused, setFocused] = useState(false)
+  const theme = useTheme()
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     const trimmed = text.trim()
     if (!trimmed) return
     onSend(trimmed)
     setText('')
-  }
+    setInputHeight(MIN_INPUT_HEIGHT)
+  }, [text, onSend])
+
+  const handleChangeText = useCallback((t: string) => {
+    setText(t)
+    if (t.length === 0) {
+      setInputHeight(MIN_INPUT_HEIGHT)
+    }
+  }, [])
+
+  const handleContentSizeChange = useCallback(
+    (e: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      const h = e.nativeEvent.contentSize.height
+      if (!h || h < 1) return
+      const next = Math.min(MAX_INPUT_HEIGHT, Math.max(MIN_INPUT_HEIGHT, Math.ceil(h)))
+      setInputHeight((prev) => (prev === next ? prev : next))
+    },
+    []
+  )
+
+  const handleKeyPress = useCallback(
+    (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+      if (Platform.OS !== 'web') return
+      const nativeEvent = e.nativeEvent as any
+      if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey) {
+        e.preventDefault()
+        handleSend()
+      }
+    },
+    [handleSend]
+  )
 
   const handlePhoto = () => {
     const alertFn =
@@ -40,7 +86,8 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   return (
     <XStack
       paddingHorizontal="$3"
-      paddingVertical="$2"
+      paddingTop="$2"
+      paddingBottom="$1"
       gap="$2"
       alignItems="flex-end"
       backgroundColor="$backgroundStrong"
@@ -62,19 +109,47 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         </XStack>
       </TouchableOpacity>
 
-      <Input
-        flex={1}
-        size="$4"
-        placeholder={placeholder ?? 'Message...'}
-        value={text}
-        onChangeText={setText}
-        onSubmitEditing={handleSend}
-        returnKeyType="send"
-        backgroundColor="$backgroundHover"
-        borderColor="$borderColor"
-        borderRadius="$5"
-        disabled={disabled}
-      />
+      <View
+        style={{
+          flex: 1,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: (focused ? theme.borderColorHover?.val : theme.borderColor?.val) as string,
+          backgroundColor: theme.backgroundHover?.val as string,
+          overflow: 'hidden',
+          maxHeight: 120,
+        }}
+      >
+        <TextInput
+          style={
+            {
+              fontSize: 15,
+              lineHeight: 20,
+              color: theme.color?.val as string,
+              paddingHorizontal: 16,
+              paddingTop: 12,
+              paddingBottom: 12,
+              height: inputHeight,
+              margin: 0,
+              maxHeight: MAX_INPUT_HEIGHT,
+              outlineWidth: 0,
+              scrollbarWidth: 'thin',
+              scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
+            } as any
+          }
+          placeholder={placeholder ?? 'Message...'}
+          placeholderTextColor={theme.placeholderColor?.val as string}
+          value={text}
+          onChangeText={handleChangeText}
+          onContentSizeChange={handleContentSizeChange}
+          onKeyPress={handleKeyPress}
+          multiline
+          scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
+          editable={!disabled}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+        />
+      </View>
 
       {hasText ? (
         <TouchableOpacity onPress={handleSend} disabled={disabled} activeOpacity={0.6}>

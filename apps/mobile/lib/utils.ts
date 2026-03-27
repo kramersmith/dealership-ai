@@ -56,6 +56,23 @@ export function vehicleSummary(
   return parts.join(' ')
 }
 
+/** Strip markdown syntax for plain-text display (previews, summaries). */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+    .replace(/__(.+?)__/g, '$1') // bold alt
+    .replace(/\*(.+?)\*/g, '$1') // italic
+    .replace(/_(.+?)_/g, '$1') // italic alt
+    .replace(/~~(.+?)~~/g, '$1') // strikethrough
+    .replace(/`(.+?)`/g, '$1') // inline code
+    .replace(/^#{1,6}\s+/gm, '') // headings
+    .replace(/^>\s?/gm, '') // blockquotes
+    .replace(/^[-*+]\s+/gm, '') // unordered lists
+    .replace(/^\d+\.\s+/gm, '') // ordered lists
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1') // links
+    .replace(/!\[.*?\]\(.+?\)/g, '') // images
+}
+
 export function generateId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
 }

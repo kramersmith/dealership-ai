@@ -164,30 +164,43 @@ class ApiClient implements ApiService {
       let fullText = ''
       const toolCalls: ToolCall[] = []
       let processed = 0
+      let buffer = ''
 
       xhr.onprogress = () => {
         const newData = xhr.responseText.slice(processed)
         processed = xhr.responseText.length
+        buffer += newData
 
-        const lines = newData.split('\n')
-        let currentEvent = ''
+        // SSE messages are delimited by double newlines
+        const messages = buffer.split('\n\n')
+        // Last element may be incomplete — keep it in the buffer
+        buffer = messages.pop() ?? ''
 
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim()
-          } else if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (currentEvent === 'text' && data.chunk) {
-                fullText += data.chunk
-                onChunk?.(fullText)
-              } else if (currentEvent === 'tool_result' && data.tool) {
-                toolCalls.push({ name: data.tool as ToolCall['name'], args: data.data })
-              }
-            } catch {
-              // Skip malformed SSE data lines
+        for (const message of messages) {
+          if (!message.trim()) continue
+          let eventType = ''
+          let dataStr = ''
+
+          for (const line of message.split('\n')) {
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim()
+            } else if (line.startsWith('data: ')) {
+              dataStr = line.slice(6)
             }
-            currentEvent = ''
+          }
+
+          if (!eventType || !dataStr) continue
+
+          try {
+            const data = JSON.parse(dataStr)
+            if ((eventType === 'text' || eventType === 'followup_text') && data.chunk) {
+              fullText += data.chunk
+              onChunk?.(fullText)
+            } else if (eventType === 'tool_result' && data.tool) {
+              toolCalls.push({ name: data.tool as ToolCall['name'], args: data.data })
+            }
+          } catch {
+            // Skip malformed SSE data
           }
         }
       }

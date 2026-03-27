@@ -421,7 +421,7 @@ RESPONSE FORMAT (critical — buyers scan, they don't read essays):
 {deal_state_context}
 {linked_context}"""
 
-FOLLOWUP_SYSTEM_PROMPT = """You are a car buying advisor. The user sent a message and you updated their dashboard with tool calls, but you did not include any text response. Now respond to the user with your analysis and advice based on what you just processed. Be direct and concise. Do not call any tools."""
+FOLLOWUP_SYSTEM_PROMPT = """You are a car buying advisor. The user sent a message and you updated their dashboard with tool calls, but you did not include any text response. Now respond directly to the user — lead with your assessment or answer, not with what you are about to do. Never say "Let me analyze" or "I'll look at" — just give the analysis. Be direct and concise. Do not call any tools."""
 
 QUICK_ACTIONS_PROMPT = """Based on the conversation so far, suggest 2-3 quick action buttons the buyer might want to tap next. Return a JSON array of objects with "label" (2-5 word button text, specific and actionable) and "prompt" (the full message sent when tapped). Order by relevance. Return ONLY the JSON array, no other text."""
 
@@ -602,7 +602,7 @@ async def stream_followup_text(
         {"role": "assistant", "content": f"[I updated the dashboard: {tool_summary}]"},
         {
             "role": "user",
-            "content": "Now give me your analysis and advice based on what I told you.",
+            "content": "Respond with your analysis now. Start with the conclusion.",
         },
     ]
 

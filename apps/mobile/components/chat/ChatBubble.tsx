@@ -1,9 +1,9 @@
-import { Animated } from 'react-native'
+import { Animated, Platform } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
-import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
+import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { buildMarkdownStyles } from './markdownStyles'
 import { CopyableBlock } from './CopyableBlock'
@@ -69,6 +69,29 @@ export function ChatBubble({ message }: ChatBubbleProps) {
           borderWidth={0}
           borderColor="transparent"
         >
+          {/* Hidden sender label — invisible but included when copy-pasting */}
+          {Platform.OS === 'web' && (
+            <Text
+              style={
+                {
+                  position: 'absolute',
+                  width: 1,
+                  height: 1,
+                  overflow: 'hidden',
+                  opacity: 0,
+                } as any
+              }
+              aria-hidden
+            >
+              {isUser ? 'You' : APP_NAME}
+              {' — '}
+              {new Date(message.createdAt).toLocaleTimeString([], {
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+              {'\n'}
+            </Text>
+          )}
           {message.imageUri && (
             <YStack
               width="100%"

@@ -3,7 +3,7 @@ import { XStack, YStack, Text } from 'tamagui'
 import { Trash2 } from '@tamagui/lucide-icons'
 import type { DealPhase, DealSummary, Session } from '@/lib/types'
 import { DEAL_PHASES } from '@/lib/constants'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, stripMarkdown } from '@/lib/utils'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 
 // ─── Phase dot color mapping ───
@@ -147,7 +147,7 @@ export function SessionCard({ session, index, onSelect, onDelete }: SessionCardP
             {/* Message preview */}
             {session.lastMessagePreview ? (
               <Text fontSize={13} color="$placeholderColor" numberOfLines={2} lineHeight={18}>
-                {session.lastMessagePreview}
+                {stripMarkdown(session.lastMessagePreview)}
               </Text>
             ) : null}
 
