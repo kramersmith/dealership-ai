@@ -125,6 +125,8 @@ async def correct_deal_state(
             validated_status = HealthStatus(raw_status) if raw_status else None
             deal_state.health_status = validated_status
             deal_state.health_summary = health.get("summary")
+            if "recommendation" in health:
+                deal_state.recommendation = health["recommendation"]
         except ValueError:
             logger.warning("Invalid health_status from assessment: %s", raw_status)
     if flags is not None:
@@ -135,5 +137,6 @@ async def correct_deal_state(
     return DealCorrectionResponse(
         health_status=deal_state.health_status,
         health_summary=deal_state.health_summary,
+        recommendation=deal_state.recommendation,
         red_flags=deal_state.red_flags or [],
     )

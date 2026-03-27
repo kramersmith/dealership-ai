@@ -120,6 +120,8 @@ def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> 
                 return
         if "summary" in tool_data:
             deal_state.health_summary = tool_data["summary"]
+        if "recommendation" in tool_data:
+            deal_state.recommendation = tool_data["recommendation"]
 
     elif tool_name == "update_red_flags":
         if "flags" in tool_data:
@@ -171,6 +173,7 @@ def _deal_state_to_dict(ds: DealState) -> dict:
         "health": {
             "status": ds.health_status,
             "summary": ds.health_summary,
+            "recommendation": ds.recommendation,
         },
         "red_flags": ds.red_flags or [],
         "information_gaps": ds.information_gaps or [],

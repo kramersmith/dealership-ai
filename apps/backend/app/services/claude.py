@@ -233,8 +233,19 @@ DEAL_TOOLS = [
                         "in interest'"
                     ),
                 },
+                "recommendation": {
+                    "type": "string",
+                    "description": (
+                        "One concise action the buyer should take next, grounded in "
+                        "their specific deal data. Examples: 'Counter at $31,500 — "
+                        "the midpoint between their offer and your target', "
+                        "'Ask them to break down the $895 doc fee', "
+                        "'Get a pre-approval from your bank before accepting this APR'. "
+                        "Must be specific and actionable, not generic advice."
+                    ),
+                },
             },
-            "required": ["status", "summary"],
+            "required": ["status", "summary", "recommendation"],
         },
     },
     {
@@ -668,13 +679,15 @@ async def generate_quick_actions(
 ASSESS_DEAL_PROMPT = """You are a car deal assessment engine. Given the current deal state, provide:
 1. An overall health status: "good", "fair", "concerning", or "bad"
 2. A 1-2 sentence summary grounded in the data (never reference market prices you cannot verify)
-3. Any red flags — ONLY actual deal problems (high APR, hidden fees, pressure tactics, numbers that changed). Missing information is NOT a red flag.
+3. One specific, actionable recommendation for what the buyer should do next based on their deal data
+4. Any red flags — ONLY actual deal problems (high APR, hidden fees, pressure tactics, numbers that changed). Missing information is NOT a red flag.
 
 Return ONLY a JSON object with this shape:
 {
-  "health": {"status": "good|fair|concerning|bad", "summary": "..."},
+  "health": {"status": "good|fair|concerning|bad", "summary": "...", "recommendation": "..."},
   "flags": [{"id": "unique_id", "severity": "warning|critical", "message": "..."}]
 }
+The recommendation must be specific and actionable (e.g. "Counter at $31,500" not "Try negotiating").
 Return empty flags array if no actual deal problems. Return ONLY the JSON, no other text."""
 
 
@@ -728,6 +741,14 @@ async def assess_deal_state(deal_state_dict: dict) -> dict:
                         "Assessment returned invalid health status: %s", status
                     )
                     result.pop("health", None)
+            # Ensure recommendation is a string or absent
+            rec = health.get("recommendation")
+            if rec is not None and not isinstance(rec, str):
+                logger.warning(
+                    "Assessment returned non-string recommendation: %s",
+                    type(rec).__name__,
+                )
+                health.pop("recommendation", None)
         # Validate red flags structure
         flags = result.get("flags")
         if flags is not None:

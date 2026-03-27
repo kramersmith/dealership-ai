@@ -10,7 +10,7 @@ import {
   Animated,
   Dimensions,
 } from 'react-native'
-import { YStack, XStack, Text, useTheme } from 'tamagui'
+import { YStack, XStack, Text, Theme, useTheme } from 'tamagui'
 import { ThemedSafeArea, LoadingIndicator, RoleGuard } from '@/components/shared'
 import { Plus, X, ChevronLeft } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
@@ -22,16 +22,20 @@ import {
   STATIC_ACTIONS_STALENESS_THRESHOLD,
   MOBILE_INSIGHTS_WIDTH_RATIO,
   MOBILE_INSIGHTS_MAX_WIDTH,
+  MAX_INSIGHTS_PREVIEW_ITEMS,
+  WEB_FONT_FAMILY,
 } from '@/lib/constants'
-import type { BuyerContext, DealState } from '@/lib/types'
-import { formatCurrency, vehicleSummary } from '@/lib/utils'
+import type { BuyerContext, DealState, HealthStatus } from '@/lib/types'
+import { formatCurrency } from '@/lib/utils'
+import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { InsightsPanel, QuickActions } from '@/components/insights'
+import { InsightsPanel, QuickActions, CompactPhaseIndicator } from '@/components/insights'
+import { STATUS_LABELS, STATUS_THEMES } from '@/components/insights/HeroSection'
 import { ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
 function useMobileInsightsWidth() {
@@ -52,23 +56,71 @@ function useMobileInsightsWidth() {
   return width
 }
 
-function getInsightsPreviewDetail(dealState: DealState | null): string {
-  if (!dealState) return 'Live buying guidance'
-  if (dealState.timerStartedAt) return 'Live dealership timer running'
+/** Build prioritized preview items from deal state. Shows the most important signals first. */
+function getPreviewItems(
+  dealState: DealState | null,
+  dismissedFlagIds: Set<string>
+): PreviewItem[] {
+  if (!dealState) return [{ type: 'text', label: 'Tap to view insights' }]
+
+  const items: PreviewItem[] = []
+
+  // 1. Critical red flag — highest priority
+  const criticalFlag = dealState.redFlags.find(
+    (flag) => flag.severity === 'critical' && !dismissedFlagIds.has(flag.id)
+  )
+  if (criticalFlag) {
+    items.push({ type: 'flag', label: criticalFlag.message })
+  }
+
+  // 2. Deal health
+  const healthStatus = dealState.health?.status ?? computeBasicHealth(dealState.numbers)
+  if (healthStatus) {
+    items.push({ type: 'health', status: healthStatus })
+  }
+
+  // 3. Current offer or listing price
   if (dealState.numbers.currentOffer != null) {
-    return `Current offer ${formatCurrency(dealState.numbers.currentOffer)}`
+    items.push({ type: 'text', label: formatCurrency(dealState.numbers.currentOffer) })
+  } else if (dealState.numbers.listingPrice != null) {
+    items.push({ type: 'text', label: `List ${formatCurrency(dealState.numbers.listingPrice)}` })
   }
-  if (dealState.numbers.listingPrice != null) {
-    return `Listing ${formatCurrency(dealState.numbers.listingPrice)}`
+
+  // 4. Savings
+  const savings =
+    dealState.savingsEstimate ??
+    computeSavings(dealState.firstOffer, dealState.numbers.currentOffer)
+  if (savings != null && savings > 0) {
+    items.push({ type: 'savings', label: `Saved ${formatCurrency(savings)}` })
   }
-  if (dealState.checklist.length > 0) {
-    const done = dealState.checklist.filter((item) => item.done).length
-    return `${done}/${dealState.checklist.length} checklist items done`
+
+  // 5. Warning flag count (non-critical)
+  const warningCount = dealState.redFlags.filter(
+    (flag) => flag.severity === 'warning' && !dismissedFlagIds.has(flag.id)
+  ).length
+  if (warningCount > 0 && !criticalFlag) {
+    items.push({ type: 'flagCount', count: warningCount })
   }
-  const phaseLabel = dealState.phase.replace(/_/g, ' ')
-  if (phaseLabel) return `Phase: ${phaseLabel}`
-  return 'Live buying guidance'
+
+  // 6. Timer
+  if (dealState.timerStartedAt) {
+    items.push({ type: 'text', label: 'Timer running' })
+  }
+
+  // Fallback
+  if (items.length === 0) {
+    items.push({ type: 'text', label: 'Tap to view insights' })
+  }
+
+  return items
 }
+
+type PreviewItem =
+  | { type: 'health'; status: HealthStatus }
+  | { type: 'text'; label: string }
+  | { type: 'flag'; label: string }
+  | { type: 'savings'; label: string }
+  | { type: 'flagCount'; count: number }
 
 const GREETING_MESSAGES: Record<BuyerContext, string> = {
   researching:
@@ -233,8 +285,7 @@ export default function ChatScreen() {
 
   const showQuickActions = !showContextPicker && hasRealExchange && effectiveQuickActions.length > 0
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
-  const previewTitle = dealState?.vehicle ? vehicleSummary(dealState.vehicle) : 'Insights'
-  const previewDetail = getInsightsPreviewDetail(dealState)
+  const previewItems = getPreviewItems(dealState, dismissedFlagIds)
 
   if (isLoading && messages.length === 0) {
     return (
@@ -331,14 +382,70 @@ export default function ChatScreen() {
           borderWidth={1}
           borderColor="$borderColor"
         >
-          <YStack flex={1} gap={2}>
-            <Text fontSize={13} fontWeight="700" color="$color" numberOfLines={1}>
-              {previewTitle}
-            </Text>
-            <Text fontSize={11} color="$placeholderColor" numberOfLines={1}>
-              {previewDetail}
-            </Text>
-          </YStack>
+          <XStack flex={1} alignItems="center" justifyContent="space-evenly">
+            {previewItems.slice(0, MAX_INSIGHTS_PREVIEW_ITEMS).map((item, i) => {
+              switch (item.type) {
+                case 'health': {
+                  return (
+                    <XStack key={i} alignItems="center" gap="$1.5">
+                      <Theme name={STATUS_THEMES[item.status]}>
+                        <YStack width={8} height={8} borderRadius={4} backgroundColor="$color" />
+                      </Theme>
+                      <Text fontSize={12} fontWeight="600" color="$color" numberOfLines={1}>
+                        {STATUS_LABELS[item.status]}
+                      </Text>
+                    </XStack>
+                  )
+                }
+                case 'flag':
+                  return (
+                    <Text
+                      key={i}
+                      fontSize={11}
+                      fontWeight="600"
+                      color="$danger"
+                      numberOfLines={1}
+                      flex={1}
+                    >
+                      {item.label}
+                    </Text>
+                  )
+                case 'savings':
+                  return (
+                    <Text
+                      key={i}
+                      fontSize={12}
+                      fontWeight="600"
+                      color="$positive"
+                      numberOfLines={1}
+                    >
+                      {item.label}
+                    </Text>
+                  )
+                case 'flagCount':
+                  return (
+                    <XStack
+                      key={i}
+                      backgroundColor="$danger"
+                      borderRadius={8}
+                      paddingHorizontal={6}
+                      paddingVertical={1}
+                    >
+                      <Text fontSize={10} fontWeight="700" color="$white">
+                        {item.count}
+                      </Text>
+                    </XStack>
+                  )
+                case 'text':
+                  return (
+                    <Text key={i} fontSize={12} fontWeight="500" color="$color" numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                  )
+              }
+            })}
+            {dealState && <CompactPhaseIndicator currentPhase={dealState.phase} />}
+          </XStack>
         </XStack>
       </Pressable>
     ) : null
@@ -428,7 +535,7 @@ export default function ChatScreen() {
                         {
                           flex: 1,
                           scrollbarWidth: 'thin',
-                          scrollbarColor: 'rgba(255,255,255,0.15) transparent',
+                          scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
                         } as any
                       }
                     >
@@ -439,7 +546,6 @@ export default function ChatScreen() {
                         onDismissFlag={dismissRedFlag}
                         onCorrectNumber={correctNumber}
                         onCorrectVehicleField={correctVehicleField}
-                        mode="sidebar"
                       />
                     </ScrollView>
                   </View>
@@ -474,7 +580,7 @@ export default function ChatScreen() {
           animationType="none"
           onRequestClose={() => setIsInsightsOpen(false)}
         >
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, fontFamily: WEB_FONT_FAMILY } as any}>
             <Animated.View
               style={{
                 position: 'absolute',
@@ -571,7 +677,6 @@ export default function ChatScreen() {
                           onDismissFlag={dismissRedFlag}
                           onCorrectNumber={correctNumber}
                           onCorrectVehicleField={correctVehicleField}
-                          mode="mobile"
                         />
                       ) : null}
                     </ScrollView>

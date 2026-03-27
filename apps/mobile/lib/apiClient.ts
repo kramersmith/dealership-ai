@@ -256,7 +256,11 @@ class ApiClient implements ApiService {
       checklist: ds.checklist || [],
       timerStartedAt: ds.timer_started_at,
       health: ds.health_status
-        ? { status: ds.health_status, summary: ds.health_summary ?? '' }
+        ? {
+            status: ds.health_status,
+            summary: ds.health_summary ?? '',
+            recommendation: ds.recommendation ?? null,
+          }
         : null,
       redFlags: (ds.red_flags ?? []).map((f: any) => ({
         id: f.id,
@@ -277,7 +281,12 @@ class ApiClient implements ApiService {
   async correctDealState(
     sessionId: string,
     corrections: Record<string, string | number | null>
-  ): Promise<{ healthStatus: string | null; healthSummary: string | null; redFlags: RedFlag[] }> {
+  ): Promise<{
+    healthStatus: string | null
+    healthSummary: string | null
+    recommendation: string | null
+    redFlags: RedFlag[]
+  }> {
     const res = await request<any>(`/deal/${sessionId}`, {
       method: 'PATCH',
       body: JSON.stringify(corrections),
@@ -285,6 +294,7 @@ class ApiClient implements ApiService {
     return {
       healthStatus: res.health_status ?? null,
       healthSummary: res.health_summary ?? null,
+      recommendation: res.recommendation ?? null,
       redFlags: (res.red_flags ?? []).map((f: any) => ({
         id: f.id,
         severity: f.severity,

@@ -505,6 +505,7 @@ Get the current deal state for a session.
   "score_overall": null,
   "health_status": null,
   "health_summary": null,
+  "recommendation": null,
   "red_flags": [],
   "information_gaps": [],
   "first_offer": null,
@@ -555,6 +556,7 @@ All fields are optional. Only provided fields are updated. Correctable number fi
 {
   "health_status": "good",
   "health_summary": "Strong deal — offer is $1,200 below listing price",
+  "recommendation": "Lock in this price and move to financing",
   "red_flags": []
 }
 ```
@@ -563,11 +565,12 @@ All fields are optional. Only provided fields are updated. Correctable number fi
 |---|---|---|
 | `health_status` | string | Updated deal health: `good`, `fair`, `concerning`, `bad` (nullable) |
 | `health_summary` | string | 1-2 sentence explanation (nullable) |
+| `recommendation` | string | AI-generated next-action recommendation (nullable) |
 | `red_flags` | array | Updated list of red flag objects: `{id, severity, message}` |
 
 **Side effects:**
 - If `current_offer` is set and `first_offer` is null, `first_offer` is snapshotted
-- After applying corrections, `assess_deal_state()` runs via Haiku to update health status and red flags
+- After applying corrections, `assess_deal_state()` runs via Haiku to update health status, red flags, and recommendation
 
 **Error responses:**
 

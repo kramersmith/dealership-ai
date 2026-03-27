@@ -106,7 +106,7 @@ graph TB
   - `event: done` -- final payload with full text and all tool calls
 8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to generate health status and red flags.
+10. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to generate health status, red flags, and a next-action recommendation.
 11. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
 12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
 13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
@@ -268,7 +268,7 @@ The AI advisor uses 10 tools to drive the frontend dashboard and quick actions i
 | `update_checklist`       | Update buyer's action item checklist       | `items` (array of {label, done}) |
 | `update_quick_actions`   | Suggest 2-3 dynamic quick action buttons   | `actions` (array of {label, prompt}) |
 | `update_buyer_context`   | Change buyer's situational context mid-conversation | `buyer_context` |
-| `update_deal_health`     | Overall deal health assessment (status + summary) | `status`, `summary` |
+| `update_deal_health`     | Overall deal health assessment (status + summary + recommendation) | `status`, `summary` |
 | `update_red_flags`       | Surface specific deal problems with severity | `flags` (array of {id, severity, message}) |
 | `update_information_gaps` | Identify missing data to improve assessment | `gaps` (array of {label, reason, priority}) |
 
@@ -361,6 +361,7 @@ erDiagram
         string vehicle_color
         string health_status "good | fair | concerning | bad"
         string health_summary
+        string recommendation "AI next-action recommendation"
         json red_flags "array of {id, severity, message}"
         json information_gaps "array of {label, reason, priority}"
         int score_price
@@ -465,6 +466,7 @@ erDiagram
 | `score_overall`    | String   | Nullable                                | `red`, `yellow`, or `green` |
 | `health_status`    | String   | Nullable                                | `good`, `fair`, `concerning`, `bad` |
 | `health_summary`   | String   | Nullable                                | 1-2 sentence explanation    |
+| `recommendation`   | String   | Nullable                                | AI-generated next-action recommendation |
 | `red_flags`        | JSON     | default empty list                      | Array of {id, severity, message} |
 | `information_gaps` | JSON     | default empty list                      | Array of {label, reason, priority} |
 | `first_offer`      | Float    | Nullable                                | Snapshot of first current_offer |

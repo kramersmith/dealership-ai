@@ -186,25 +186,28 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 **Description:** A set of dashboard components that display the current state of the deal alongside the chat. Updated automatically by the AI through structured tool calls, so the buyer always sees their deal status without having to ask.
 
-**Implementation status:** Built. All insights components implemented with collapsible panel (`InsightsPanel`), responsive desktop sidebar layout at 768px+ breakpoints. Panel ordering and quick actions adapt to the buyer's situational context.
+**Implementation status:** Built. All insights components implemented with tiered layout (`InsightsPanel`), responsive desktop sidebar layout at 768px+ breakpoints. Staggered entrance animations on all widgets.
 
 **Components:**
 
 | Component | Purpose | Tool |
 |-----------|---------|------|
-| Deal Phase Indicator | Shows current stage: Researching, At Dealership, Negotiating, F&I, Signing, Post-Purchase | `update_deal_phase` |
-| Deal Health Card | Overall deal health assessment (good/fair/concerning/bad) with summary | `update_deal_health` |
+| Hero Section | Top-level overview: deal health status, offer delta (vs. target/listing), AI recommendation, compact phase indicator | `update_deal_health` + computed |
 | Red Flags Card | Specific deal problems with severity (warning/critical), dismissible per session | `update_red_flags` |
 | Key Numbers | Financial figures with inline editing — listing price, MSRP, target, walk-away, current offer, monthly payment, APR | `update_deal_numbers` |
-| Information Gaps Card | Missing data that would improve assessment, with priority and tappable prompts | `update_information_gaps` |
-| Savings Summary | Estimated buyer savings (shown in closing phase) | N/A (derived from first_offer vs current_offer) |
+| Blind Spots Card | Missing data that would improve assessment, with priority dots and tappable prompts | `update_information_gaps` |
+| Savings Summary | Estimated buyer savings (shown from negotiation phase onward, not just closing) | N/A (derived from first_offer vs current_offer) |
 | Vehicle Card | Year, make, model, trim, VIN, mileage, color with inline editing | `set_vehicle` |
-| Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality | `update_scorecard` |
+| Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality; tap-to-expand descriptions for each category | `update_scorecard` |
 | Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |
-| Dealership Timer | Tracks time at the dealership; surfaces awareness cues about wait-time tactics | N/A (client-side) |
+| Dealership Timer | Tracks time at the dealership; contextual tips about wait-time tactics | N/A (client-side) |
 | Quick Actions | LLM-generated contextual prompts (2-3 buttons) that update as conversation shifts; static fallbacks shown before first AI exchange or when dynamic actions go stale | `update_quick_actions` |
 
-**Data-driven panel composition:** The InsightsPanel uses `getPanelWidgets()` to determine which widgets to show based on available deal data (e.g., DealHealthCard appears when both an offer and target exist; RedFlagsCard only when there are undismissed flags). This replaced the previous static context-based widget ordering (`WIDGET_ORDER_BY_CONTEXT`).
+**Tiered panel layout:** The InsightsPanel uses `getPanelLayout()` to organize widgets into three tiers based on available deal data:
+- **Hero tier** — always visible: HeroSection with deal health, offer delta, AI recommendation, and compact phase indicator
+- **Alert tier** — red flags and blind spots (shown only when data exists)
+- **Primary tier** — savings summary and key numbers
+- **Secondary tier** — vehicle, scorecard, checklist
 
 **Inline editing:** Users can tap to correct AI-extracted values on KeyNumbers and VehicleCard. Corrections are debounced and synced to the backend via `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment of deal health and red flags.
 

@@ -94,6 +94,32 @@ export function useIconEntrance(duration = 150) {
   return { opacity, rotate }
 }
 
+/** Staggered fade + slide in — delay based on index for sequential entrance */
+export function useStaggeredFadeIn(index: number, staggerMs = 50, duration = 250) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const translateY = useRef(new Animated.Value(8)).current
+
+  useEffect(() => {
+    const delay = index * staggerMs
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration,
+        delay,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration,
+        delay,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start()
+  }, [opacity, translateY, index, staggerMs, duration])
+
+  return { opacity, translateY }
+}
+
 /** Pulse effect — scale up then back */
 export function usePulse(trigger: boolean) {
   const scale = useRef(new Animated.Value(1)).current

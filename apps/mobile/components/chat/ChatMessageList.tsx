@@ -1,6 +1,7 @@
 import { useRef, useEffect, type ReactNode } from 'react'
 import { FlatList, Animated } from 'react-native'
-import { YStack, Text, Spinner } from 'tamagui'
+import { YStack, Text, Spinner, useTheme } from 'tamagui'
+import { palette } from '@/lib/theme/tokens'
 import type { Message } from '@/lib/types'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { ChatBubble } from './ChatBubble'
@@ -42,6 +43,7 @@ export function ChatMessageList({
   footer,
 }: ChatMessageListProps) {
   const flatListRef = useRef<FlatList>(null)
+  const theme = useTheme()
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -63,7 +65,13 @@ export function ChatMessageList({
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => <ChatBubble message={item} />}
       contentContainerStyle={{ paddingTop: topPadding, paddingBottom: bottomPadding }}
-      showsVerticalScrollIndicator={false}
+      showsVerticalScrollIndicator
+      style={
+        {
+          scrollbarWidth: 'thin',
+          scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
+        } as any
+      }
       ListFooterComponent={
         <>
           {isSending ? (

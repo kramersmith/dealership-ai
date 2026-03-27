@@ -1,11 +1,10 @@
-import { Animated, TextInput, TouchableOpacity } from 'react-native'
+import { TextInput, TouchableOpacity } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Pencil } from '@tamagui/lucide-icons'
 import type { Vehicle } from '@/lib/types'
 import { formatMileage, vehicleSummary } from '@/lib/utils'
 import { HIGH_MILEAGE_THRESHOLD, VERY_HIGH_MILEAGE_THRESHOLD } from '@/lib/constants'
 import { AppCard, StatusPill } from '@/components/shared'
-import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { useEditableField } from '@/hooks/useEditableField'
 
 interface VehicleCardProps {
@@ -90,8 +89,6 @@ function EditableText({
 }
 
 export function VehicleCard({ vehicle, onCorrectField }: VehicleCardProps) {
-  const { opacity, translateY } = useSlideIn(300)
-
   if (!vehicle) return null
 
   const riskFlags: string[] = []
@@ -114,48 +111,46 @@ export function VehicleCard({ vehicle, onCorrectField }: VehicleCardProps) {
   }
 
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <AppCard accent gap="$2">
-        <XStack justifyContent="space-between" alignItems="flex-start">
-          <YStack flex={1} gap="$1.5">
-            <Text fontSize={16} fontWeight="700" color="$color" numberOfLines={1}>
-              {vehicleSummary(vehicle)}
-            </Text>
-            <XStack gap="$3">
-              {vehicle.mileage !== undefined && editable ? (
-                <EditableText
-                  value={formatMileage(vehicle.mileage)}
-                  onSave={(v) => handleSave('mileage', v)}
-                />
-              ) : vehicle.mileage !== undefined ? (
-                <Text fontSize={13} color="$placeholderColor">
-                  {formatMileage(vehicle.mileage)}
-                </Text>
-              ) : null}
-              {vehicle.color && editable ? (
-                <EditableText value={vehicle.color} onSave={(v) => handleSave('color', v)} />
-              ) : vehicle.color ? (
-                <Text fontSize={13} color="$placeholderColor">
-                  {vehicle.color}
-                </Text>
-              ) : null}
-            </XStack>
-            {vehicle.vin && (
-              <Text fontSize={11} color="$placeholderColor" fontFamily="$mono">
-                VIN: {vehicle.vin.substring(0, 11)}...
+    <AppCard compact gap="$2">
+      <XStack justifyContent="space-between" alignItems="flex-start">
+        <YStack flex={1} gap="$1.5">
+          <Text fontSize={16} fontWeight="700" color="$color" numberOfLines={1}>
+            {vehicleSummary(vehicle)}
+          </Text>
+          <XStack gap="$3">
+            {vehicle.mileage != null && editable ? (
+              <EditableText
+                value={formatMileage(vehicle.mileage)}
+                onSave={(v) => handleSave('mileage', v)}
+              />
+            ) : vehicle.mileage != null ? (
+              <Text fontSize={13} color="$placeholderColor">
+                {formatMileage(vehicle.mileage)}
               </Text>
-            )}
-          </YStack>
-        </XStack>
-
-        {riskFlags.length > 0 && (
-          <XStack gap="$2" flexWrap="wrap">
-            {riskFlags.map((flag) => (
-              <StatusPill key={flag} status="red" label={flag} size="sm" />
-            ))}
+            ) : null}
+            {vehicle.color && editable ? (
+              <EditableText value={vehicle.color} onSave={(v) => handleSave('color', v)} />
+            ) : vehicle.color ? (
+              <Text fontSize={13} color="$placeholderColor">
+                {vehicle.color}
+              </Text>
+            ) : null}
           </XStack>
-        )}
-      </AppCard>
-    </Animated.View>
+          {vehicle.vin && (
+            <Text fontSize={11} color="$placeholderColor" fontFamily="$mono">
+              VIN: {vehicle.vin.substring(0, 11)}...
+            </Text>
+          )}
+        </YStack>
+      </XStack>
+
+      {riskFlags.length > 0 && (
+        <XStack gap="$2" flexWrap="wrap">
+          {riskFlags.map((flag) => (
+            <StatusPill key={flag} status="red" label={flag} size="sm" />
+          ))}
+        </XStack>
+      )}
+    </AppCard>
   )
 }

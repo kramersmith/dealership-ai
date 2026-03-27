@@ -4,7 +4,6 @@ import { XStack, YStack, Text } from 'tamagui'
 import type { ChecklistItem } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { AppCard, SectionHeader } from '@/components/shared'
-import { useSlideIn } from '@/hooks/useAnimatedValue'
 
 interface ChecklistProps {
   items: ChecklistItem[]
@@ -69,24 +68,20 @@ function ChecklistRow({
 }
 
 export function Checklist({ items, onToggle }: ChecklistProps) {
-  const { opacity, translateY } = useSlideIn(340)
-
   if (items.length === 0) {
     return (
-      <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-        <AppCard>
-          <Text fontSize={13} color="$placeholderColor" textAlign="center">
-            Your checklist will appear here as the AI identifies things to check.
-          </Text>
-        </AppCard>
-      </Animated.View>
+      <AppCard compact>
+        <Text fontSize={13} color="$placeholderColor" textAlign="center">
+          Your checklist will appear here as the AI identifies things to check.
+        </Text>
+      </AppCard>
     )
   }
 
   const doneCount = items.filter((item) => item.done).length
 
   return (
-    <AppCard gap="$2">
+    <AppCard compact gap="$2">
       <SectionHeader title="Checklist" action={`${doneCount}/${items.length}`} />
       <YStack gap="$1">
         {items.map((item, index) => (

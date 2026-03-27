@@ -59,6 +59,7 @@ class DealState(Base):
     # Deal health (Tier 2 — AI-assessed)
     health_status: Mapped[str | None] = mapped_column(String, nullable=True)
     health_summary: Mapped[str | None] = mapped_column(String, nullable=True)
+    recommendation: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Red flags (Tier 2 — AI-assessed)
     red_flags: Mapped[list] = mapped_column(JSON, default=list)

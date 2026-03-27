@@ -262,6 +262,7 @@ Updates the overall deal health assessment. Called after any significant change 
 |---|---|---|---|
 | `status` | string | Yes | `good`, `fair`, `concerning`, or `bad` |
 | `summary` | string | Yes | 1-2 sentence explanation grounded in user's data |
+| `recommendation` | string | No | Specific next-action recommendation (e.g., "Counter at $31,500") |
 
 **Trigger:** After any significant number/offer/term change. This is the buyer's primary signal.
 
@@ -302,15 +303,15 @@ Tools should be called in priority order (most important first):
 
 ### Assessment Safety Net
 
-If the primary Claude model updates deal numbers but doesn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku (`CLAUDE_FAST_MODEL`) to generate health status and red flags. This ensures the deal health and red flags panels stay current even when the primary model focuses on other tools.
+If the primary Claude model updates deal numbers but doesn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku (`CLAUDE_FAST_MODEL`) to generate health status, red flags, and a next-action recommendation. This ensures the deal health, red flags, and recommendation panels stay current even when the primary model focuses on other tools.
 
 ### User Corrections
 
 Users can inline-edit financial figures and vehicle fields on the frontend (KeyNumbers and VehicleCard components). Corrections are synced to the backend via `PATCH /api/deal/{session_id}`, which:
 1. Applies the corrected values to the deal state
 2. Snapshots `first_offer` if this is the first time `current_offer` is set
-3. Re-runs `assess_deal_state()` via Haiku to update health status and red flags
-4. Returns the updated assessment to the frontend
+3. Re-runs `assess_deal_state()` via Haiku to update health status, red flags, and recommendation
+4. Returns the updated assessment (including recommendation) to the frontend
 
 ### Tool Application Order
 

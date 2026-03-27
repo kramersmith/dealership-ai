@@ -3,7 +3,7 @@ import { Animated } from 'react-native'
 import { XStack, Text, Theme } from 'tamagui'
 import { Clock } from '@tamagui/lucide-icons'
 import { formatElapsedTime } from '@/lib/utils'
-import { TIMER_WARNING_MINUTES, TIMER_LONG_MINUTES } from '@/lib/constants'
+import { TIMER_WARNING_MINUTES, TIMER_LONG_MINUTES, TIMER_TIPS } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 
 interface DealershipTimerProps {
@@ -85,7 +85,12 @@ export function DealershipTimer({ startedAt }: DealershipTimerProps) {
         </Text>
         {isLong && (
           <Text fontSize={11} color="$color">
-            Long wait — could be a tactic
+            {TIMER_TIPS.long}
+          </Text>
+        )}
+        {isWarning && !isLong && (
+          <Text fontSize={11} color="$color">
+            {TIMER_TIPS.warning}
           </Text>
         )}
       </XStack>

@@ -1,9 +1,10 @@
-import { YStack } from 'tamagui'
+import { Animated } from 'react-native'
+import { YStack, Text } from 'tamagui'
 import type { DealNumbers, DealState, Vehicle } from '@/lib/types'
 import { POST_PURCHASE_CHECKLIST } from '@/lib/constants'
 import { computeSavings } from '@/lib/dealComputations'
-import { DealPhaseIndicator } from './DealPhaseIndicator'
-import { DealHealthCard } from './DealHealthCard'
+import { useStaggeredFadeIn } from '@/hooks/useAnimatedValue'
+import { HeroSection } from './HeroSection'
 import { RedFlagsCard } from './RedFlagsCard'
 import { KeyNumbers } from './KeyNumbers'
 import { InformationGapsCard } from './InformationGapsCard'
@@ -13,45 +14,53 @@ import { NegotiationScorecard } from './NegotiationScorecard'
 import { Checklist } from './Checklist'
 import { DealershipTimer } from './DealershipTimer'
 
-type PanelWidget =
-  | 'timer'
-  | 'savings_summary'
-  | 'deal_health'
-  | 'red_flags'
-  | 'key_numbers'
-  | 'information_gaps'
-  | 'vehicle'
-  | 'scorecard'
-  | 'checklist'
+type AlertWidget = 'timer' | 'red_flags'
+type PrimaryWidget = 'savings_summary' | 'key_numbers'
+type SecondaryWidget = 'vehicle' | 'scorecard' | 'information_gaps' | 'checklist'
 
-function getPanelWidgets(dealState: DealState, dismissedFlagIds: Set<string>): PanelWidget[] {
+interface PanelLayout {
+  alertTier: AlertWidget[]
+  primaryTier: PrimaryWidget[]
+  secondaryTier: SecondaryWidget[]
+}
+
+function getPanelLayout(dealState: DealState, dismissedFlagIds: Set<string>): PanelLayout {
   const hasVehicle = dealState.vehicle !== null
-  const hasOffer = dealState.numbers.currentOffer !== null
   const hasAnyNumbers = Object.values(dealState.numbers).some((v) => v !== null)
   const hasScorecard = Object.values(dealState.scorecard).some((v) => v !== null)
   const visibleFlags = dealState.redFlags.filter((f) => !dismissedFlagIds.has(f.id))
   const hasGaps = dealState.informationGaps.length > 0
   const isTimerActive = dealState.timerStartedAt !== null
-  const hasTarget = dealState.numbers.yourTarget !== null
   const isDealComplete = dealState.phase === 'closing'
   const hasSavings =
     dealState.savingsEstimate !== null ||
     computeSavings(dealState.firstOffer, dealState.numbers.currentOffer) !== null
   const hasChecklist = dealState.checklist.length > 0 || isDealComplete
 
-  const widgets: PanelWidget[] = []
+  const alertTier: AlertWidget[] = []
+  if (isTimerActive) alertTier.push('timer')
+  if (visibleFlags.length > 0) alertTier.push('red_flags')
 
-  if (isTimerActive) widgets.push('timer')
-  if (isDealComplete && hasSavings) widgets.push('savings_summary')
-  if (hasOffer && hasTarget) widgets.push('deal_health')
-  if (visibleFlags.length > 0) widgets.push('red_flags')
-  if (hasAnyNumbers) widgets.push('key_numbers')
-  if (hasGaps) widgets.push('information_gaps')
-  if (hasVehicle) widgets.push('vehicle')
-  if (hasScorecard) widgets.push('scorecard')
-  if (hasChecklist) widgets.push('checklist')
+  const primaryTier: PrimaryWidget[] = []
+  if (hasSavings) primaryTier.push('savings_summary')
+  if (hasAnyNumbers) primaryTier.push('key_numbers')
 
-  return widgets
+  const secondaryTier: SecondaryWidget[] = []
+  if (hasVehicle) secondaryTier.push('vehicle')
+  if (hasScorecard) secondaryTier.push('scorecard')
+  if (hasGaps) secondaryTier.push('information_gaps')
+  if (hasChecklist) secondaryTier.push('checklist')
+
+  return {
+    alertTier,
+    primaryTier,
+    secondaryTier,
+  }
+}
+
+function StaggeredWidget({ index, children }: { index: number; children: React.ReactNode }) {
+  const { opacity, translateY } = useStaggeredFadeIn(index)
+  return <Animated.View style={{ opacity, transform: [{ translateY }] }}>{children}</Animated.View>
 }
 
 interface InsightsPanelProps {
@@ -61,7 +70,6 @@ interface InsightsPanelProps {
   onDismissFlag: (id: string) => void
   onCorrectNumber?: (field: keyof DealNumbers, value: number | null) => void
   onCorrectVehicleField?: (field: keyof Vehicle, value: string | number | undefined) => void
-  mode?: 'mobile' | 'sidebar'
 }
 
 export function InsightsPanel({
@@ -71,31 +79,31 @@ export function InsightsPanel({
   onDismissFlag,
   onCorrectNumber,
   onCorrectVehicleField,
-  mode = 'mobile',
 }: InsightsPanelProps) {
-  const isSidebar = mode === 'sidebar'
-  const widgets = getPanelWidgets(dealState, dismissedFlagIds)
+  const layout = getPanelLayout(dealState, dismissedFlagIds)
 
   const checklist =
     dealState.phase === 'closing' && dealState.checklist.length === 0
       ? POST_PURCHASE_CHECKLIST
       : dealState.checklist
 
-  const widgetComponents: Record<PanelWidget, React.ReactNode | null> = {
+  const alertComponents: Record<AlertWidget, React.ReactNode> = {
     timer: <DealershipTimer startedAt={dealState.timerStartedAt} />,
-    savings_summary: (
-      <SavingsSummary
-        firstOffer={dealState.firstOffer}
-        currentOffer={dealState.numbers.currentOffer}
-        savingsEstimate={dealState.savingsEstimate}
-      />
-    ),
-    deal_health: <DealHealthCard health={dealState.health} numbers={dealState.numbers} />,
     red_flags: (
       <RedFlagsCard
         flags={dealState.redFlags}
         dismissedIds={dismissedFlagIds}
         onDismiss={onDismissFlag}
+      />
+    ),
+  }
+
+  const primaryComponents: Record<PrimaryWidget, React.ReactNode> = {
+    savings_summary: (
+      <SavingsSummary
+        firstOffer={dealState.firstOffer}
+        currentOffer={dealState.numbers.currentOffer}
+        savingsEstimate={dealState.savingsEstimate}
       />
     ),
     key_numbers: (
@@ -106,46 +114,76 @@ export function InsightsPanel({
         onCorrectNumber={onCorrectNumber}
       />
     ),
-    information_gaps: <InformationGapsCard gaps={dealState.informationGaps} />,
+  }
+
+  const secondaryComponents: Record<SecondaryWidget, React.ReactNode> = {
     vehicle: <VehicleCard vehicle={dealState.vehicle} onCorrectField={onCorrectVehicleField} />,
     scorecard: <NegotiationScorecard scorecard={dealState.scorecard} numbers={dealState.numbers} />,
+    information_gaps: <InformationGapsCard gaps={dealState.informationGaps} />,
     checklist: <Checklist items={checklist} onToggle={onToggleChecklist} />,
   }
 
-  const renderedWidgets = widgets
-    .map((key) => ({ key, element: widgetComponents[key] }))
-    .filter((w) => w.element !== null)
+  // Build a flat index for staggered animation across all tiers
+  let staggerIndex = 0
 
-  const insightWidgets = (
-    <YStack paddingHorizontal="$3.5" gap="$3.5" paddingVertical="$3">
-      {renderedWidgets.map((widget) => (
-        <YStack key={widget.key}>{widget.element}</YStack>
-      ))}
-    </YStack>
-  )
-
-  if (isSidebar) {
-    return (
-      <YStack flex={1}>
-        <YStack paddingHorizontal="$4" paddingTop="$3" paddingBottom="$2">
-          <DealPhaseIndicator currentPhase={dealState.phase} />
-        </YStack>
-        {insightWidgets}
-      </YStack>
-    )
-  }
+  const hasAnyWidgets =
+    layout.alertTier.length > 0 || layout.primaryTier.length > 0 || layout.secondaryTier.length > 0
 
   return (
-    <YStack flex={1}>
-      <YStack
-        paddingHorizontal="$4"
-        paddingTop="$3"
-        paddingBottom="$2"
-        backgroundColor="$background"
-      >
-        <DealPhaseIndicator currentPhase={dealState.phase} />
-      </YStack>
-      {insightWidgets}
+    <YStack flex={1} paddingHorizontal="$3.5" paddingVertical="$3" gap="$3">
+      {/* Hero tier: always visible — phase + recommendation */}
+      <StaggeredWidget index={staggerIndex++}>
+        <HeroSection dealState={dealState} />
+      </StaggeredWidget>
+
+      {/* Empty state: shown when no deal data yet */}
+      {!hasAnyWidgets && (
+        <StaggeredWidget index={staggerIndex++}>
+          <Text
+            fontSize={13}
+            color="$placeholderColor"
+            textAlign="center"
+            lineHeight={20}
+            paddingVertical="$4"
+          >
+            As you share deal details, your numbers, vehicle info, and deal assessment will appear
+            here.
+          </Text>
+        </StaggeredWidget>
+      )}
+
+      {/* Alert tier: urgent items */}
+      {layout.alertTier.length > 0 && (
+        <YStack gap="$2">
+          {layout.alertTier.map((key) => (
+            <StaggeredWidget key={key} index={staggerIndex++}>
+              {alertComponents[key]}
+            </StaggeredWidget>
+          ))}
+        </YStack>
+      )}
+
+      {/* Primary tier: key data */}
+      {layout.primaryTier.length > 0 && (
+        <YStack gap="$3.5">
+          {layout.primaryTier.map((key) => (
+            <StaggeredWidget key={key} index={staggerIndex++}>
+              {primaryComponents[key]}
+            </StaggeredWidget>
+          ))}
+        </YStack>
+      )}
+
+      {/* Secondary tier: supporting info, more compact */}
+      {layout.secondaryTier.length > 0 && (
+        <YStack gap="$2.5">
+          {layout.secondaryTier.map((key) => (
+            <StaggeredWidget key={key} index={staggerIndex++}>
+              {secondaryComponents[key]}
+            </StaggeredWidget>
+          ))}
+        </YStack>
+      )}
     </YStack>
   )
 }

@@ -1,17 +1,24 @@
 import { useState } from 'react'
-import { TouchableOpacity, Animated } from 'react-native'
+import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { ChevronDown, ChevronUp } from '@tamagui/lucide-icons'
-import type { InformationGap } from '@/lib/types'
-import { useFadeIn } from '@/hooks/useAnimatedValue'
+import type { InformationGap, GapPriority } from '@/lib/types'
+import { AppCard, SectionHeader } from '@/components/shared'
 
 interface InformationGapsCardProps {
   gaps: InformationGap[]
 }
 
+const PRIORITY_COLORS: Record<GapPriority, { fill: string; border: string }> = {
+  high: { fill: '$danger', border: '$danger' },
+  medium: { fill: '$warning', border: '$warning' },
+  low: { fill: 'transparent', border: '$placeholderColor' },
+}
+
 function GapRow({ gap }: { gap: InformationGap }) {
   const [expanded, setExpanded] = useState(false)
   const Icon = expanded ? ChevronUp : ChevronDown
+  const colors = PRIORITY_COLORS[gap.priority]
 
   return (
     <TouchableOpacity
@@ -29,13 +36,21 @@ function GapRow({ gap }: { gap: InformationGap }) {
         borderColor="$borderColor"
       >
         <XStack alignItems="center" gap="$2">
+          <YStack
+            width={8}
+            height={8}
+            borderRadius={4}
+            backgroundColor={colors.fill}
+            borderWidth={gap.priority === 'low' ? 1 : 0}
+            borderColor={colors.border}
+          />
           <Text fontSize={13} color="$color" flex={1} lineHeight={20}>
             {gap.label}
           </Text>
           <Icon size={14} color="$placeholderColor" />
         </XStack>
         {expanded && (
-          <Text fontSize={12} color="$placeholderColor" lineHeight={18}>
+          <Text fontSize={12} color="$placeholderColor" lineHeight={18} paddingLeft="$4">
             {gap.reason}
           </Text>
         )}
@@ -45,8 +60,6 @@ function GapRow({ gap }: { gap: InformationGap }) {
 }
 
 export function InformationGapsCard({ gaps }: InformationGapsCardProps) {
-  const opacity = useFadeIn(300)
-
   if (gaps.length === 0) return null
 
   const sorted = [...gaps].sort((a, b) => {
@@ -55,22 +68,11 @@ export function InformationGapsCard({ gaps }: InformationGapsCardProps) {
   })
 
   return (
-    <Animated.View style={{ opacity }}>
-      <YStack gap="$2">
-        <Text
-          fontSize={12}
-          fontWeight="600"
-          color="$placeholderColor"
-          textTransform="uppercase"
-          letterSpacing={0.5}
-          paddingHorizontal="$1"
-        >
-          What Would Help
-        </Text>
-        {sorted.map((gap, index) => (
-          <GapRow key={`${gap.label}-${index}`} gap={gap} />
-        ))}
-      </YStack>
-    </Animated.View>
+    <AppCard compact gap="$2">
+      <SectionHeader title="Blind Spots" />
+      {sorted.map((gap, index) => (
+        <GapRow key={`${gap.label}-${index}`} gap={gap} />
+      ))}
+    </AppCard>
   )
 }

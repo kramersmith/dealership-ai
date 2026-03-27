@@ -33,9 +33,10 @@ dealership-ai/
 │   │   ├── components/
 │   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, ContextPicker, CopyableBlock
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
-│   │   │   ├── insights/        # InsightsPanel (data-driven via getPanelWidgets), DealHealthCard,
-│   │   │   │                    # RedFlagsCard, KeyNumbers, InformationGapsCard, SavingsSummary,
-│   │   │   │                    # DealPhaseIndicator, VehicleCard, NegotiationScorecard, Checklist,
+│   │   │   ├── insights/        # InsightsPanel (tiered layout via getPanelLayout), HeroSection (deal health
+│   │   │   │                    # + offer delta + AI recommendation + compact phase indicator),
+│   │   │   │                    # CompactPhaseIndicator, RedFlagsCard, KeyNumbers, InformationGapsCard,
+│   │   │   │                    # SavingsSummary, VehicleCard, NegotiationScorecard, Checklist,
 │   │   │   │                    # DealershipTimer, QuickActions
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
@@ -49,8 +50,8 @@ dealership-ai/
 │   │       ├── theme/
 │   │       │   ├── tokens.ts    # Centralized color palette + token colors
 │   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
-│   │       ├── constants.ts     # APP_NAME, buyer context defaults, deal phases, fallback quick actions, APR thresholds, animation/layout constants
-│   │       ├── dealComputations.ts # Derived deal metrics (savings calculations)
+│   │       ├── constants.ts     # APP_NAME, WEB_FONT_FAMILY, buyer context defaults, deal phases, fallback quick actions, APR thresholds, TIMER_TIPS, SCORE_DESCRIPTIONS, MAX_INSIGHTS_PREVIEW_ITEMS, animation/layout constants
+│   │       ├── dealComputations.ts # Derived deal metrics (savings, computeOfferDelta, getNextActionRecommendation)
 │       ├── platform.ts      # Platform-specific constants (USE_NATIVE_DRIVER)
 │   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.
 │   │       └── types.ts
@@ -91,7 +92,7 @@ dealership-ai/
 - Numbers: msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
 - Price history: first_offer, pre_fi_price, savings_estimate
 - Vehicle: year, make, model, trim, vin, mileage, color
-- Deal health: health_status (HealthStatus enum: good/fair/concerning/bad), health_summary
+- Deal health: health_status (HealthStatus enum: good/fair/concerning/bad), health_summary, recommendation
 - Red flags: JSON array of {id, severity, message} (RedFlagSeverity enum: warning/critical)
 - Information gaps: JSON array of {label, reason, priority} (GapPriority enum: high/medium/low)
 - Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (ScoreStatus enum: red/yellow/green)
@@ -176,7 +177,7 @@ POST   /simulations/{id}/complete     # End + score
 5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
 6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
 7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
-8. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to fill in health status and red flags
+8. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to fill in health status, red flags, and recommendation
 9. Backend persists messages (including follow-up text) and executes tool calls (UPDATE deal_states)
 10. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
 11. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.

@@ -64,6 +64,64 @@ def test_apply_tool_call_deal_health_valid(db):
     assert deal_state.health_summary == "Offer is below your target"
 
 
+def test_apply_tool_call_deal_health_with_recommendation(db):
+    """update_deal_health sets recommendation on deal state."""
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+
+    _apply_tool_call(
+        deal_state,
+        "update_deal_health",
+        {
+            "status": "fair",
+            "summary": "Offer is above target",
+            "recommendation": "Counter at $31,500",
+        },
+    )
+
+    assert deal_state.health_status == HealthStatus.FAIR
+    assert deal_state.health_summary == "Offer is above target"
+    assert deal_state.recommendation == "Counter at $31,500"
+
+
+def test_apply_tool_call_deal_health_without_recommendation(db):
+    """update_deal_health without recommendation leaves it unchanged."""
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+
+    deal_state.recommendation = "Old recommendation"
+
+    _apply_tool_call(
+        deal_state,
+        "update_deal_health",
+        {"status": "good", "summary": "Great deal"},
+    )
+
+    assert deal_state.health_status == HealthStatus.GOOD
+    # recommendation unchanged because it wasn't in tool_data
+    assert deal_state.recommendation == "Old recommendation"
+
+
+def test_apply_tool_call_deal_health_recommendation_overwrites(db):
+    """update_deal_health with new recommendation overwrites old one."""
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+
+    deal_state.recommendation = "Old recommendation"
+
+    _apply_tool_call(
+        deal_state,
+        "update_deal_health",
+        {
+            "status": "concerning",
+            "summary": "APR too high",
+            "recommendation": "Get a pre-approval from your bank",
+        },
+    )
+
+    assert deal_state.recommendation == "Get a pre-approval from your bank"
+
+
 def test_apply_tool_call_deal_health_invalid_status(db):
     """update_deal_health with invalid status leaves health_status unchanged."""
     user, _ = _create_user_and_token(db)
@@ -447,6 +505,65 @@ def test_patch_deal_applies_assessment_health(mock_assess, client, db):
     ]
 
 
+@patch("app.routes.deals.assess_deal_state", new_callable=AsyncMock)
+def test_patch_deal_applies_assessment_recommendation(mock_assess, client, db):
+    """PATCH applies the recommendation from Haiku assessment to deal state and response."""
+    mock_assess.return_value = {
+        "health": {
+            "status": "fair",
+            "summary": "Offer above target",
+            "recommendation": "Counter at $28,000",
+        },
+        "flags": [],
+    }
+
+    user, token = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+    session_id = deal_state.session_id
+
+    resp = client.patch(
+        f"/api/deal/{session_id}",
+        json={"current_offer": 30000},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["recommendation"] == "Counter at $28,000"
+
+    db.refresh(deal_state)
+    assert deal_state.recommendation == "Counter at $28,000"
+
+
+@patch("app.routes.deals.assess_deal_state", new_callable=AsyncMock)
+def test_patch_deal_no_recommendation_preserves_existing(mock_assess, client, db):
+    """PATCH without recommendation in assessment preserves existing recommendation."""
+    mock_assess.return_value = {
+        "health": {"status": "good", "summary": "Great deal"},
+        "flags": [],
+    }
+
+    user, token = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+    session_id = deal_state.session_id
+    deal_state.recommendation = "Previous recommendation"
+    db.commit()
+
+    resp = client.patch(
+        f"/api/deal/{session_id}",
+        json={"current_offer": 25000},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Existing recommendation should be preserved (returned from deal_state)
+    assert data["recommendation"] == "Previous recommendation"
+
+    db.refresh(deal_state)
+    assert deal_state.recommendation == "Previous recommendation"
+
+
 # ─── assess_deal_state ───
 
 
@@ -557,6 +674,7 @@ def test_get_deal_state_includes_new_fields(client, db):
 
     deal_state.health_status = "concerning"
     deal_state.health_summary = "APR is high"
+    deal_state.recommendation = "Get a pre-approval from your bank"
     deal_state.red_flags = [
         {"id": "apr_high", "severity": "critical", "message": "Very high APR"}
     ]
@@ -574,6 +692,7 @@ def test_get_deal_state_includes_new_fields(client, db):
     data = resp.json()
     assert data["health_status"] == "concerning"
     assert data["health_summary"] == "APR is high"
+    assert data["recommendation"] == "Get a pre-approval from your bank"
     assert len(data["red_flags"]) == 1
     assert data["red_flags"][0]["id"] == "apr_high"
     assert len(data["information_gaps"]) == 1
@@ -595,6 +714,7 @@ def test_get_deal_state_new_fields_default_empty(client, db):
     data = resp.json()
     assert data["health_status"] is None
     assert data["health_summary"] is None
+    assert data["recommendation"] is None
     assert data["red_flags"] == []
     assert data["information_gaps"] == []
     assert data["first_offer"] is None

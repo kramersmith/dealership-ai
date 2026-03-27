@@ -57,7 +57,11 @@ function debouncedSendCorrections(sessionId: string, set: any, get: any) {
       // Apply Haiku re-assessment
       const updates: Partial<DealState> = {}
       if (result.healthStatus !== null) {
-        updates.health = { status: result.healthStatus as any, summary: result.healthSummary ?? '' }
+        updates.health = {
+          status: result.healthStatus as any,
+          summary: result.healthSummary ?? '',
+          recommendation: result.recommendation ?? null,
+        }
       }
       if (result.redFlags.length > 0 || dealState.redFlags.length > 0) {
         updates.redFlags = result.redFlags
@@ -215,6 +219,7 @@ export const useDealStore = create<DealStore>((set, get) => ({
         const health: DealHealth = {
           status: toolCall.args.status,
           summary: toolCall.args.summary,
+          recommendation: toolCall.args.recommendation ?? null,
         }
         set({
           dealState: { ...dealState, health },

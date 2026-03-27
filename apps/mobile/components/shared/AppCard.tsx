@@ -1,18 +1,23 @@
 import { Platform } from 'react-native'
-import { YStack, type YStackProps } from 'tamagui'
+import { YStack, useTheme, type YStackProps } from 'tamagui'
+import { palette } from '@/lib/theme/tokens'
 
 interface AppCardProps extends YStackProps {
   children: React.ReactNode
   /** Optional brand-colored top accent line */
   accent?: boolean
+  /** Reduced padding for compact/secondary contexts */
+  compact?: boolean
 }
 
-export function AppCard({ children, accent = false, ...props }: AppCardProps) {
+export function AppCard({ children, accent = false, compact = false, ...props }: AppCardProps) {
+  const theme = useTheme()
+
   return (
     <YStack
       backgroundColor="$backgroundStrong"
       borderRadius={12}
-      padding="$4"
+      padding={compact ? '$3' : '$4'}
       borderWidth={1}
       borderColor="$borderColor"
       borderTopWidth={accent ? 2 : 1}
@@ -20,13 +25,13 @@ export function AppCard({ children, accent = false, ...props }: AppCardProps) {
       {...(Platform.OS === 'web'
         ? {
             style: {
-              boxShadow: '0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.15)',
+              boxShadow: `0 1px 3px ${theme.shadowColor?.val ?? palette.overlay}, 0 1px 2px ${theme.shadowColor?.val ?? palette.overlay}`,
             },
           }
         : {
-            shadowColor: '#000',
+            shadowColor: (theme.shadowColor?.val as string) ?? palette.overlay,
             shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.15,
+            shadowOpacity: 1,
             shadowRadius: 3,
             elevation: 2,
           })}

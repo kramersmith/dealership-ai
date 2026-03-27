@@ -66,6 +66,7 @@ export type HealthStatus = 'good' | 'fair' | 'concerning' | 'bad'
 export interface DealHealth {
   status: HealthStatus
   summary: string
+  recommendation: string | null
 }
 
 // ─── Red Flags ───
@@ -219,7 +220,12 @@ export interface ApiService {
   correctDealState(
     sessionId: string,
     corrections: Record<string, string | number | null>
-  ): Promise<{ healthStatus: string | null; healthSummary: string | null; redFlags: RedFlag[] }>
+  ): Promise<{
+    healthStatus: string | null
+    healthSummary: string | null
+    recommendation: string | null
+    redFlags: RedFlag[]
+  }>
 
   // Simulations
   getScenarios(): Promise<Scenario[]>

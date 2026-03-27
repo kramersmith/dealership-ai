@@ -32,6 +32,7 @@ class DealCorrectionRequest(BaseModel):
 class DealCorrectionResponse(BaseModel):
     health_status: str | None = None
     health_summary: str | None = None
+    recommendation: str | None = None
     red_flags: list[dict] = []
 
 
@@ -64,6 +65,7 @@ class DealStateResponse(BaseModel):
     score_overall: str | None
     health_status: str | None
     health_summary: str | None
+    recommendation: str | None
     red_flags: list[dict]
     information_gaps: list[dict]
     first_offer: float | None

@@ -1,8 +1,11 @@
-import type { BuyerContext, ChecklistItem, DealPhase, QuickAction } from './types'
+import type { BuyerContext, ChecklistItem, DealPhase, QuickAction, Scorecard } from './types'
 
 // ─── App ───
 
 export const APP_NAME = 'DealershipAI'
+
+/** Web font stack used in contexts where Tamagui fonts don't cascade (e.g. RN Modal). */
+export const WEB_FONT_FAMILY = 'Inter, -apple-system, system-ui, sans-serif'
 
 // ─── Buyer Context ───
 
@@ -108,6 +111,23 @@ export const TIMER_WARNING_MINUTES = 60
 /** Minutes at dealership before long-wait state. */
 export const TIMER_LONG_MINUTES = 120
 
+/** Contextual tips shown alongside the dealership timer at thresholds. */
+export const TIMER_TIPS = {
+  warning: "It's normal to wait, but track what they're 'checking on'",
+  long: 'Long waits can be a pressure tactic — you can always leave and come back',
+} as const
+
+// ─── Scorecard Descriptions ───
+
+/** One-line explanations for each scorecard category (shown on tap). */
+export const SCORE_DESCRIPTIONS: Record<keyof Scorecard, string> = {
+  price: 'How the offer compares to fair market value',
+  financing: 'Whether the APR and loan terms are competitive',
+  tradeIn: 'If your trade-in was valued fairly',
+  fees: 'Whether dealer fees are reasonable and transparent',
+  overall: 'Combined assessment of the entire deal',
+}
+
 // ─── Mobile Insights Panel ───
 
 /** Fraction of screen width for the slide-out insights panel. */
@@ -115,6 +135,9 @@ export const MOBILE_INSIGHTS_WIDTH_RATIO = 0.9
 
 /** Maximum width in pixels for the slide-out insights panel. */
 export const MOBILE_INSIGHTS_MAX_WIDTH = 420
+
+/** Maximum number of preview items shown in the compact insights bar. */
+export const MAX_INSIGHTS_PREVIEW_ITEMS = 3
 
 /** Maximum width in pixels for chat bubbles (keeps text readable on wide screens). */
 export const CHAT_BUBBLE_MAX_WIDTH = 600

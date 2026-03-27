@@ -1,8 +1,10 @@
-import { useRef, useEffect } from 'react'
-import { Animated } from 'react-native'
+import { useState, useRef, useEffect } from 'react'
+import { Animated, TouchableOpacity } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
 import type { Scorecard, DealNumbers } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { palette } from '@/lib/theme/tokens'
+import { SCORE_DESCRIPTIONS } from '@/lib/constants'
 import { StatusPill, AppCard } from '@/components/shared'
 
 interface NegotiationScorecardProps {
@@ -12,10 +14,12 @@ interface NegotiationScorecardProps {
 
 interface ScoreItemProps {
   label: string
+  descriptionKey: keyof Scorecard
   status: 'red' | 'yellow' | 'green' | null
 }
 
-function ScoreItem({ label, status }: ScoreItemProps) {
+function ScoreItem({ label, descriptionKey, status }: ScoreItemProps) {
+  const [expanded, setExpanded] = useState(false)
   const scale = useRef(new Animated.Value(1)).current
 
   useEffect(() => {
@@ -27,15 +31,34 @@ function ScoreItem({ label, status }: ScoreItemProps) {
     }
   }, [status, scale])
 
+  const description = SCORE_DESCRIPTIONS[descriptionKey]
+
   return (
-    <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
-      <YStack alignItems="center" gap="$1">
-        <StatusPill status={status} size="sm" />
-        <Text fontSize={10} color="$placeholderColor" fontWeight="500">
-          {label}
-        </Text>
-      </YStack>
-    </Animated.View>
+    <TouchableOpacity
+      onPress={() => setExpanded(!expanded)}
+      activeOpacity={0.7}
+      style={{ alignItems: 'center', minWidth: 44, minHeight: 44, justifyContent: 'center' }}
+    >
+      <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+        <YStack alignItems="center" gap="$1">
+          <StatusPill status={status} size="sm" />
+          <Text fontSize={10} color="$placeholderColor" fontWeight="500">
+            {label}
+          </Text>
+          {expanded && description && (
+            <Text
+              fontSize={9}
+              color="$placeholderColor"
+              textAlign="center"
+              lineHeight={12}
+              maxWidth={70}
+            >
+              {description}
+            </Text>
+          )}
+        </YStack>
+      </Animated.View>
+    </TouchableOpacity>
   )
 }
 
@@ -66,10 +89,10 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
 
   const progressColor =
     progressPercent <= 33
-      ? ((theme.positive?.val as string) ?? '#22C55E')
+      ? ((theme.positive?.val as string) ?? palette.positive)
       : progressPercent <= 66
-        ? ((theme.warning?.val as string) ?? '#EAB308')
-        : ((theme.danger?.val as string) ?? '#EF4444')
+        ? ((theme.warning?.val as string) ?? palette.warning)
+        : ((theme.danger?.val as string) ?? palette.danger)
 
   const animatedWidth = progressAnim.interpolate({
     inputRange: [0, 100],
@@ -77,13 +100,13 @@ export function NegotiationScorecard({ scorecard, numbers }: NegotiationScorecar
   })
 
   return (
-    <AppCard gap="$3">
+    <AppCard compact gap="$3">
       <XStack justifyContent="space-around">
-        <ScoreItem label="Price" status={scorecard.price} />
-        <ScoreItem label="Finance" status={scorecard.financing} />
-        <ScoreItem label="Trade-In" status={scorecard.tradeIn} />
-        <ScoreItem label="Fees" status={scorecard.fees} />
-        <ScoreItem label="Overall" status={scorecard.overall} />
+        <ScoreItem label="Price" descriptionKey="price" status={scorecard.price} />
+        <ScoreItem label="Finance" descriptionKey="financing" status={scorecard.financing} />
+        <ScoreItem label="Trade-In" descriptionKey="tradeIn" status={scorecard.tradeIn} />
+        <ScoreItem label="Fees" descriptionKey="fees" status={scorecard.fees} />
+        <ScoreItem label="Overall" descriptionKey="overall" status={scorecard.overall} />
       </XStack>
 
       {yourTarget !== null && currentOffer !== null && (

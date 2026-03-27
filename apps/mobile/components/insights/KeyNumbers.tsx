@@ -48,7 +48,7 @@ function NumberRow({
 }: NumberRowProps) {
   const flash = useRef(new Animated.Value(0)).current
   const theme = useTheme()
-  const editable = !!fieldKey && !!onCorrect
+  const editable = !!fieldKey && !!onCorrect && rawValue != null
 
   const { isEditing, editValue, justSaved, startEditing, setEditValue, commitEdit } =
     useEditableField(rawValue?.toString() ?? '', (newVal) => {
@@ -298,7 +298,7 @@ export function KeyNumbers({ numbers, phase, preFiPrice, onCorrectNumber }: KeyN
   if (allGroups.length === 0) return null
 
   return (
-    <AppCard accent gap="$1">
+    <AppCard gap="$1">
       <Text
         fontSize={12}
         fontWeight="600"

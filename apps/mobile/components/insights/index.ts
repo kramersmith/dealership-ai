@@ -1,6 +1,6 @@
 export { InsightsPanel } from './InsightsPanel'
-export { DealPhaseIndicator } from './DealPhaseIndicator'
-export { DealHealthCard } from './DealHealthCard'
+export { HeroSection } from './HeroSection'
+export { CompactPhaseIndicator } from './CompactPhaseIndicator'
 export { RedFlagsCard } from './RedFlagsCard'
 export { InformationGapsCard } from './InformationGapsCard'
 export { KeyNumbers } from './KeyNumbers'
