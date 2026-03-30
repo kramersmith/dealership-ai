@@ -73,6 +73,36 @@ export function stripMarkdown(text: string): string {
     .replace(/!\[.*?\]\(.+?\)/g, '') // images
 }
 
+// ─── Vehicle/Deal helpers ───
+
+import type { Deal, DealState, Vehicle } from '@/lib/types'
+
+/** Get all vehicles with role 'primary' (being considered for purchase). */
+export function getPrimaryVehicles(vehicles: Vehicle[]): Vehicle[] {
+  return vehicles.filter((v) => v.role === 'primary')
+}
+
+/** Get the trade-in vehicle, or null if none. */
+export function getTradeInVehicle(vehicles: Vehicle[]): Vehicle | null {
+  return vehicles.find((v) => v.role === 'trade_in') ?? null
+}
+
+/** Get the active deal from deal state, or null if none. */
+export function getActiveDeal(dealState: DealState): Deal | null {
+  if (!dealState.activeDealId) return null
+  return dealState.deals.find((d) => d.id === dealState.activeDealId) ?? null
+}
+
+/** Get all deals for a specific vehicle. */
+export function getDealsForVehicle(deals: Deal[], vehicleId: string): Deal[] {
+  return deals.filter((d) => d.vehicleId === vehicleId)
+}
+
+/** Get the vehicle associated with a deal. */
+export function getVehicleForDeal(vehicles: Vehicle[], deal: Deal): Vehicle | null {
+  return vehicles.find((v) => v.id === deal.vehicleId) ?? null
+}
+
 export function generateId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
 }

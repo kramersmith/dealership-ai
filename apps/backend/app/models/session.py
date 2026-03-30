@@ -12,9 +12,11 @@ from app.db.base import Base
 from app.models.enums import SessionType
 
 if TYPE_CHECKING:
+    from app.models.deal import Deal
     from app.models.deal_state import DealState
     from app.models.message import Message
     from app.models.simulation import Simulation
+    from app.models.vehicle import Vehicle
 
 
 class ChatSession(Base):
@@ -53,6 +55,10 @@ class ChatSession(Base):
     deal_state: Mapped["DealState | None"] = relationship(
         "DealState", cascade="all, delete-orphan", uselist=False
     )
+    vehicles: Mapped[list["Vehicle"]] = relationship(
+        "Vehicle", cascade="all, delete-orphan"
+    )
+    deals: Mapped[list["Deal"]] = relationship("Deal", cascade="all, delete-orphan")
     simulation: Mapped["Simulation | None"] = relationship(
         "Simulation", cascade="all, delete-orphan", uselist=False
     )

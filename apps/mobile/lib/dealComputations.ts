@@ -1,5 +1,6 @@
-import type { DealNumbers, DealState, HealthStatus } from './types'
+import type { Deal, DealNumbers, DealState, HealthStatus } from './types'
 import { APR_GOOD_THRESHOLD, APR_BAD_THRESHOLD } from './constants'
+import { getActiveDeal, getPrimaryVehicles, getVehicleForDeal } from './utils'
 
 /** Tier 1: Derive basic deal health from numbers alone. */
 export function computeBasicHealth(numbers: DealNumbers): HealthStatus | null {
@@ -86,12 +87,28 @@ export function computeOfferDelta(
   return { amount: Math.abs(diff), direction: diff > 0 ? 'above' : 'below' }
 }
 
-/** Derive a one-line "what to do next" recommendation from deal state. */
+/** Derive a one-line "what to do next" recommendation from the active deal + session state. */
 export function getNextActionRecommendation(dealState: DealState): string | null {
-  const { phase, numbers, redFlags, informationGaps, preFiPrice } = dealState
+  const activeDeal = getActiveDeal(dealState)
 
-  // Critical red flags take priority
-  const critical = redFlags.find((f) => f.severity === 'critical')
+  // If no active deal, use session-level context
+  if (!activeDeal) {
+    const hasPrimaryVehicles = getPrimaryVehicles(dealState.vehicles).length > 0
+    if (hasPrimaryVehicles)
+      return 'Get pre-approved and request out-the-door quotes from multiple dealers'
+    return "Share the car you're looking at to get pricing guidance"
+  }
+
+  return getRecommendationForDeal(activeDeal, dealState)
+}
+
+/** Recommendation logic for a specific deal. */
+function getRecommendationForDeal(deal: Deal, dealState: DealState): string | null {
+  const { phase, numbers, redFlags, informationGaps, preFiPrice } = deal
+
+  // Critical red flags take priority (deal-level + session-level)
+  const allFlags = [...redFlags, ...dealState.redFlags]
+  const critical = allFlags.find((f) => f.severity === 'critical')
   if (critical) return critical.message
 
   // F&I phase with markup
@@ -112,10 +129,10 @@ export function getNextActionRecommendation(dealState: DealState): string | null
   }
 
   // Phase-appropriate defaults
+  const vehicle = getVehicleForDeal(dealState.vehicles, deal)
   switch (phase) {
     case 'research':
-      if (dealState.vehicle)
-        return 'Get pre-approved and request out-the-door quotes from multiple dealers'
+      if (vehicle) return 'Get pre-approved and request out-the-door quotes from multiple dealers'
       return "Share the car you're looking at to get pricing guidance"
     case 'initial_contact':
       return "Don't discuss monthly payments yet — focus on total price"
@@ -131,8 +148,9 @@ export function getNextActionRecommendation(dealState: DealState): string | null
       break
   }
 
-  // Last resort: surface a high-priority information gap
-  const highGap = informationGaps.find((g) => g.priority === 'high')
+  // Last resort: surface a high-priority information gap (deal-level + session-level)
+  const allGaps = [...informationGaps, ...dealState.informationGaps]
+  const highGap = allGaps.find((g) => g.priority === 'high')
   if (highGap) return `Find out: ${highGap.label}`
 
   return null

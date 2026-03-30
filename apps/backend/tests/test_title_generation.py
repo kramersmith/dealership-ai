@@ -11,7 +11,7 @@ from app.services.title_generator import (
 def test_build_vehicle_title_full_info():
     """Full vehicle info produces 'Year Make Model Trim' title."""
     result = build_vehicle_title(
-        {"vehicle": {"year": 2024, "make": "Honda", "model": "Civic", "trim": "EX"}}
+        {"year": 2024, "make": "Honda", "model": "Civic", "trim": "EX"}
     )
     assert result == "2024 Honda Civic EX"
 
@@ -19,7 +19,7 @@ def test_build_vehicle_title_full_info():
 def test_build_vehicle_title_no_trim():
     """Missing trim omits it from the title."""
     result = build_vehicle_title(
-        {"vehicle": {"year": 2024, "make": "Honda", "model": "Civic", "trim": None}}
+        {"year": 2024, "make": "Honda", "model": "Civic", "trim": None}
     )
     assert result == "2024 Honda Civic"
 
@@ -27,7 +27,7 @@ def test_build_vehicle_title_no_trim():
 def test_build_vehicle_title_no_year():
     """Missing year omits it from the title."""
     result = build_vehicle_title(
-        {"vehicle": {"year": None, "make": "Honda", "model": "Civic", "trim": None}}
+        {"year": None, "make": "Honda", "model": "Civic", "trim": None}
     )
     assert result == "Honda Civic"
 
@@ -35,21 +35,21 @@ def test_build_vehicle_title_no_year():
 def test_build_vehicle_title_make_only():
     """Only make produces a single-word title."""
     result = build_vehicle_title(
-        {"vehicle": {"year": None, "make": "Tesla", "model": None, "trim": None}}
+        {"year": None, "make": "Tesla", "model": None, "trim": None}
     )
     assert result == "Tesla"
 
 
 def test_build_vehicle_title_no_vehicle():
     """No vehicle dict returns None."""
-    result = build_vehicle_title({"vehicle": None})
+    result = build_vehicle_title(None)
     assert result is None
 
 
 def test_build_vehicle_title_no_make():
     """Vehicle with no make returns None."""
     result = build_vehicle_title(
-        {"vehicle": {"year": 2024, "make": None, "model": "Civic", "trim": None}}
+        {"year": 2024, "make": None, "model": "Civic", "trim": None}
     )
     assert result is None
 
@@ -58,12 +58,10 @@ def test_build_vehicle_title_truncation():
     """Long titles are truncated to 40 characters."""
     result = build_vehicle_title(
         {
-            "vehicle": {
-                "year": 2024,
-                "make": "Mercedes-Benz",
-                "model": "GLE-Class",
-                "trim": "AMG GLE 63 S 4MATIC+",
-            }
+            "year": 2024,
+            "make": "Mercedes-Benz",
+            "model": "GLE-Class",
+            "trim": "AMG GLE 63 S 4MATIC+",
         }
     )
     assert result is not None

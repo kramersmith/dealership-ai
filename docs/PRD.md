@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03-26
+**Last updated:** 2026-03-29
 
 ---
 
@@ -186,30 +186,26 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 **Description:** A set of dashboard components that display the current state of the deal alongside the chat. Updated automatically by the AI through structured tool calls, so the buyer always sees their deal status without having to ask.
 
-**Implementation status:** Built. All insights components implemented with tiered layout (`InsightsPanel`), responsive desktop sidebar layout at 768px+ breakpoints. Staggered entrance animations on all widgets.
+**Implementation status:** Built. AI-driven card-based InsightsPanel (`insights-panel/`) with responsive desktop sidebar layout at 768px+ breakpoints. Staggered entrance animations.
 
-**Components:**
+**AI-driven card architecture:** The InsightsPanel renders a list of AI-generated cards (`ai_panel_cards` on the deal state). Each card has a `type` (AiCardType enum) and `priority` (AiCardPriority enum). The backend generates cards based on conversation context and deal data, replacing the previous fixed-widget tiered layout.
 
-| Component | Purpose | Tool |
-|-----------|---------|------|
-| Hero Section | Top-level overview: deal health status, offer delta (vs. target/listing), AI recommendation, compact phase indicator | `update_deal_health` + computed |
-| Red Flags Card | Specific deal problems with severity (warning/critical), dismissible per session | `update_red_flags` |
-| Key Numbers | Financial figures with inline editing — listing price, MSRP, target, walk-away, current offer, monthly payment, APR | `update_deal_numbers` |
-| Blind Spots Card | Missing data that would improve assessment, with priority dots and tappable prompts | `update_information_gaps` |
-| Savings Summary | Estimated buyer savings (shown from negotiation phase onward, not just closing) | N/A (derived from first_offer vs current_offer) |
-| Vehicle Card | Year, make, model, trim, VIN, mileage, color with inline editing | `set_vehicle` |
-| Negotiation Scorecard | Red/yellow/green ratings for price, financing, trade-in, fees, and overall deal quality; tap-to-expand descriptions for each category | `update_scorecard` |
-| Active Checklist | Phase-appropriate to-do items that update as the deal progresses | `update_checklist` |
-| Dealership Timer | Tracks time at the dealership; contextual tips about wait-time tactics | N/A (client-side) |
-| Quick Actions | LLM-generated contextual prompts (2-3 buttons) that update as conversation shifts; static fallbacks shown before first AI exchange or when dynamic actions go stale | `update_quick_actions` |
+**Card types:**
 
-**Tiered panel layout:** The InsightsPanel uses `getPanelLayout()` to organize widgets into three tiers based on available deal data:
-- **Hero tier** — always visible: HeroSection with deal health, offer delta, AI recommendation, and compact phase indicator
-- **Alert tier** — red flags and blind spots (shown only when data exists)
-- **Primary tier** — savings summary and key numbers
-- **Secondary tier** — vehicle, scorecard, checklist
+| Card Type | Component | Purpose |
+|-----------|-----------|---------|
+| `briefing` | BriefingCard | Top-level deal overview and AI recommendation |
+| `numbers` | NumbersCard | Financial figures with inline editing |
+| `vehicle` | AiVehicleCard | Vehicle details with inline editing |
+| `warning` | WarningCard | Deal problems and red flags with severity |
+| `tip` | TipCard | Contextual advice and suggestions |
+| `checklist` | AiChecklistCard | Phase-appropriate to-do items |
+| `success` | SuccessCard | Positive deal signals |
+| `comparison` | AiComparisonCard | Side-by-side deal comparison |
 
-**Inline editing:** Users can tap to correct AI-extracted values on KeyNumbers and VehicleCard. Corrections are debounced and synced to the backend via `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment of deal health and red flags.
+**Supporting components:** AiCard (base card renderer), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
+
+**Inline editing:** Users can tap to correct AI-extracted values on NumbersCard, AiVehicleCard, and dealer name. Corrections are sent as structured payloads (vehicle_corrections and deal_corrections arrays) to `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment.
 
 #### 4.3 Session Management (Buyer)
 

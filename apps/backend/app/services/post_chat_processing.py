@@ -6,8 +6,12 @@ into a single function called after tool calls are applied.
 
 import logging
 
+from sqlalchemy.orm import Session as DbSession
+
+from app.models.deal import Deal
 from app.models.deal_state import DealState
 from app.models.session import ChatSession
+from app.models.vehicle import Vehicle
 from app.services.title_generator import build_vehicle_title, generate_session_title
 
 logger = logging.getLogger(__name__)
@@ -24,17 +28,24 @@ def _truncate(text: str, max_length: int) -> str:
     return text[: max_length - 1] + "\u2026"
 
 
-def _deal_state_to_vehicle_dict(deal_state: DealState | None) -> dict | None:
-    """Extract vehicle info as a dict for title generation."""
-    if deal_state is None or not deal_state.vehicle_make:
+def _get_primary_vehicle(deal_state: DealState, db: DbSession) -> dict | None:
+    """Get the primary vehicle for the active deal as a dict for title generation."""
+    if not deal_state.active_deal_id:
         return None
+
+    deal = db.query(Deal).filter(Deal.id == deal_state.active_deal_id).first()
+    if not deal:
+        return None
+
+    vehicle = db.query(Vehicle).filter(Vehicle.id == deal.vehicle_id).first()
+    if not vehicle or not vehicle.make:
+        return None
+
     return {
-        "vehicle": {
-            "year": deal_state.vehicle_year,
-            "make": deal_state.vehicle_make,
-            "model": deal_state.vehicle_model,
-            "trim": deal_state.vehicle_trim,
-        }
+        "year": vehicle.year,
+        "make": vehicle.make,
+        "model": vehicle.model,
+        "trim": vehicle.trim,
     }
 
 
@@ -58,6 +69,7 @@ async def _update_title(
     deal_state: DealState | None,
     messages: list[dict],
     tool_calls: list[dict],
+    db: DbSession,
 ) -> None:
     """Update session title based on triggers. Only runs if auto_title is True."""
     if not session.auto_title:
@@ -66,10 +78,10 @@ async def _update_title(
     vehicle_tool_called = any(tc["name"] == "set_vehicle" for tc in tool_calls)
 
     # Trigger 1: Vehicle was just set or updated — deterministic title
-    if vehicle_tool_called:
-        ds_dict = _deal_state_to_vehicle_dict(deal_state)
-        if ds_dict:
-            title = build_vehicle_title(ds_dict)
+    if vehicle_tool_called and deal_state:
+        vehicle_dict = _get_primary_vehicle(deal_state, db)
+        if vehicle_dict:
+            title = build_vehicle_title(vehicle_dict)
             if title:
                 session.title = title
                 logger.info(
@@ -98,10 +110,11 @@ async def update_session_metadata(
     tool_calls: list[dict],
     response_text: str,
     user_message: str,
+    db: DbSession,
 ) -> None:
     """Update session preview and title after a chat exchange.
 
     Called from the chat route after tool calls are applied, before db.commit().
     """
     _update_preview(session, response_text, user_message)
-    await _update_title(session, deal_state, messages, tool_calls)
+    await _update_title(session, deal_state, messages, tool_calls, db)

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Dimensions } from 'react-native'
 
 const DESKTOP_BREAKPOINT = 768
+const WIDE_DESKTOP_BREAKPOINT = 1200
 
 export function useScreenWidth() {
   const [width, setWidth] = useState(Dimensions.get('window').width)
@@ -16,5 +17,6 @@ export function useScreenWidth() {
   return {
     width,
     isDesktop: width >= DESKTOP_BREAKPOINT,
+    isWideDesktop: width >= WIDE_DESKTOP_BREAKPOINT,
   }
 }

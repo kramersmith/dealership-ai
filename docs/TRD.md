@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-03-26**
+**Last updated: 2026-03-29**
 
 ---
 
@@ -50,11 +50,11 @@ dealership-ai/
 │   │   │   ├── models/   # SQLAlchemy ORM models
 │   │   │   ├── routes/   # API endpoint definitions
 │   │   │   ├── schemas/  # Pydantic request/response models
-│   │   │   └── services/ # Business logic (Claude integration)
+│   │   │   └── services/ # Business logic (Claude integration, deal state, extraction)
 │   │   └── migrations/   # Alembic database migrations
 │   └── mobile/           # Expo React Native application
 │       ├── app/          # Expo Router file-based routing
-│       ├── components/   # Chat, Chats (session list), Insights, Shared UI
+│       ├── components/   # Chat, Chats (session list), Insights Panel, Shared UI
 │       ├── hooks/        # useChat, useScreenWidth, useIconEntrance
 │       ├── lib/          # Theme (tokens + themes), API client
 │       └── stores/       # Zustand state management
@@ -82,7 +82,7 @@ graph TB
 
     subgraph Backend["FastAPI Backend (:8001)"]
         Routes["Routes Layer<br/>/api/auth · /api/sessions · /api/chat<br/>/api/deal · /api/simulations"]
-        Services["Services Layer<br/>Claude integration (tool definitions, SSE streaming)<br/>Post-chat processing · Title generation"]
+        Services["Services Layer<br/>Claude integration (two-pass extraction, SSE streaming)<br/>Deal state logic · Post-chat processing · Title generation"]
         Data["Data Layer<br/>SQLAlchemy ORM · Alembic Migrations · Pydantic"]
         Routes --> Services --> Data
     end
@@ -106,7 +106,7 @@ graph TB
   - `event: done` -- final payload with full text and all tool calls
 8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to generate health status, red flags, and a next-action recommendation.
+10. **Two-pass extraction:** Factual extractor and analyst subagents run in parallel via Haiku. The analyst calls `analyze_deal()` to generate health status, red flags, AI panel cards, and recommendations.
 11. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
 12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
 13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
@@ -300,7 +300,11 @@ erDiagram
     users ||--o{ chat_sessions : "has many"
     chat_sessions ||--o{ messages : "has many"
     chat_sessions ||--o| deal_states : "has one"
+    chat_sessions ||--o{ vehicles : "has many"
+    chat_sessions ||--o{ deals : "has many"
     chat_sessions ||--o| simulations : "has one"
+    vehicles ||--o{ deals : "linked via"
+    deal_states ||--o| deals : "active deal"
 
     users {
         string id PK
@@ -333,11 +337,28 @@ erDiagram
         datetime created_at
     }
 
-    deal_states {
+    vehicles {
         string id PK
-        string session_id FK "unique"
+        string session_id FK
+        string role "primary | trade_in"
+        int year
+        string make
+        string model
+        string trim
+        string vin
+        int mileage
+        string color
+        string engine
+        datetime created_at
+        datetime updated_at
+    }
+
+    deals {
+        string id PK
+        string session_id FK
+        string vehicle_id FK
+        string dealer_name
         string phase "research...closing"
-        string buyer_context "researching | reviewing_deal | at_dealership"
         float msrp
         float invoice_price
         float listing_price
@@ -349,28 +370,35 @@ erDiagram
         int loan_term_months
         float down_payment
         float trade_in_value
+        string score_price
+        string score_financing
+        string score_trade_in
+        string score_fees
+        string score_overall
+        string health_status "good | fair | concerning | bad"
+        string health_summary
+        string recommendation
+        json red_flags "array of {id, severity, message}"
+        json information_gaps "array of {label, reason, priority}"
         float first_offer
         float pre_fi_price
         float savings_estimate
-        string vehicle_year
-        string vehicle_make
-        string vehicle_model
-        string vehicle_trim
-        string vehicle_vin
-        int vehicle_mileage
-        string vehicle_color
-        string health_status "good | fair | concerning | bad"
-        string health_summary
-        string recommendation "AI next-action recommendation"
-        json red_flags "array of {id, severity, message}"
-        json information_gaps "array of {label, reason, priority}"
-        int score_price
-        int score_financing
-        int score_trade_in
-        int score_fees
-        int score_overall
+        json comparison "AI-generated deal comparison"
+        datetime created_at
+        datetime updated_at
+    }
+
+    deal_states {
+        string id PK
+        string session_id FK "unique"
+        string buyer_context "researching | reviewing_deal | at_dealership"
+        string active_deal_id FK "which deal the panel shows"
+        json red_flags "session-level flags"
+        json information_gaps "session-level gaps"
         json checklist
         datetime timer_started_at
+        json ai_panel_cards "AI-generated card objects"
+        json deal_comparison "AI-generated, spans deals"
         datetime updated_at
     }
 
@@ -432,6 +460,65 @@ erDiagram
 | `created_at` | DateTime | default now(UTC)                          |                                  |
 
 
+#### `vehicles`
+
+
+| Column    | Type     | Constraints                               | Notes                    |
+| --------- | -------- | ----------------------------------------- | ------------------------ |
+| `id`      | String   | PK, default UUID                          |                          |
+| `session_id` | String | FK -> chat_sessions.id, Not Null, Indexed |                          |
+| `role`    | String   | Not Null, default "primary"               | `primary` or `trade_in`  |
+| `year`    | Integer  | Nullable                                  |                          |
+| `make`    | String   | Nullable                                  |                          |
+| `model`   | String   | Nullable                                  |                          |
+| `trim`    | String   | Nullable                                  |                          |
+| `vin`     | String   | Nullable                                  |                          |
+| `mileage` | Integer  | Nullable                                  |                          |
+| `color`   | String   | Nullable                                  |                          |
+| `engine`  | String   | Nullable                                  |                          |
+| `created_at` | DateTime | default now(UTC)                        |                          |
+| `updated_at` | DateTime | default now(UTC), on update             |                          |
+
+
+#### `deals`
+
+
+| Column             | Type     | Constraints                               | Notes                       |
+| ------------------ | -------- | ----------------------------------------- | --------------------------- |
+| `id`               | String   | PK, default UUID                          |                             |
+| `session_id`       | String   | FK -> chat_sessions.id, Not Null, Indexed |                             |
+| `vehicle_id`       | String   | FK -> vehicles.id, Not Null, Indexed      |                             |
+| `dealer_name`      | String   | Nullable                                  | Dealer identification       |
+| `phase`            | String   | Not Null, default "research"              | See deal phases             |
+| `msrp`             | Float    | Nullable                                  |                             |
+| `invoice_price`    | Float    | Nullable                                  |                             |
+| `listing_price`    | Float    | Nullable                                  |                             |
+| `your_target`      | Float    | Nullable                                  |                             |
+| `walk_away_price`  | Float    | Nullable                                  |                             |
+| `current_offer`    | Float    | Nullable                                  |                             |
+| `monthly_payment`  | Float    | Nullable                                  |                             |
+| `apr`              | Float    | Nullable                                  |                             |
+| `loan_term_months` | Integer  | Nullable                                  |                             |
+| `down_payment`     | Float    | Nullable                                  |                             |
+| `trade_in_value`   | Float    | Nullable                                  |                             |
+| `score_price`      | String   | Nullable                                  | `red`, `yellow`, or `green` |
+| `score_financing`  | String   | Nullable                                  | `red`, `yellow`, or `green` |
+| `score_trade_in`   | String   | Nullable                                  | `red`, `yellow`, or `green` |
+| `score_fees`       | String   | Nullable                                  | `red`, `yellow`, or `green` |
+| `score_overall`    | String   | Nullable                                  | `red`, `yellow`, or `green` |
+| `health_status`    | String   | Nullable                                  | `good`, `fair`, `concerning`, `bad` |
+| `health_summary`   | String   | Nullable                                  | 1-2 sentence explanation    |
+| `recommendation`   | String   | Nullable                                  | AI-generated next-action recommendation |
+| `red_flags`        | JSON     | default empty list                        | Array of {id, severity, message} |
+| `information_gaps` | JSON     | default empty list                        | Array of {label, reason, priority} |
+| `first_offer`      | Float    | Nullable                                  | Snapshot of first current_offer |
+| `pre_fi_price`     | Float    | Nullable                                  | Price before F&I stage      |
+| `savings_estimate` | Float    | Nullable                                  | Estimated buyer savings     |
+| `comparison`       | JSON     | Nullable                                  | AI-generated deal comparison data |
+| `created_at`       | DateTime | default now(UTC)                          |                             |
+| `updated_at`       | DateTime | default now(UTC), on update               |                             |
+
+
 #### `deal_states`
 
 
@@ -439,41 +526,14 @@ erDiagram
 | ------------------ | -------- | --------------------------------------- | --------------------------- |
 | `id`               | String   | PK, default UUID                        |                             |
 | `session_id`       | String   | FK -> chat_sessions.id, Unique, Indexed | One deal state per session  |
-| `phase`            | String   | Not Null, default "research"            | See deal phases             |
 | `buyer_context`    | String   | Not Null, default "researching"         | `researching`, `reviewing_deal`, or `at_dealership` |
-| `msrp`             | Float    | Nullable                                |                             |
-| `invoice_price`    | Float    | Nullable                                |                             |
-| `listing_price`      | Float    | Nullable                                |                             |
-| `your_target`      | Float    | Nullable                                |                             |
-| `walk_away_price`  | Float    | Nullable                                |                             |
-| `current_offer`    | Float    | Nullable                                |                             |
-| `monthly_payment`  | Float    | Nullable                                |                             |
-| `apr`              | Float    | Nullable                                |                             |
-| `loan_term_months` | Integer  | Nullable                                |                             |
-| `down_payment`     | Float    | Nullable                                |                             |
-| `trade_in_value`   | Float    | Nullable                                |                             |
-| `vehicle_year`     | Integer  | Nullable                                |                             |
-| `vehicle_make`     | String   | Nullable                                |                             |
-| `vehicle_model`    | String   | Nullable                                |                             |
-| `vehicle_trim`     | String   | Nullable                                |                             |
-| `vehicle_vin`      | String   | Nullable                                |                             |
-| `vehicle_mileage`  | Integer  | Nullable                                |                             |
-| `vehicle_color`    | String   | Nullable                                |                             |
-| `score_price`      | String   | Nullable                                | `red`, `yellow`, or `green` |
-| `score_financing`  | String   | Nullable                                | `red`, `yellow`, or `green` |
-| `score_trade_in`   | String   | Nullable                                | `red`, `yellow`, or `green` |
-| `score_fees`       | String   | Nullable                                | `red`, `yellow`, or `green` |
-| `score_overall`    | String   | Nullable                                | `red`, `yellow`, or `green` |
-| `health_status`    | String   | Nullable                                | `good`, `fair`, `concerning`, `bad` |
-| `health_summary`   | String   | Nullable                                | 1-2 sentence explanation    |
-| `recommendation`   | String   | Nullable                                | AI-generated next-action recommendation |
-| `red_flags`        | JSON     | default empty list                      | Array of {id, severity, message} |
-| `information_gaps` | JSON     | default empty list                      | Array of {label, reason, priority} |
-| `first_offer`      | Float    | Nullable                                | Snapshot of first current_offer |
-| `pre_fi_price`     | Float    | Nullable                                | Price before F&I stage      |
-| `savings_estimate` | Float    | Nullable                                | Estimated buyer savings     |
+| `active_deal_id`   | String   | FK -> deals.id, Nullable                | Which deal the panel is currently showing |
+| `red_flags`        | JSON     | default empty list                      | Session-level flags (e.g., "Not pre-approved") |
+| `information_gaps` | JSON     | default empty list                      | Session-level gaps          |
 | `checklist`        | JSON     | default empty list                      | Array of {label, done}      |
 | `timer_started_at` | DateTime | Nullable                                | Negotiation timer           |
+| `ai_panel_cards`   | JSON     | default empty list                      | AI-generated card objects for InsightsPanel |
+| `deal_comparison`  | JSON     | Nullable                                | AI-generated comparison spanning deals |
 | `updated_at`       | DateTime | default now(UTC), on update             |                             |
 
 
@@ -498,6 +558,10 @@ erDiagram
 - **User -> ChatSession**: One-to-many. A user owns many sessions.
 - **ChatSession -> Message**: One-to-many. A session contains an ordered sequence of messages. **Cascade delete**: messages are deleted when the session is deleted.
 - **ChatSession -> DealState**: One-to-one. Each session has exactly one deal state (created when the session is created). **Cascade delete**: deal state is deleted when the session is deleted.
+- **ChatSession -> Vehicle**: One-to-many. A session can have multiple vehicles (primary + trade-in). **Cascade delete**: vehicles are deleted when the session is deleted.
+- **ChatSession -> Deal**: One-to-many. A session can have multiple deals (e.g., same vehicle at two dealers). **Cascade delete**: deals are deleted when the session is deleted.
+- **Vehicle -> Deal**: One-to-many. Each deal is linked to a specific vehicle.
+- **DealState -> Deal**: Many-to-one optional. `active_deal_id` points to the deal currently shown in the panel.
 - **ChatSession -> Simulation**: One-to-one. A dealer_sim session has one simulation record. **Cascade delete**: simulation is deleted when the session is deleted.
 
 ### ID Strategy
@@ -514,7 +578,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation, deal assessment safety net |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation, two-pass extraction (factual extractor + analyst subagents), deal re-assessment |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
 | Tool use       | 10 tool definitions (primary model only)   |
 | Streaming      | Yes (messages.stream)  |
@@ -522,7 +586,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. Quick action generation, session title generation, and deal assessment safety net (`assess_deal_state`) all use the async Anthropic client with the fast model (Haiku).
+The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. After the primary response, a two-pass extraction runs factual extractor and analyst subagents in parallel via the async Anthropic client with the fast model (Haiku). The factual extractor pulls structured data (vehicle, numbers, scorecard, phase), while the analyst generates health assessment, red flags, AI panel cards, and recommendations via `analyze_deal()`. Quick action generation and session title generation also use the async client with Haiku.
 
 ### No Other External Integrations (v1)
 
@@ -571,7 +635,10 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 | `HealthStatus` | `good`, `fair`, `concerning`, `bad` |
 | `RedFlagSeverity` | `warning`, `critical` |
 | `GapPriority` | `high`, `medium`, `low` |
+| `VehicleRole` | `primary`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
+| `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
+| `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 
 ### Frontend Patterns
 

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Animated, Platform } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
@@ -11,11 +12,15 @@ import { extractTextFromNode } from './markdownUtils'
 
 interface ChatBubbleProps {
   message: Message
+  skipAnimation?: boolean
 }
 
-export function ChatBubble({ message }: ChatBubbleProps) {
+export const ChatBubble = memo(function ChatBubble({
+  message,
+  skipAnimation = false,
+}: ChatBubbleProps) {
   const isUser = message.role === 'user'
-  const { opacity, translateY } = useSlideIn(250)
+  const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
   const theme = useTheme()
   const themeTextColor = (theme.color?.val as string) ?? '#ffffff'
   const themeBodyColor = (theme.colorPress?.val as string) ?? themeTextColor
@@ -141,4 +146,4 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       </XStack>
     </Animated.View>
   )
-}
+})

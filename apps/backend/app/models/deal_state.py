@@ -1,15 +1,17 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Float, ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import BuyerContext, DealPhase
+from app.models.enums import BuyerContext
 
 
 class DealState(Base):
+    """Session-level deal state — buyer context and fields shared across all deals."""
+
     __tablename__ = "deal_states"
 
     id: Mapped[str] = mapped_column(
@@ -19,64 +21,33 @@ class DealState(Base):
         String, ForeignKey("chat_sessions.id"), nullable=False, unique=True, index=True
     )
 
-    # Phase and context
-    phase: Mapped[str] = mapped_column(
-        String, nullable=False, default=DealPhase.RESEARCH
-    )
+    # Buyer context (session-level)
     buyer_context: Mapped[str] = mapped_column(
         String, nullable=False, default=BuyerContext.RESEARCHING
     )
 
-    # Numbers
-    msrp: Mapped[float | None] = mapped_column(Float, nullable=True)
-    invoice_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    listing_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    your_target: Mapped[float | None] = mapped_column(Float, nullable=True)
-    walk_away_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    current_offer: Mapped[float | None] = mapped_column(Float, nullable=True)
-    monthly_payment: Mapped[float | None] = mapped_column(Float, nullable=True)
-    apr: Mapped[float | None] = mapped_column(Float, nullable=True)
-    loan_term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    down_payment: Mapped[float | None] = mapped_column(Float, nullable=True)
-    trade_in_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Active deal — which deal the panel is showing
+    active_deal_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("deals.id", use_alter=True), nullable=True
+    )
 
-    # Vehicle
-    vehicle_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    vehicle_make: Mapped[str | None] = mapped_column(String, nullable=True)
-    vehicle_model: Mapped[str | None] = mapped_column(String, nullable=True)
-    vehicle_trim: Mapped[str | None] = mapped_column(String, nullable=True)
-    vehicle_vin: Mapped[str | None] = mapped_column(String, nullable=True)
-    vehicle_mileage: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    vehicle_color: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    # Scorecard
-    score_price: Mapped[str | None] = mapped_column(String, nullable=True)
-    score_financing: Mapped[str | None] = mapped_column(String, nullable=True)
-    score_trade_in: Mapped[str | None] = mapped_column(String, nullable=True)
-    score_fees: Mapped[str | None] = mapped_column(String, nullable=True)
-    score_overall: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    # Deal health (Tier 2 — AI-assessed)
-    health_status: Mapped[str | None] = mapped_column(String, nullable=True)
-    health_summary: Mapped[str | None] = mapped_column(String, nullable=True)
-    recommendation: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    # Red flags (Tier 2 — AI-assessed)
+    # Red flags (session/buyer-level — e.g., "You haven't been pre-approved")
     red_flags: Mapped[list] = mapped_column(JSON, default=list)
 
-    # Information gaps (Tier 2 — AI-assessed)
+    # Information gaps (session-level — e.g., "Have you been pre-approved?")
     information_gaps: Mapped[list] = mapped_column(JSON, default=list)
 
-    # Offer history — snapshots for savings and F&I tracking
-    first_offer: Mapped[float | None] = mapped_column(Float, nullable=True)
-    pre_fi_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    savings_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    # Checklist
+    # Checklist (session-level)
     checklist: Mapped[list] = mapped_column(JSON, default=list)
 
-    # Timer
+    # Timer (session-level)
     timer_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # AI-driven panel state (persisted cards)
+    ai_panel_cards: Mapped[list] = mapped_column(JSON, default=list)
+
+    # Deal comparison (AI-generated, session-level since it spans deals)
+    deal_comparison: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc),

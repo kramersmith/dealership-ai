@@ -6,6 +6,8 @@ import anthropic
 
 from app.core.config import settings
 from app.models.enums import (
+    AiCardPriority,
+    AiCardType,
     BuyerContext,
     DealPhase,
     GapPriority,
@@ -16,326 +18,25 @@ from app.models.enums import (
 
 logger = logging.getLogger(__name__)
 
-DEAL_TOOLS = [
-    {
-        "name": "update_deal_numbers",
-        "description": (
-            "Update the deal numbers dashboard when the user mentions prices, payments, rates, "
-            "or financial terms. Call this whenever any financial figure is discussed or changes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "msrp": {
-                    "type": "number",
-                    "description": "Manufacturer's suggested retail price",
-                },
-                "invoice_price": {
-                    "type": "number",
-                    "description": "Dealer invoice price",
-                },
-                "listing_price": {
-                    "type": "number",
-                    "description": "The price the vehicle is listed or advertised for, before negotiation or fees",
-                },
-                "your_target": {
-                    "type": "number",
-                    "description": "The buyer's target price",
-                },
-                "walk_away_price": {
-                    "type": "number",
-                    "description": "Price above which the buyer should walk away",
-                },
-                "current_offer": {
-                    "type": "number",
-                    "description": "The current price on the table (out-the-door, negotiated, or latest offer). Set this whenever the buyer mentions a specific price being offered.",
-                },
-                "monthly_payment": {
-                    "type": "number",
-                    "description": "Monthly payment amount",
-                },
-                "apr": {"type": "number", "description": "Annual percentage rate"},
-                "loan_term_months": {
-                    "type": "integer",
-                    "description": "Loan term in months",
-                },
-                "down_payment": {
-                    "type": "number",
-                    "description": "Down payment amount",
-                },
-                "trade_in_value": {
-                    "type": "number",
-                    "description": "Trade-in vehicle value",
-                },
-            },
-        },
-    },
-    {
-        "name": "update_deal_phase",
-        "description": "Update the current phase of the deal when the conversation indicates progression.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "phase": {
-                    "type": "string",
-                    "enum": [p.value for p in DealPhase],
-                },
-            },
-            "required": ["phase"],
-        },
-    },
-    {
-        "name": "update_scorecard",
-        "description": "Update the red/yellow/green scorecard ratings based on how the deal is going for the buyer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "score_price": {
-                    "type": "string",
-                    "enum": [s.value for s in ScoreStatus],
-                },
-                "score_financing": {
-                    "type": "string",
-                    "enum": [s.value for s in ScoreStatus],
-                },
-                "score_trade_in": {
-                    "type": "string",
-                    "enum": [s.value for s in ScoreStatus],
-                },
-                "score_fees": {
-                    "type": "string",
-                    "enum": [s.value for s in ScoreStatus],
-                },
-                "score_overall": {
-                    "type": "string",
-                    "enum": [s.value for s in ScoreStatus],
-                },
-            },
-        },
-    },
-    {
-        "name": "set_vehicle",
-        "description": "Set or update the vehicle being discussed.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "year": {"type": "integer"},
-                "make": {"type": "string"},
-                "model": {"type": "string"},
-                "trim": {"type": "string"},
-                "vin": {"type": "string"},
-                "mileage": {"type": "integer"},
-                "color": {"type": "string"},
-            },
-            "required": ["make", "model"],
-        },
-    },
-    {
-        "name": "update_checklist",
-        "description": "Update the buyer's checklist of things to verify/do at the dealership.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "label": {"type": "string"},
-                            "done": {"type": "boolean"},
-                        },
-                        "required": ["label", "done"],
-                    },
-                },
-            },
-            "required": ["items"],
-        },
-    },
-    {
-        "name": "update_quick_actions",
-        "description": (
-            "Suggest 2-3 quick action buttons the buyer might want to tap next. "
-            "Call this when the conversation context shifts or the previous suggestions "
-            "are no longer relevant — not necessarily after every response. "
-            "Order by relevance — most useful action first."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "label": {
-                                "type": "string",
-                                "description": "Button text, 2-5 words. Be specific and actionable, not generic.",
-                                "maxLength": 30,
-                            },
-                            "prompt": {
-                                "type": "string",
-                                "description": "The full prompt sent when tapped",
-                                "maxLength": 200,
-                            },
-                        },
-                        "required": ["label", "prompt"],
-                    },
-                    "minItems": 2,
-                    "maxItems": 3,
-                },
-            },
-            "required": ["actions"],
-        },
-    },
-    {
-        "name": "update_buyer_context",
-        "description": (
-            "Update the buyer's situational context when it changes. For example, if the buyer "
-            "mentions they just arrived at the dealership, or that they received a quote to review."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "buyer_context": {
-                    "type": "string",
-                    "enum": [c.value for c in BuyerContext],
-                    "description": (
-                        "researching: buyer is researching from home. "
-                        "reviewing_deal: buyer has a quote or offer to analyze. "
-                        "at_dealership: buyer is physically at the dealership right now."
-                    ),
-                },
-            },
-            "required": ["buyer_context"],
-        },
-    },
-    {
-        "name": "update_deal_health",
-        "description": (
-            "Update the overall deal health assessment. Call after any significant "
-            "change to deal numbers, offers, or terms. Status must be grounded in "
-            "the user's own data — never reference market prices you cannot verify."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": [s.value for s in HealthStatus],
-                    "description": "Overall deal health signal",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": (
-                        "1-2 sentence explanation grounded in the user's data. "
-                        "Example: 'Strong deal — offer is $1,200 below listing price' "
-                        "or 'Concerning — APR of 7.9% on a 72-month term adds $4,200 "
-                        "in interest'"
-                    ),
-                },
-                "recommendation": {
-                    "type": "string",
-                    "description": (
-                        "One concise action the buyer should take next, grounded in "
-                        "their specific deal data. Examples: 'Counter at $31,500 — "
-                        "the midpoint between their offer and your target', "
-                        "'Ask them to break down the $895 doc fee', "
-                        "'Get a pre-approval from your bank before accepting this APR'. "
-                        "Must be specific and actionable, not generic advice."
-                    ),
-                },
-            },
-            "required": ["status", "summary", "recommendation"],
-        },
-    },
-    {
-        "name": "update_red_flags",
-        "description": (
-            "Surface concerns about the deal. Each flag must reference specific data "
-            "from the conversation — never flag based on general market knowledge you "
-            "cannot verify. Replaces the full list each time (pass empty array to clear). "
-            "Common flags: monthly payment quoted without term length, fees that appeared "
-            "unexpectedly, correlated trade-in/price changes, pressure tactics, numbers "
-            "that changed from what was verbally agreed."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "flags": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "string",
-                                "description": (
-                                    "Stable identifier, e.g. 'apr_high', 'hidden_doc_fee'"
-                                ),
-                            },
-                            "severity": {
-                                "type": "string",
-                                "enum": [s.value for s in RedFlagSeverity],
-                                "description": (
-                                    "warning = be aware; critical = stop and address now"
-                                ),
-                            },
-                            "message": {
-                                "type": "string",
-                                "description": "User-facing explanation, 1-2 sentences",
-                            },
-                        },
-                        "required": ["id", "severity", "message"],
-                    },
-                    "description": "Full list of current flags (empty array to clear all)",
-                },
-            },
-            "required": ["flags"],
-        },
-    },
-    {
-        "name": "update_information_gaps",
-        "description": (
-            "Identify missing information that would improve deal assessment quality. "
-            "Always give your best advice with available data FIRST — then surface gaps "
-            "as ways to sharpen the assessment. Never gate-keep help behind 'I need more "
-            "information.' Replaces the full list each time. During research, always "
-            "include pre-approval status as a high-priority gap with why it matters."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "gaps": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "label": {
-                                "type": "string",
-                                "description": (
-                                    "What's missing, e.g. 'Credit score range'"
-                                ),
-                            },
-                            "reason": {
-                                "type": "string",
-                                "description": (
-                                    "Brief explanation of WHY this information would "
-                                    "improve the assessment. E.g. 'Helps assess whether "
-                                    "the APR they offer is competitive for your credit tier.'"
-                                ),
-                            },
-                            "priority": {
-                                "type": "string",
-                                "enum": [p.value for p in GapPriority],
-                            },
-                        },
-                        "required": ["label", "reason", "priority"],
-                    },
-                },
-            },
-            "required": ["gaps"],
-        },
-    },
-]
+# ─── Subagent configuration constants ───
+
+EXTRACTOR_MAX_TOKENS = 1024
+ANALYST_MAX_TOKENS = 1536
+PANEL_GENERATOR_MAX_TOKENS = 2048
+
+# Context window limits for subagent prompts
+CONTEXT_RECENT_MESSAGES = 4
+CONTEXT_MESSAGE_TRUNCATION = 400
+CONTEXT_ASSISTANT_TRUNCATION = 800
+PANEL_RECENT_MESSAGES = 2
+PANEL_MESSAGE_TRUNCATION = 300
+PANEL_ASSISTANT_TRUNCATION = 500
+LINKED_CONTEXT_MAX_MESSAGES = 10
+LINKED_CONTEXT_MESSAGE_TRUNCATION = 200
+
+# Valid card types and priorities for AI panel validation
+VALID_PANEL_CARD_TYPES = {t.value for t in AiCardType}
+VALID_PANEL_CARD_PRIORITIES = {p.value for p in AiCardPriority}
 
 CONTEXT_PREAMBLES = {
     BuyerContext.RESEARCHING: (
@@ -367,8 +68,17 @@ Your job:
 - Tell them when to walk away
 - Analyze deal sheets, CARFAX reports, and financing terms
 
+MULTI-VEHICLE AND MULTI-DEAL BEHAVIOR:
+- Sessions can have multiple vehicles and multiple deals.
+- A "deal" is a vehicle + a specific offer/negotiation (e.g., same F-150 at Dealer A vs Dealer B).
+- Reference vehicles by name when comparing ("The Tacoma has..." not "the vehicle").
+- NEVER silently replace or remove a vehicle. Ask the user first.
+- When a user mentions a vehicle casually ("my neighbor got a Tesla"), do NOT treat it as a vehicle the buyer is considering.
+- Do NOT reference vehicles from your own suggestions — only from user-provided information.
+- Vehicle IDs and deal IDs are provided in the deal state context — use them when referencing specific vehicles or deals.
+
 DEALER TACTICS TO RECOGNIZE:
-- "Let me talk to my manager" — standard negotiation step. Flag as warning and coach buyer to prepare their next counter while waiting.
+- "Let me talk to my manager" — standard negotiation step. Coach buyer to prepare their next counter while waiting.
 - Monthly payment focus — if the dealer leads with monthly instead of total price, flag it. They may be stretching the term to hide the real cost.
 - Trade-in inflation — if trade-in value and vehicle price both increase, flag the net change. "They offered $2,000 more for your trade-in but raised the price by $1,500 — net improvement is only $500."
 - Time pressure — if the buyer has been there 2+ hours or mentions feeling rushed, flag it as a tactic.
@@ -376,8 +86,8 @@ DEALER TACTICS TO RECOGNIZE:
 
 PHASE-SPECIFIC BEHAVIOR:
 - When phase is financing: aggressively flag F&I add-ons, track how they change the total.
-- When phase is closing: call update_checklist with post-purchase items (title arrival in 30 days, first statement review, trade-in payoff confirmation).
-- During research: surface pre-approval as a high-priority information gap. Explain why: "Getting pre-approved forces the dealer to compete on price alone and gives you a rate floor."
+- When phase is closing: mention post-purchase items (title arrival in 30 days, first statement review, trade-in payoff confirmation).
+- During research: surface pre-approval as important. Explain why: "Getting pre-approved forces the dealer to compete on price alone and gives you a rate floor."
 
 RED FLAGS vs. INFORMATION GAPS (critical distinction):
 - RED FLAGS = something is WRONG with the deal. A problem the buyer should act on.
@@ -386,28 +96,7 @@ RED FLAGS vs. INFORMATION GAPS (critical distinction):
   NEVER flag missing information as a red flag. "No vehicle selected" is NOT a red flag.
 - INFORMATION GAPS = data that would IMPROVE the assessment. Things the buyer hasn't shared yet.
   Examples: credit score range, pre-approval status, year/mileage of the vehicle, budget.
-  These are helpful to have, not problems to fix. Always include a suggested prompt the buyer
-  can tap to provide the information.
-
-TOOL USAGE — call proactively, multiple tools per response:
-- set_vehicle: when user mentions year/make/model
-- update_deal_numbers: when any financial figure is discussed
-- update_deal_health: after ANY significant number/offer/term change — this is the buyer's #1 signal
-- update_red_flags: ONLY for actual deal problems — not missing data (use update_information_gaps for that)
-- update_information_gaps: what's missing that would sharpen the assessment. Include a tappable prompt for each gap.
-- update_deal_phase / update_buyer_context: when situation changes
-- update_scorecard: after assessing deal quality dimensions
-- update_checklist: preparation/verification items
-- update_quick_actions: on FIRST response and when context shifts. Labels: 2-5 words, specific, actionable. Order by relevance.
-
-TOOL PRIORITY (most important first):
-1. update_red_flags — surface actual deal problems immediately (NOT missing data)
-2. update_deal_health — update after any significant change
-3. update_information_gaps — identify missing data that would improve advice
-4. update_deal_numbers — capture every financial figure
-5. update_deal_phase / update_buyer_context — when situation changes
-6. update_quick_actions — when context shifts (not every response)
-7. update_scorecard / update_checklist — assessment details and action items
+  These are helpful to have, not problems to fix.
 
 RESPONSE FORMAT (critical — buyers scan, they don't read essays):
 - LEAD WITH THE CONCLUSION. First sentence = your assessment or answer. Never bury the point.
@@ -416,14 +105,524 @@ RESPONSE FORMAT (critical — buyers scan, they don't read essays):
 - Use bullet points for lists, not paragraphs.
 - Put actionable scripts in blockquotes (> ).
 - End with ONE clear next step, not multiple options.
-- Text first, then tool calls.
 
 {deal_state_context}
 {linked_context}"""
 
-FOLLOWUP_SYSTEM_PROMPT = """You are a car buying advisor. The user sent a message and you updated their dashboard with tool calls, but you did not include any text response. Now respond directly to the user — lead with your assessment or answer, not with what you are about to do. Never say "Let me analyze" or "I'll look at" — just give the analysis. Be direct and concise. Do not call any tools."""
 
-QUICK_ACTIONS_PROMPT = """Based on the conversation so far, suggest 2-3 quick action buttons the buyer might want to tap next. Return a JSON array of objects with "label" (2-5 word button text, specific and actionable) and "prompt" (the full message sent when tapped). Order by relevance. Return ONLY the JSON array, no other text."""
+# ─── Tool schemas for structured extraction ───
+
+FACTUAL_EXTRACTOR_TOOL = {
+    "name": "extract_deal_facts",
+    "description": "Extract factual data from the car buying conversation. Only include fields that changed or were newly mentioned.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "vehicle": {
+                "type": "object",
+                "description": "New or updated vehicle info. Include vehicle_id to update existing, omit to create new.",
+                "properties": {
+                    "vehicle_id": {
+                        "type": "string",
+                        "description": "Existing vehicle ID to update. Omit to add new.",
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": ["primary", "trade_in"],
+                        "description": "Required for new vehicles.",
+                    },
+                    "year": {"type": "integer"},
+                    "make": {"type": "string"},
+                    "model": {"type": "string"},
+                    "trim": {"type": "string"},
+                    "vin": {"type": "string"},
+                    "mileage": {"type": "integer"},
+                    "color": {"type": "string"},
+                    "engine": {"type": "string"},
+                },
+            },
+            "deal": {
+                "type": "object",
+                "description": "Only include when same vehicle discussed at a DIFFERENT dealer.",
+                "properties": {
+                    "vehicle_id": {"type": "string"},
+                    "dealer_name": {"type": "string"},
+                },
+            },
+            "numbers": {
+                "type": "object",
+                "description": "Financial figures. Only include fields that are new or changed.",
+                "properties": {
+                    "deal_id": {
+                        "type": "string",
+                        "description": "Defaults to active deal if omitted.",
+                    },
+                    "msrp": {"type": "number"},
+                    "invoice_price": {"type": "number"},
+                    "listing_price": {
+                        "type": "number",
+                        "description": "Advertised price BEFORE taxes/fees. NOT the financed total.",
+                    },
+                    "your_target": {
+                        "type": "number",
+                        "description": "Buyer's ideal purchase price.",
+                    },
+                    "walk_away_price": {
+                        "type": "number",
+                        "description": "Max the buyer will pay.",
+                    },
+                    "current_offer": {
+                        "type": "number",
+                        "description": "Current negotiated price BEFORE taxes/fees. NOT the financed total.",
+                    },
+                    "monthly_payment": {"type": "number"},
+                    "apr": {"type": "number"},
+                    "loan_term_months": {"type": "integer"},
+                    "down_payment": {"type": "number"},
+                    "trade_in_value": {"type": "number"},
+                },
+            },
+            "phase": {
+                "type": "string",
+                "enum": [p.value for p in DealPhase],
+                "description": "Include when deal phase has progressed.",
+            },
+            "buyer_context": {
+                "type": "string",
+                "enum": [c.value for c in BuyerContext],
+                "description": "Include when the buyer's situation changes.",
+            },
+            "checklist": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "done": {"type": "boolean"},
+                            },
+                            "required": ["label", "done"],
+                        },
+                    },
+                },
+            },
+            "quick_actions": {
+                "type": "array",
+                "description": "2-3 contextually relevant quick action suggestions.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {
+                            "type": "string",
+                            "description": "2-5 word button text.",
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Full message sent when tapped.",
+                        },
+                    },
+                    "required": ["label", "prompt"],
+                },
+            },
+            "switch_active_deal_id": {
+                "type": "string",
+                "description": "Only when user wants to discuss a different deal.",
+            },
+            "remove_vehicle_id": {
+                "type": "string",
+                "description": "Only when user explicitly asks to remove a vehicle.",
+            },
+        },
+    },
+}
+
+ANALYST_TOOL = {
+    "name": "analyze_deal",
+    "description": "Assess the deal quality, identify risks, and surface information gaps.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "health": {
+                "type": "object",
+                "description": "Overall deal health assessment.",
+                "properties": {
+                    "deal_id": {
+                        "type": "string",
+                        "description": "Defaults to active deal if omitted.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [h.value for h in HealthStatus],
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "1-2 sentence assessment grounded in the buyer's actual data.",
+                    },
+                    "recommendation": {
+                        "type": "string",
+                        "description": "One specific, actionable next step.",
+                    },
+                },
+                "required": ["status", "summary", "recommendation"],
+            },
+            "scorecard": {
+                "type": "object",
+                "description": "Deal quality scores. Only include scores that changed.",
+                "properties": {
+                    "deal_id": {"type": "string"},
+                    "score_price": {
+                        "type": "string",
+                        "enum": [s.value for s in ScoreStatus],
+                    },
+                    "score_financing": {
+                        "type": "string",
+                        "enum": [s.value for s in ScoreStatus],
+                    },
+                    "score_trade_in": {
+                        "type": "string",
+                        "enum": [s.value for s in ScoreStatus],
+                    },
+                    "score_fees": {
+                        "type": "string",
+                        "enum": [s.value for s in ScoreStatus],
+                    },
+                    "score_overall": {
+                        "type": "string",
+                        "enum": [s.value for s in ScoreStatus],
+                    },
+                },
+            },
+            "deal_red_flags": {
+                "type": "object",
+                "description": "Deal-specific problems. Replaces the full list.",
+                "properties": {
+                    "deal_id": {"type": "string"},
+                    "flags": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "severity": {
+                                    "type": "string",
+                                    "enum": [s.value for s in RedFlagSeverity],
+                                },
+                                "message": {"type": "string"},
+                            },
+                            "required": ["id", "severity", "message"],
+                        },
+                    },
+                },
+            },
+            "session_red_flags": {
+                "type": "object",
+                "description": "Session/buyer-level concerns. Replaces the full list.",
+                "properties": {
+                    "flags": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "severity": {
+                                    "type": "string",
+                                    "enum": [s.value for s in RedFlagSeverity],
+                                },
+                                "message": {"type": "string"},
+                            },
+                            "required": ["id", "severity", "message"],
+                        },
+                    },
+                },
+            },
+            "deal_information_gaps": {
+                "type": "object",
+                "description": "Deal-specific missing info. Replaces the full list.",
+                "properties": {
+                    "deal_id": {"type": "string"},
+                    "gaps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "reason": {"type": "string"},
+                                "priority": {
+                                    "type": "string",
+                                    "enum": [p.value for p in GapPriority],
+                                },
+                            },
+                            "required": ["label", "reason", "priority"],
+                        },
+                    },
+                },
+            },
+            "session_information_gaps": {
+                "type": "object",
+                "description": "Session-level missing info. Replaces the full list.",
+                "properties": {
+                    "gaps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "reason": {"type": "string"},
+                                "priority": {
+                                    "type": "string",
+                                    "enum": [p.value for p in GapPriority],
+                                },
+                            },
+                            "required": ["label", "reason", "priority"],
+                        },
+                    },
+                },
+            },
+            "comparison": {
+                "type": "object",
+                "description": "Include when 2+ deals exist and comparison has materially changed.",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "recommendation": {"type": "string"},
+                    "best_deal_id": {"type": "string"},
+                    "highlights": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "values": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "deal_id": {"type": "string"},
+                                            "value": {"type": "string"},
+                                            "is_winner": {"type": "boolean"},
+                                        },
+                                        "required": ["deal_id", "value", "is_winner"],
+                                    },
+                                },
+                                "note": {"type": "string"},
+                            },
+                            "required": ["label", "values"],
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ─── Prompts for focused subagents ───
+
+FACTUAL_EXTRACTOR_PROMPT = """You are a factual data extractor for a car buying advisor app. Extract ONLY facts that were newly mentioned or changed in the latest exchange. Do not infer, judge, or assess — just parse what was said.
+
+CRITICAL rules for financial numbers:
+- listing_price = the advertised/sticker price BEFORE taxes, fees, or financing
+- current_offer = the dealer's current ask or negotiated price BEFORE taxes and fees
+- NEVER confuse the financed total (price + taxes + fees) with listing_price or current_offer
+- If buyer says "$35,900 with taxes included" and listing was $34,000, then listing_price=34000, NOT 35900
+
+EXAMPLES of tricky pricing:
+- "Listed at $34,000, out the door is $35,900 with taxes" → listing_price: 34000 (NOT 35900)
+- "They knocked $500 off for the windshield, so $33,500" → current_offer: 33500
+- "I offered $31,500" → your_target: 31500
+- "$750/month at 8% for 72 months" → monthly_payment: 750, apr: 8, loan_term_months: 72
+
+Vehicle rules:
+- Only create vehicles from user-provided information, not assistant suggestions
+- Do NOT create vehicles from casual mentions ("my neighbor got a Tesla")
+
+Call the extract_deal_facts tool with ONLY the fields that changed. Omit unchanged fields entirely."""
+
+ANALYST_PROMPT = """You are a deal quality analyst for a car buying advisor app. Assess the deal based on the current state and latest conversation exchange.
+
+Your job is JUDGMENT — not data parsing. Evaluate:
+1. Deal health: Is this a good, fair, concerning, or bad deal? Why?
+2. Red flags: Are there genuine problems? (high APR, hidden fees, pressure tactics, numbers that changed)
+3. Information gaps: What's missing that would improve the assessment?
+4. Scorecard: How does each dimension rate?
+
+CRITICAL distinctions:
+- RED FLAGS = something is WRONG. A problem the buyer should act on. Missing info is NEVER a red flag.
+- INFORMATION GAPS = data that would improve the assessment. Not problems, just unknowns.
+- Health summary must reference the buyer's actual data, never market prices.
+- Recommendation must be specific ("Counter at $31,500") not generic ("Try negotiating").
+
+Red flag rules:
+- Replaces the full list — include ALL current flags, not just new ones
+- Missing information is NEVER a red flag
+- Include deal_red_flags for deal-specific issues, session_red_flags for buyer-level concerns
+
+Call the analyze_deal tool with your assessment. Only include fields that have meaningful updates."""
+
+
+def _build_conversation_context(
+    messages: list[dict],
+    assistant_text: str,
+    recent_count: int = CONTEXT_RECENT_MESSAGES,
+    msg_truncation: int = CONTEXT_MESSAGE_TRUNCATION,
+    assistant_truncation: int = CONTEXT_ASSISTANT_TRUNCATION,
+) -> str:
+    """Build conversation context string from recent messages."""
+    recent = messages[-recent_count:]
+    context_parts = []
+    for msg in recent:
+        content = msg["content"]
+        if isinstance(content, list):
+            text_parts = [
+                part["text"]
+                for part in content
+                if isinstance(part, dict) and part.get("text")
+            ]
+            content = " ".join(text_parts) if text_parts else "(image)"
+        context_parts.append(f"[{msg['role']}]: {content[:msg_truncation]}")
+    context_parts.append(f"[assistant]: {assistant_text[:assistant_truncation]}")
+    return "\n".join(context_parts)
+
+
+async def extract_deal_facts(
+    deal_state_dict: dict,
+    messages: list[dict],
+    assistant_text: str,
+) -> dict:
+    """Extract factual data (vehicle, numbers, phase, etc.) using tool_use.
+
+    Focused on parsing what was said — no judgment calls.
+    Returns the tool input dict, or empty dict on failure.
+    """
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    state_json = json.dumps(deal_state_dict, indent=2, default=str)
+    conversation_context = _build_conversation_context(messages, assistant_text)
+
+    try:
+        response = await client.messages.create(  # type: ignore[call-overload]
+            model=settings.CLAUDE_FAST_MODEL,
+            max_tokens=EXTRACTOR_MAX_TOKENS,
+            tools=[FACTUAL_EXTRACTOR_TOOL],
+            tool_choice={"type": "auto"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
+                        f"Conversation:\n{conversation_context}\n\n"
+                        f"{FACTUAL_EXTRACTOR_PROMPT}"
+                    ),
+                }
+            ],
+        )
+
+        # Extract tool call result
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "extract_deal_facts":
+                result = block.input
+                logger.debug(
+                    "Factual extractor returned keys: %s",
+                    list(result.keys()) if result else "(empty)",
+                )
+                return result if isinstance(result, dict) else {}
+
+        logger.debug("Factual extractor did not call tool — no changes detected")
+        return {}
+
+    except Exception:
+        logger.exception("Factual extraction failed")
+        return {}
+
+
+async def analyze_deal(
+    deal_state_dict: dict,
+    messages: list[dict],
+    assistant_text: str,
+) -> dict:
+    """Analyze deal quality (health, red flags, info gaps, scorecard) using tool_use.
+
+    Focused on judgment and assessment — no data parsing.
+    Returns the tool input dict, or empty dict on failure.
+    """
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    state_json = json.dumps(deal_state_dict, indent=2, default=str)
+    conversation_context = _build_conversation_context(messages, assistant_text)
+
+    try:
+        response = await client.messages.create(  # type: ignore[call-overload]
+            model=settings.CLAUDE_FAST_MODEL,
+            max_tokens=ANALYST_MAX_TOKENS,
+            tools=[ANALYST_TOOL],
+            tool_choice={"type": "auto"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
+                        f"Conversation:\n{conversation_context}\n\n"
+                        f"{ANALYST_PROMPT}"
+                    ),
+                }
+            ],
+        )
+
+        # Extract tool call result
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "analyze_deal":
+                result = block.input
+                logger.debug(
+                    "Analyst returned keys: %s",
+                    list(result.keys()) if result else "(empty)",
+                )
+                return result if isinstance(result, dict) else {}
+
+        logger.debug("Analyst did not call tool — no assessment changes")
+        return {}
+
+    except Exception:
+        logger.exception("Deal analysis failed")
+        return {}
+
+
+def merge_extraction_results(facts: dict, analysis: dict) -> dict:
+    """Merge factual extraction and analyst results into a single extraction dict.
+
+    This produces the same format that _apply_extraction in chat.py expects.
+    """
+    merged = {}
+
+    # From factual extractor
+    for key in (
+        "vehicle",
+        "deal",
+        "numbers",
+        "phase",
+        "buyer_context",
+        "checklist",
+        "quick_actions",
+        "switch_active_deal_id",
+        "remove_vehicle_id",
+    ):
+        if key in facts:
+            merged[key] = facts[key]
+
+    # From analyst
+    for key in (
+        "health",
+        "scorecard",
+        "deal_red_flags",
+        "session_red_flags",
+        "deal_information_gaps",
+        "session_information_gaps",
+    ):
+        if key in analysis:
+            merged[key] = analysis[key]
+
+    # Map analyst "comparison" to "deal_comparison" (what _apply_extraction expects)
+    if "comparison" in analysis:
+        merged["deal_comparison"] = analysis["comparison"]
+
+    return merged
 
 
 def build_system_prompt(
@@ -439,14 +638,33 @@ def build_system_prompt(
 
     deal_context = ""
     if deal_state_dict:
-        # Lead with health/flags/gaps summary for attention priority
-        health = deal_state_dict.get("health", {})
+        # Find the active deal to extract health/flags summary
+        active_deal_id = deal_state_dict.get("active_deal_id")
+        deals = deal_state_dict.get("deals", [])
+        active_deal = None
+        if active_deal_id and deals:
+            for deal in deals:
+                if deal.get("id") == active_deal_id:
+                    active_deal = deal
+                    break
+
+        # Extract health/flags from the active deal
+        health = active_deal.get("health", {}) if active_deal else {}
         health_status = health.get("status") if health else None
         health_summary = health.get("summary") if health else None
-        red_flags = deal_state_dict.get("red_flags", [])
-        info_gaps = deal_state_dict.get("information_gaps", [])
+        deal_red_flags = active_deal.get("red_flags", []) if active_deal else []
+        deal_info_gaps = active_deal.get("information_gaps", []) if active_deal else []
+
+        # Session-level flags and gaps
+        session_red_flags = deal_state_dict.get("session_red_flags", [])
+        session_info_gaps = deal_state_dict.get("session_information_gaps", [])
+
+        # Combine for summary counts
+        all_red_flags = deal_red_flags + session_red_flags
+        all_info_gaps = deal_info_gaps + session_info_gaps
+
         critical_count = sum(
-            1 for f in red_flags if f.get("severity") == RedFlagSeverity.CRITICAL
+            1 for f in all_red_flags if f.get("severity") == RedFlagSeverity.CRITICAL
         )
 
         summary_lines = []
@@ -455,13 +673,13 @@ def build_system_prompt(
                 f"Deal health: {health_status}"
                 + (f" — {health_summary}" if health_summary else "")
             )
-        if red_flags:
+        if all_red_flags:
             summary_lines.append(
-                f"Active red flags: {len(red_flags)}"
+                f"Active red flags: {len(all_red_flags)}"
                 + (f" ({critical_count} critical)" if critical_count else "")
             )
-        if info_gaps:
-            summary_lines.append(f"Information gaps: {len(info_gaps)} remaining")
+        if all_info_gaps:
+            summary_lines.append(f"Information gaps: {len(all_info_gaps)} remaining")
 
         state_summary = "\n".join(summary_lines)
         if state_summary:
@@ -476,8 +694,18 @@ def build_system_prompt(
     linked_context = ""
     if linked_messages:
         summaries = []
-        for msg in linked_messages[-10:]:
-            summaries.append(f"[{msg['role']}]: {msg['content'][:200]}")
+        for msg in linked_messages[-LINKED_CONTEXT_MAX_MESSAGES:]:
+            content = msg["content"]
+            if isinstance(content, list):
+                text_parts = [
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict) and part.get("text")
+                ]
+                content = " ".join(text_parts) if text_parts else "(image)"
+            summaries.append(
+                f"[{msg['role']}]: {content[:LINKED_CONTEXT_MESSAGE_TRUNCATION]}"
+            )
         linked_context = "\nPrevious conversation context:\n" + "\n".join(summaries)
 
     return SYSTEM_PROMPT.format(
@@ -524,94 +752,18 @@ async def stream_chat(
     """Stream Claude response as SSE events.
 
     Yields SSE-formatted strings:
-    - event: text\ndata: {"chunk": "..."}\n\n
-    - event: tool_result\ndata: {"tool": "...", "data": {...}}\n\n
-    - event: done\ndata: {}\n\n
+    - event: text\\ndata: {"chunk": "..."}\\n\\n
+    - event: done\\ndata: {"text": "..."}\\n\\n
     """
     client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     full_text = ""
-    tool_calls = []
 
     async with client.messages.stream(
         model=settings.CLAUDE_MODEL,
         max_tokens=settings.CLAUDE_MAX_TOKENS,
         system=system_prompt,
-        tools=DEAL_TOOLS,  # type: ignore[arg-type]
         messages=messages,  # type: ignore[arg-type]
-    ) as stream:
-        current_tool_input = ""
-        current_tool_name = ""
-
-        async for event in stream:
-            if event.type == "content_block_start":
-                if hasattr(event.content_block, "type"):
-                    if event.content_block.type == "tool_use":
-                        current_tool_name = event.content_block.name
-                        current_tool_input = ""
-
-            elif event.type == "content_block_delta":
-                if hasattr(event.delta, "type"):
-                    if event.delta.type == "text_delta":
-                        chunk = event.delta.text
-                        full_text += chunk
-                        yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
-                    elif event.delta.type == "input_json_delta":
-                        current_tool_input += event.delta.partial_json
-
-            elif event.type == "content_block_stop":
-                if current_tool_name and current_tool_input:
-                    try:
-                        tool_data = json.loads(current_tool_input)
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            "Malformed tool input JSON for tool %s, using empty dict",
-                            current_tool_name,
-                        )
-                        tool_data = {}
-
-                    tool_call = {"name": current_tool_name, "args": tool_data}
-                    tool_calls.append(tool_call)
-                    yield f"event: tool_result\ndata: {json.dumps({'tool': current_tool_name, 'data': tool_data})}\n\n"
-
-                    current_tool_name = ""
-                    current_tool_input = ""
-
-    yield f"event: done\ndata: {json.dumps({'text': full_text, 'tool_calls': tool_calls})}\n\n"
-
-
-async def stream_followup_text(
-    messages: list[dict],
-    tool_calls_summary: list[dict],
-) -> AsyncGenerator[str, None]:
-    """Generate a text-only follow-up when the primary response had tools but no text.
-
-    This is a lightweight second pass — no tool definitions, just text generation.
-    The messages include the original conversation plus a summary of what tools were called.
-    """
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-
-    # Build a summary of what was processed
-    tool_summary_parts = []
-    for tc in tool_calls_summary:
-        tool_summary_parts.append(f"{tc['name']}: {json.dumps(tc['args'])}")
-    tool_summary = "\n".join(tool_summary_parts)
-
-    # Add the tool-call context as an assistant+user turn so Claude knows what happened
-    followup_messages = messages + [
-        {"role": "assistant", "content": f"[I updated the dashboard: {tool_summary}]"},
-        {
-            "role": "user",
-            "content": "Respond with your analysis now. Start with the conclusion.",
-        },
-    ]
-
-    full_text = ""
-    async with client.messages.stream(
-        model=settings.CLAUDE_MODEL,
-        max_tokens=settings.CLAUDE_MAX_TOKENS,
-        system=FOLLOWUP_SYSTEM_PROMPT,
-        messages=followup_messages,  # type: ignore[arg-type]
     ) as stream:
         async for event in stream:
             if event.type == "content_block_delta":
@@ -620,96 +772,151 @@ async def stream_followup_text(
                     full_text += chunk
                     yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
 
-    yield f"event: followup_done\ndata: {json.dumps({'text': full_text})}\n\n"
+    yield f"event: done\ndata: {json.dumps({'text': full_text})}\n\n"
 
 
-async def generate_quick_actions(
-    messages: list[dict], assistant_text: str
+GENERATE_AI_PANEL_PROMPT = """You are an AI insights panel generator for a car buying advisor app. Given the current deal state and the assistant's latest response, generate a set of cards for the buyer's insights panel.
+
+The panel is a live dashboard the buyer glances at — show the most important information RIGHT NOW.
+
+CRITICAL RULES:
+- NEVER contradict the assistant's advice. The panel structures and supplements the chat response — it does not give independent opinions or alternative strategies.
+- Body text must be 1-2 SENTENCES max. Not paragraphs. The chat has the detail — the panel is a glanceable summary.
+- Cards must not repeat each other. Each card should convey a distinct piece of information.
+
+Return ONLY a JSON array of card objects. Each card has:
+- "type": one of "briefing", "numbers", "vehicle", "warning", "tip", "checklist", "success", "comparison"
+- "title": short card title (2-5 words)
+- "content": card-type-specific content object (schemas below)
+- "priority": "critical", "high", "normal", or "low"
+
+CARD TYPES — each renders with a distinct visual template:
+
+briefing — Status updates, assessments, next steps, strategy advice.
+  Visual: Blue left accent border (high/critical) or plain card (normal/low). NEVER red.
+  Use for: "where we are", "what's happening", "what to do next"
+  Schema: {"body": "1-2 sentences. Supports **markdown**."}
+
+warning — Genuine problems or dealer tactics that could hurt the buyer.
+  Visual: Red border + AlertCircle (critical), Yellow border + AlertTriangle (warning).
+  Use for: Suspicious charges, scam tactics, hidden fees, missing info creating financial risk, pressure tactics ("let me talk to my manager"), monthly payment misdirection, F&I upsells.
+  NOT for: Status updates, negotiation progress, next steps, general advice.
+  Test: "Could this hurt the buyer — financially, tactically, or informationally?" If no, use briefing.
+  Schema: {"severity": "critical|warning", "message": "The concern", "action": "Optional — what to do"}
+
+numbers — Financial data display with labeled rows.
+  Visual: Uppercase section label, label-value rows. Values highlighted good (green), bad (red), or neutral.
+  Schema: {"rows": [{"label": "Field", "value": "$32,000", "field": "current_offer", "highlight": "good|bad|neutral"}]}
+  Editable fields (include "field"): msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
+  Groups: {"groups": [{"key": "pricing", "rows": [...]}, {"key": "financing", "rows": [...]}]}
+  IMPORTANT: Use the actual numbers from the deal state. Do NOT confuse listing_price (advertised price before taxes/fees) with financed totals (price + taxes + fees). Labels must accurately describe what the number represents.
+
+vehicle — Vehicle information with specs and risk flags.
+  Visual: Uppercase section label, bold vehicle name, specs, red risk flag badges.
+  Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT..."}, "risk_flags": ["High Mileage"]}
+
+tip — Tactical advice and helpful context.
+  Visual: Lightbulb icon in blue, title + body.
+  Schema: {"body": "Helpful advice. Supports **markdown**."}
+
+checklist — Action items with checkboxes.
+  Visual: Uppercase section label, progress counter, checkbox rows.
+  Schema: {"items": [{"label": "Item description", "done": false}]}
+
+success — Celebrate a win: savings achieved, deal closed, milestone reached.
+  Visual: Green left border + CheckCircle icon in green. The "referral screenshot" card.
+  Use sparingly — only for genuine, measurable wins.
+  Schema: {"body": "You saved an estimated **$2,400** compared to the dealer's first offer."}
+
+comparison — Side-by-side deal comparison when 2+ deals exist.
+  Visual: Uppercase section label, summary, highlight rows with winner in green, recommendation at bottom.
+  Use when: Buyer is comparing the same vehicle at different dealers or different vehicles.
+  Schema: {"summary": "Brief comparison", "recommendation": "Which to choose", "best_deal_id": "id", "highlights": [{"label": "Price", "values": [{"deal_id": "id", "value": "$28,500", "is_winner": true}], "note": "Optional"}]}
+
+PRIORITY — controls emphasis within a card's template:
+- "critical": Red styling ONLY on warning cards. All other types treat this as "high" (blue).
+- "high": Important — next steps, key insights. Blue accent on briefings.
+- "normal": Supplementary context. No accent.
+- "low": Nice-to-know background details.
+
+PHASE-AWARE COMPOSITION:
+- Research (at home): 4-6 cards, thorough. Vehicle + briefing + numbers + tip + checklist.
+- At dealership (negotiation): 3-4 cards MAX. Short text. Briefing (with script) + numbers + warning (if applicable).
+- Financing/F&I: Warnings dominate (flag upsells). Numbers show total cost impact. 3-4 cards.
+- Closing: Success card (if savings), numbers (final summary), checklist (post-purchase). 2-4 cards.
+
+CARD STABILITY — maintain continuity for data cards:
+- Vehicle, numbers, checklist: keep the same structure across exchanges, update values.
+- Briefing, warning, tip, success: regenerate based on latest context.
+
+EXAMPLES:
+
+Early research panel:
+[
+  {"type": "vehicle", "title": "Your Vehicle", "content": {"vehicle": {"year": 2024, "make": "Toyota", "model": "Camry", "trim": "SE"}, "risk_flags": []}, "priority": "normal"},
+  {"type": "briefing", "title": "Getting Started", "content": {"body": "Good choice on the Camry SE. Next step: get pre-approved from your bank before visiting dealers."}, "priority": "high"},
+  {"type": "tip", "title": "Pre-Approval Advantage", "content": {"body": "A bank pre-approval forces the dealer to compete on price alone and gives you a rate floor."}, "priority": "normal"},
+  {"type": "checklist", "title": "Research Checklist", "content": {"items": [{"label": "Get pre-approved financing", "done": false}, {"label": "Check KBB/Edmunds fair purchase price", "done": false}]}, "priority": "normal"}
+]
+
+Active negotiation at dealership:
+[
+  {"type": "warning", "title": "Monthly Payment Misdirection", "content": {"severity": "warning", "message": "Dealer switched from total price to monthly payment. They may be stretching the term to hide the real cost.", "action": "Redirect: 'What's the out-the-door price? I'll worry about monthly later.'"}, "priority": "critical"},
+  {"type": "briefing", "title": "Hold at $28,500", "content": {"body": "Their counter of $30,200 is $1,700 above your target. You have leverage — the car has been listed 45 days."}, "priority": "high"},
+  {"type": "numbers", "title": "Price Gap", "content": {"rows": [{"label": "Your Offer", "value": "$28,500", "highlight": "good"}, {"label": "Their Counter", "value": "$30,200", "highlight": "bad"}, {"label": "Gap", "value": "$1,700", "highlight": "bad"}]}, "priority": "high"}
+]
+
+DON'T DO THIS:
+- {"type": "warning", "title": "Price Negotiation in Progress"} — This is a status update, not a warning. Use briefing.
+- {"type": "briefing", "priority": "critical"} — Critical on a briefing renders as blue (same as high), not red. If you need red, use warning.
+- {"type": "warning", "title": "Next Steps"} — Next steps are advice, not a problem. Use briefing or tip.
+
+RULES:
+- ALWAYS include a vehicle card if a vehicle has been identified
+- ALWAYS include a briefing card with your current assessment
+- Include numbers when financial data exists
+- Body text: 1-2 sentences max. The chat has the detail.
+- Order: warnings > success > briefings > numbers > comparison > vehicle > tips > checklist
+- Do NOT repeat the chat response — supplement with structured data
+- Checklist items MUST have text labels
+
+Return ONLY the JSON array, no other text."""
+
+
+async def generate_ai_panel_cards(
+    deal_state_dict: dict,
+    assistant_text: str,
+    messages: list[dict],
 ) -> list[dict]:
-    """Generate quick action suggestions based on conversation context.
+    """Generate AI panel cards based on deal state and conversation context.
 
-    This is a non-streaming, lightweight call that returns structured data.
-    Called when the primary response didn't include update_quick_actions.
-    Uses the async client to avoid blocking the event loop.
-    """
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-
-    # Trim assistant text to save tokens — Haiku only needs recent context
-    trimmed_text = (
-        assistant_text[-500:] if len(assistant_text) > 500 else assistant_text
-    )
-
-    context_messages = messages[-3:] + [
-        {"role": "assistant", "content": trimmed_text},
-        {"role": "user", "content": QUICK_ACTIONS_PROMPT},
-    ]
-
-    try:
-        response = await client.messages.create(
-            model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=256,
-            messages=context_messages,  # type: ignore[arg-type]
-        )
-        # Extract text from response, handling different content block types
-        text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                text = block.text.strip()
-                break
-        logger.debug(
-            "Quick actions raw response: %s", text[:200] if text else "(empty)"
-        )
-        if not text:
-            return []
-        # Strip markdown code fences if Haiku wraps the JSON
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        actions = json.loads(text)
-        if isinstance(actions, list):
-            return [
-                {"label": a["label"][:30], "prompt": a["prompt"][:200]}
-                for a in actions[:3]
-                if isinstance(a, dict) and a.get("label") and a.get("prompt")
-            ]
-    except Exception:
-        logger.exception("Failed to generate quick actions")
-    return []
-
-
-ASSESS_DEAL_PROMPT = """You are a car deal assessment engine. Given the current deal state, provide:
-1. An overall health status: "good", "fair", "concerning", or "bad"
-2. A 1-2 sentence summary grounded in the data (never reference market prices you cannot verify)
-3. One specific, actionable recommendation for what the buyer should do next based on their deal data
-4. Any red flags — ONLY actual deal problems (high APR, hidden fees, pressure tactics, numbers that changed). Missing information is NOT a red flag.
-
-Return ONLY a JSON object with this shape:
-{
-  "health": {"status": "good|fair|concerning|bad", "summary": "...", "recommendation": "..."},
-  "flags": [{"id": "unique_id", "severity": "warning|critical", "message": "..."}]
-}
-The recommendation must be specific and actionable (e.g. "Counter at $31,500" not "Try negotiating").
-Return empty flags array if no actual deal problems. Return ONLY the JSON, no other text."""
-
-
-async def assess_deal_state(deal_state_dict: dict) -> dict:
-    """Lightweight deal assessment via Haiku.
-
-    Called when the primary model updated numbers but didn't call
-    update_deal_health or update_red_flags. Returns a dict with
-    optional 'health' and 'flags' keys.
+    Called after the main Claude response to populate the AI-driven panel.
+    Uses the fast model (Haiku) for low latency since the user already has
+    the chat response.
     """
     client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     state_json = json.dumps(deal_state_dict, indent=2, default=str)
+    conversation_context = _build_conversation_context(
+        messages,
+        assistant_text,
+        recent_count=PANEL_RECENT_MESSAGES,
+        msg_truncation=PANEL_MESSAGE_TRUNCATION,
+        assistant_truncation=PANEL_ASSISTANT_TRUNCATION,
+    )
 
     try:
         response = await client.messages.create(
             model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=512,
+            max_tokens=PANEL_GENERATOR_MAX_TOKENS,
             messages=[
                 {
                     "role": "user",
-                    "content": f"Deal state:\n```json\n{state_json}\n```\n\n{ASSESS_DEAL_PROMPT}",
+                    "content": (
+                        f"Deal state:\n```json\n{state_json}\n```\n\n"
+                        f"Recent conversation:\n{conversation_context}\n\n"
+                        f"{GENERATE_AI_PANEL_PROMPT}"
+                    ),
                 }
             ],
         )
@@ -718,56 +925,44 @@ async def assess_deal_state(deal_state_dict: dict) -> dict:
             if hasattr(block, "text"):
                 text = block.text.strip()
                 break
-        logger.debug(
-            "Deal assessment raw response: %s", text[:200] if text else "(empty)"
-        )
+
+        logger.debug("AI panel raw response: %s", text[:200] if text else "(empty)")
+
         if not text:
-            return {}
+            return []
+
         # Strip markdown code fences if present
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        result = json.loads(text)
-        if not isinstance(result, dict):
-            return {}
-        # Validate health status
-        health = result.get("health")
-        if health and isinstance(health, dict):
-            status = health.get("status")
-            if status:
-                try:
-                    HealthStatus(status)
-                except ValueError:
-                    logger.warning(
-                        "Assessment returned invalid health status: %s", status
-                    )
-                    result.pop("health", None)
-            # Ensure recommendation is a string or absent
-            rec = health.get("recommendation")
-            if rec is not None and not isinstance(rec, str):
-                logger.warning(
-                    "Assessment returned non-string recommendation: %s",
-                    type(rec).__name__,
-                )
-                health.pop("recommendation", None)
-        # Validate red flags structure
-        flags = result.get("flags")
-        if flags is not None:
-            if not isinstance(flags, list):
-                result.pop("flags", None)
-            else:
-                validated_flags = []
-                for f in flags:
-                    if not isinstance(f, dict):
-                        continue
-                    if not all(k in f for k in ("id", "severity", "message")):
-                        continue
-                    try:
-                        RedFlagSeverity(f["severity"])
-                    except ValueError:
-                        continue
-                    validated_flags.append(f)
-                result["flags"] = validated_flags
-        return result
+
+        cards = json.loads(text)
+        if not isinstance(cards, list):
+            logger.warning("AI panel response is not a list: %s", type(cards).__name__)
+            return []
+
+        # Validate card structure
+        validated = []
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            if card.get("type") not in VALID_PANEL_CARD_TYPES:
+                continue
+            if not card.get("title"):
+                continue
+            if not isinstance(card.get("content"), dict):
+                continue
+            # Default priority to normal
+            if card.get("priority") not in VALID_PANEL_CARD_PRIORITIES:
+                card["priority"] = "normal"
+            validated.append(card)
+
+        logger.info(
+            "AI panel generated %d cards: %s",
+            len(validated),
+            [c["type"] for c in validated],
+        )
+        return validated
+
     except Exception:
-        logger.exception("Failed to assess deal state")
-        return {}
+        logger.exception("Failed to generate AI panel cards")
+        return []

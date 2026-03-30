@@ -25,6 +25,7 @@ class DealSummary(BaseModel):
     current_offer: float | None = None
     listing_price: float | None = None
     score_overall: ScoreStatus | None = None
+    deal_count: int = 0
 
 
 class SessionResponse(BaseModel):

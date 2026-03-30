@@ -56,7 +56,30 @@ class GapPriority(StrEnum):
     LOW = "low"
 
 
+class VehicleRole(StrEnum):
+    PRIMARY = "primary"
+    TRADE_IN = "trade_in"
+
+
 class Difficulty(StrEnum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
+
+
+class AiCardType(StrEnum):
+    BRIEFING = "briefing"
+    NUMBERS = "numbers"
+    VEHICLE = "vehicle"
+    WARNING = "warning"
+    TIP = "tip"
+    CHECKLIST = "checklist"
+    SUCCESS = "success"
+    COMPARISON = "comparison"
+
+
+class AiCardPriority(StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"

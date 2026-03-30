@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BuyerContext, Message, QuickAction, Session } from '@/lib/types'
+import type { BuyerContext, Message, QuickAction, Session, ToolCall } from '@/lib/types'
 import { MAX_QUICK_ACTIONS } from '@/lib/constants'
 import { api } from '@/lib/api'
 import { useDealStore } from './dealStore'
@@ -199,43 +199,96 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
 
     try {
-      // Get assistant response — stream text chunks to the store for live display
-      const assistantMessage = await api.sendMessage(activeSessionId, content, imageUri, (text) =>
-        set({ streamingText: text })
-      )
-
-      // Track every AI response for staleness calculation (including tool-only)
+      // Track response count for staleness
       const newResponseCount = get().aiResponseCount + 1
-      set({ aiResponseCount: newResponseCount })
+      let messageFinalized = false
 
-      // Add assistant message to chat (the backend's two-pass approach ensures
-      // there's always text, even for tool-only first responses)
-      if (assistantMessage.content.trim()) {
-        set((state) => ({
-          messages: [...state.messages, assistantMessage],
-          isSending: false,
-          streamingText: '',
-        }))
-      } else {
-        set({ isSending: false, streamingText: '' })
-      }
-
-      // Process tool calls -> update insights and quick actions
-      if (assistantMessage.toolCalls) {
-        for (const toolCall of assistantMessage.toolCalls) {
-          if (toolCall.name === 'update_quick_actions') {
-            const actions = (toolCall.args.actions as QuickAction[]) ?? []
-            const validActions = actions
-              .filter((action) => action.label && action.prompt)
-              .slice(0, MAX_QUICK_ACTIONS)
-            set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
-          } else {
-            useDealStore.getState().applyToolCall(toolCall)
+      // Finalize the assistant message as soon as text streaming completes
+      // (the "done" SSE event), so the StreamingBubble is replaced by a
+      // permanent ChatBubble immediately — not seconds later on the first
+      // tool_result.
+      const handleTextDone = (finalText: string) => {
+        if (messageFinalized) return
+        messageFinalized = true
+        if (finalText.trim()) {
+          const msg: Message = {
+            id: Math.random().toString(36).substring(2),
+            sessionId: activeSessionId,
+            role: 'assistant',
+            content: finalText,
+            createdAt: new Date().toISOString(),
           }
+          set((state) => ({
+            messages: [...state.messages, msg],
+            isSending: false,
+            streamingText: '',
+            aiResponseCount: newResponseCount,
+          }))
+        } else {
+          set({ isSending: false, streamingText: '', aiResponseCount: newResponseCount })
         }
       }
 
-      // Refresh sessions list to update preview (fire-and-forget; failure is non-critical)
+      // Process tool results incrementally as they arrive from SSE
+      const handleToolResult = (toolCall: ToolCall) => {
+        // Fallback finalization in case done event didn't fire
+        if (!messageFinalized) {
+          messageFinalized = true
+          const currentStreamingText = get().streamingText
+          if (currentStreamingText.trim()) {
+            const msg: Message = {
+              id: Math.random().toString(36).substring(2),
+              sessionId: activeSessionId,
+              role: 'assistant',
+              content: currentStreamingText,
+              createdAt: new Date().toISOString(),
+            }
+            set((state) => ({
+              messages: [...state.messages, msg],
+              isSending: false,
+              streamingText: '',
+              aiResponseCount: newResponseCount,
+            }))
+          }
+        }
+
+        // Route tool call
+        if (toolCall.name === 'update_quick_actions') {
+          const actions = (toolCall.args.actions as QuickAction[]) ?? []
+          const validActions = actions
+            .filter((action) => action.label && action.prompt)
+            .slice(0, MAX_QUICK_ACTIONS)
+          set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
+        } else {
+          useDealStore.getState().applyToolCall(toolCall)
+        }
+      }
+
+      // Stream text chunks to the store for live display
+      const assistantMessage = await api.sendMessage(
+        activeSessionId,
+        content,
+        imageUri,
+        (text) => set({ streamingText: text }),
+        handleToolResult,
+        handleTextDone
+      )
+
+      // If no tool results arrived (rare), finalize from onload
+      if (!messageFinalized) {
+        set({ aiResponseCount: newResponseCount })
+        if (assistantMessage.content.trim()) {
+          set((state) => ({
+            messages: [...state.messages, assistantMessage],
+            isSending: false,
+            streamingText: '',
+          }))
+        } else {
+          set({ isSending: false, streamingText: '' })
+        }
+      }
+
+      // Refresh sessions list (fire-and-forget)
       get()
         .loadSessions()
         .catch(() => {})

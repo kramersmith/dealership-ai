@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03-26
+Last updated: 2026-03-29
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -478,44 +478,51 @@ Get the current deal state for a session.
 ```json
 {
   "session_id": "uuid",
-  "phase": "research",
   "buyer_context": "researching",
-  "msrp": null,
-  "invoice_price": null,
-  "listing_price": null,
-  "your_target": null,
-  "walk_away_price": null,
-  "current_offer": null,
-  "monthly_payment": null,
-  "apr": null,
-  "loan_term_months": null,
-  "down_payment": null,
-  "trade_in_value": null,
-  "vehicle_year": null,
-  "vehicle_make": null,
-  "vehicle_model": null,
-  "vehicle_trim": null,
-  "vehicle_vin": null,
-  "vehicle_mileage": null,
-  "vehicle_color": null,
-  "score_price": null,
-  "score_financing": null,
-  "score_trade_in": null,
-  "score_fees": null,
-  "score_overall": null,
-  "health_status": null,
-  "health_summary": null,
-  "recommendation": null,
+  "active_deal_id": "uuid | null",
+  "vehicles": [
+    {
+      "id": "uuid",
+      "role": "primary",
+      "year": 2024,
+      "make": "Toyota",
+      "model": "Camry",
+      "trim": "LE",
+      "vin": null,
+      "mileage": null,
+      "color": null,
+      "engine": null
+    }
+  ],
+  "deals": [
+    {
+      "id": "uuid",
+      "vehicle_id": "uuid",
+      "dealer_name": "Acme Toyota",
+      "phase": "research",
+      "msrp": null,
+      "listing_price": null,
+      "current_offer": null,
+      "health_status": null,
+      "health_summary": null,
+      "recommendation": null,
+      "red_flags": [],
+      "information_gaps": [],
+      "score_price": null,
+      "score_overall": null
+    }
+  ],
   "red_flags": [],
   "information_gaps": [],
-  "first_offer": null,
-  "pre_fi_price": null,
-  "savings_estimate": null,
   "checklist": [],
   "timer_started_at": null,
+  "ai_panel_cards": [],
+  "deal_comparison": null,
   "updated_at": "2026-03-24T12:00:00Z"
 }
 ```
+
+The response contains session-level state plus arrays of `vehicles` and `deals`. Each deal is linked to a vehicle via `vehicle_id`. The `active_deal_id` indicates which deal the panel is currently showing.
 
 **Error responses:**
 
@@ -528,7 +535,7 @@ Get the current deal state for a session.
 
 ### PATCH /api/deal/{session_id}
 
-Apply user-initiated corrections to deal state fields (numbers and vehicle). After applying corrections, the backend re-assesses the deal via Haiku and returns updated health status and red flags.
+Apply user-initiated corrections to vehicles and/or deals within a session. Corrections are scoped by entity ID. After applying corrections, the backend re-assesses the affected deal via Haiku and returns updated health status and red flags.
 
 **Auth required:** Yes
 
@@ -542,18 +549,34 @@ Apply user-initiated corrections to deal state fields (numbers and vehicle). Aft
 
 ```json
 {
-  "listing_price": 34000,
-  "vehicle_year": 2024,
-  "vehicle_make": "Toyota"
+  "vehicle_corrections": [
+    {
+      "vehicle_id": "uuid",
+      "year": 2024,
+      "make": "Toyota"
+    }
+  ],
+  "deal_corrections": [
+    {
+      "deal_id": "uuid",
+      "listing_price": 34000,
+      "dealer_name": "Acme Toyota"
+    }
+  ]
 }
 ```
 
-All fields are optional. Only provided fields are updated. Correctable number fields: `msrp`, `invoice_price`, `listing_price`, `your_target`, `walk_away_price`, `current_offer`, `monthly_payment`, `apr`, `loan_term_months`, `down_payment`, `trade_in_value`. Correctable vehicle fields: `vehicle_year`, `vehicle_make`, `vehicle_model`, `vehicle_trim`, `vehicle_vin`, `vehicle_mileage`, `vehicle_color`.
+Both `vehicle_corrections` and `deal_corrections` are optional arrays. Each correction object targets a specific entity by ID. Only provided fields are updated.
+
+Correctable vehicle fields: `year`, `make`, `model`, `trim`, `vin`, `mileage`, `color`, `engine`.
+
+Correctable deal fields: `dealer_name`, `msrp`, `invoice_price`, `listing_price`, `your_target`, `walk_away_price`, `current_offer`, `monthly_payment`, `apr`, `loan_term_months`, `down_payment`, `trade_in_value`.
 
 **Response:** `200 OK`
 
 ```json
 {
+  "deal_id": "uuid",
   "health_status": "good",
   "health_summary": "Strong deal — offer is $1,200 below listing price",
   "recommendation": "Lock in this price and move to financing",
@@ -563,14 +586,16 @@ All fields are optional. Only provided fields are updated. Correctable number fi
 
 | Field | Type | Description |
 |---|---|---|
+| `deal_id` | string | The deal that was re-assessed |
 | `health_status` | string | Updated deal health: `good`, `fair`, `concerning`, `bad` (nullable) |
 | `health_summary` | string | 1-2 sentence explanation (nullable) |
 | `recommendation` | string | AI-generated next-action recommendation (nullable) |
 | `red_flags` | array | Updated list of red flag objects: `{id, severity, message}` |
 
 **Side effects:**
+- Vehicle corrections propagate to linked deals for re-assessment
 - If `current_offer` is set and `first_offer` is null, `first_offer` is snapshotted
-- After applying corrections, `assess_deal_state()` runs via Haiku to update health status, red flags, and recommendation
+- After applying corrections, `analyze_deal()` runs via Haiku to update health status, red flags, and recommendation on the first affected deal
 
 **Error responses:**
 
@@ -579,6 +604,7 @@ All fields are optional. Only provided fields are updated. Correctable number fi
 | `400` | No corrections provided |
 | `404` | Session not found |
 | `404` | Deal state not found |
+| `404` | Vehicle or deal not found in this session |
 
 ---
 

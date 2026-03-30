@@ -33,11 +33,11 @@ dealership-ai/
 │   │   ├── components/
 │   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, ContextPicker, CopyableBlock
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
-│   │   │   ├── insights/        # InsightsPanel (tiered layout via getPanelLayout), HeroSection (deal health
-│   │   │   │                    # + offer delta + AI recommendation + compact phase indicator),
-│   │   │   │                    # CompactPhaseIndicator, RedFlagsCard, KeyNumbers, InformationGapsCard,
-│   │   │   │                    # SavingsSummary, VehicleCard, NegotiationScorecard, Checklist,
-│   │   │   │                    # DealershipTimer, QuickActions
+│   │   │   ├── insights-panel/   # AI-driven InsightsPanel with card-based layout:
+│   │   │   │                    # AiCard (base renderer), BriefingCard, NumbersCard,
+│   │   │   │                    # AiVehicleCard, WarningCard, TipCard, SuccessCard,
+│   │   │   │                    # AiChecklistCard, AiComparisonCard, CompactPhaseIndicator,
+│   │   │   │                    # PanelMarkdown, QuickActions
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
@@ -65,7 +65,8 @@ dealership-ai/
 │       │   ├── schemas/         # Pydantic request/response
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
-│       │       ├── claude.py    # Claude API + tool definitions + SSE streaming
+│       │       ├── claude.py    # Claude API + two-pass extraction (factual extractor + analyst subagents) + SSE streaming
+│       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
 │       │       └── simulation.py # Dealer training AI logic
@@ -86,18 +87,29 @@ dealership-ai/
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 
-**deal_states** — one mutable row per session, the persistent UI state:
-- Buyer context: BuyerContext enum (researching, reviewing_deal, at_dealership) — set at session creation, updatable mid-conversation
+**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in.
+
+**deals** — one row per vehicle-deal combination within a session:
+- Foreign keys: session_id, vehicle_id
+- Dealer identification: dealer_name
 - Phase: DealPhase enum (research → initial_contact → test_drive → negotiation → financing → closing)
 - Numbers: msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
 - Price history: first_offer, pre_fi_price, savings_estimate
-- Vehicle: year, make, model, trim, vin, mileage, color
+- Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (ScoreStatus enum: red/yellow/green)
 - Deal health: health_status (HealthStatus enum: good/fair/concerning/bad), health_summary, recommendation
 - Red flags: JSON array of {id, severity, message} (RedFlagSeverity enum: warning/critical)
 - Information gaps: JSON array of {label, reason, priority} (GapPriority enum: high/medium/low)
-- Scorecard: score_price, score_financing, score_trade_in, score_fees, score_overall (ScoreStatus enum: red/yellow/green)
+- Comparison: JSON (AI-generated deal comparison data)
+
+**deal_states** — one mutable row per session, session-level state:
+- Buyer context: BuyerContext enum (researching, reviewing_deal, at_dealership) — set at session creation, updatable mid-conversation
+- Active deal: active_deal_id (FK to deals.id) — which deal the panel is currently showing
+- Red flags: JSON array (session-level, e.g., "You haven't been pre-approved")
+- Information gaps: JSON array (session-level)
 - Checklist: JSON array of {label, done}
 - Timer: timer_started_at
+- AI panel cards: JSON array of AI-generated card objects for the InsightsPanel
+- Deal comparison: JSON (AI-generated, session-level since it spans deals)
 
 **simulations** — (id, session_id, scenario_type, difficulty [Difficulty enum: easy/medium/hard], ai_persona JSON, score, feedback, completed_at)
 
@@ -116,7 +128,10 @@ All domain values use Python `StrEnum` for type safety:
 | `HealthStatus` | `good`, `fair`, `concerning`, `bad` |
 | `RedFlagSeverity` | `warning`, `critical` |
 | `GapPriority` | `high`, `medium`, `low` |
+| `VehicleRole` | `primary`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
+| `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
+| `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 
 ### Seed Users (Development Only)
 
@@ -155,32 +170,30 @@ POST   /simulations/{id}/complete     # End + score
 
 ---
 
-## Core Architecture: Claude Tool Use → Dashboard Updates
+## Core Architecture: Two-Pass Extraction → AI Panel Cards
 
-**10 tools registered with every Claude call:**
-1. `update_deal_numbers` — prices, payments, rates (all fields optional, only update what changed)
-2. `update_deal_phase` — progression through deal phases
-3. `update_scorecard` — red/yellow/green ratings
-4. `set_vehicle` — year, make, model, trim, vin, mileage
-5. `update_checklist` — array of {label, done} items
-6. `update_quick_actions` — suggest 2-3 dynamic quick action buttons (label + prompt) based on conversation context
-7. `update_buyer_context` — change the buyer's situational context mid-conversation (researching, reviewing_deal, at_dealership)
-8. `update_deal_health` — overall deal health assessment (status + summary), grounded in user's data
-9. `update_red_flags` — surface specific deal problems with severity (warning/critical), replaces full list
-10. `update_information_gaps` — identify missing data that would improve assessment, with priority (high/medium/low)
+**Extraction architecture:** The backend uses a two-pass extraction approach with parallel subagents:
+1. **Factual extractor** — extracts structured data (vehicle, deal numbers, scorecard, phase, buyer context, checklist, quick actions) from conversation
+2. **Analyst subagent** — runs in parallel to generate deal health assessment, red flags, information gaps, and AI panel cards
+3. Results are merged and applied to the database via `apply_extraction()` in `deal_state.py`
+
+**Deal state service** (`app/services/deal_state.py`):
+- `apply_extraction()` — applies extracted data to Vehicle, Deal, and DealState models; auto-creates deals for new primary vehicles; returns tool calls for frontend
+- `deal_state_to_dict()` — serializes deal state (with vehicles and deals) for the Claude system prompt
+- `build_deal_assessment_dict()` — builds a dict from a Deal + its vehicles for Haiku re-assessment
 
 **Streaming flow:**
 1. Client POSTs message
 2. Backend loads message history BEFORE saving the user message (avoids duplicate user messages in Claude context), then saves the user message
 3. Backend loads deal state + linked session context, calls Claude with tools (system prompt includes a context-aware preamble based on the session's `buyer_context`)
 4. Claude streams text + tool_use blocks
-5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data)
+5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data including `create_deal` for backend-created deals)
 6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
 7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
-8. **Assessment safety net:** If Claude updated deal numbers but didn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku to fill in health status, red flags, and recommendation
-9. Backend persists messages (including follow-up text) and executes tool calls (UPDATE deal_states)
+8. **Two-pass extraction:** Factual extractor and analyst subagents run in parallel via Haiku to extract structured data and generate AI panel cards
+9. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events
 10. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
-11. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → dashboard components re-render. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
+11. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → InsightsPanel re-renders with AI-generated cards. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
 12. On send failure, optimistic messages are rolled back from the chat store
 
 **New session flow (buyer):**

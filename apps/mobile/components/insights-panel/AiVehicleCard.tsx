@@ -1,15 +1,34 @@
 import { TextInput, TouchableOpacity } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Pencil } from '@tamagui/lucide-icons'
-import type { Vehicle } from '@/lib/types'
-import { formatMileage, vehicleSummary } from '@/lib/utils'
-import { HIGH_MILEAGE_THRESHOLD, VERY_HIGH_MILEAGE_THRESHOLD } from '@/lib/constants'
-import { AppCard, StatusPill } from '@/components/shared'
+import { formatMileage } from '@/lib/utils'
+import { AppCard } from '@/components/shared'
 import { useEditableField } from '@/hooks/useEditableField'
 
-interface VehicleCardProps {
-  vehicle: Vehicle | null
-  onCorrectField?: (field: keyof Vehicle, value: string | number | undefined) => void
+interface VehicleContent {
+  vehicle: {
+    year: number
+    make: string
+    model: string
+    trim?: string
+    engine?: string
+    mileage?: number
+    color?: string
+    vin?: string
+  }
+  risk_flags?: string[]
+}
+
+interface AiVehicleCardProps {
+  title: string
+  content: Record<string, any>
+  /** The actual vehicle ID from the database — required for corrections. */
+  vehicleId?: string
+  onCorrectVehicleField?: (
+    vehicleId: string,
+    field: string,
+    value: string | number | undefined
+  ) => void
 }
 
 interface EditableTextProps {
@@ -18,7 +37,6 @@ interface EditableTextProps {
   fontSize?: number
   color?: string
   fontWeight?: string
-  numberOfLines?: number
 }
 
 function EditableText({
@@ -27,7 +45,6 @@ function EditableText({
   fontSize = 13,
   color = '$placeholderColor',
   fontWeight = '400',
-  numberOfLines,
 }: EditableTextProps) {
   const theme = useTheme()
   const { isEditing, editValue, justSaved, startEditing, setEditValue, commitEdit } =
@@ -37,9 +54,9 @@ function EditableText({
     return (
       <XStack
         backgroundColor="$backgroundHover"
-        borderRadius={6}
-        paddingHorizontal={8}
-        paddingVertical={4}
+        borderRadius="$2"
+        paddingHorizontal="$2"
+        paddingVertical="$1"
       >
         <TextInput
           value={editValue}
@@ -67,56 +84,72 @@ function EditableText({
         activeOpacity={0.6}
         style={{ minHeight: 44, justifyContent: 'center' }}
       >
-        <XStack alignItems="center" gap={4}>
-          <Text
-            fontSize={fontSize}
-            color={color}
-            fontWeight={fontWeight as any}
-            numberOfLines={numberOfLines}
-          >
+        <XStack alignItems="center" gap="$1">
+          <Text fontSize={fontSize} color={color} fontWeight={fontWeight as any}>
             {value}
           </Text>
-          <Pencil size={10} color="$placeholderColor" opacity={0.5} />
+          <Pencil size={12} color="$placeholderColor" opacity={0.7} />
         </XStack>
       </TouchableOpacity>
       {justSaved && (
-        <Text fontSize={10} color="$brand" opacity={0.8}>
-          Saved — the AI will see this change on your next message
+        <Text fontSize={11} fontWeight="500" color="$brand">
+          Saved — AI will use this next
         </Text>
       )}
     </YStack>
   )
 }
 
-export function VehicleCard({ vehicle, onCorrectField }: VehicleCardProps) {
+export function AiVehicleCard({
+  title,
+  content,
+  vehicleId,
+  onCorrectVehicleField,
+}: AiVehicleCardProps) {
+  const vehicleContent = content as VehicleContent
+  const vehicle = vehicleContent.vehicle
+  const riskFlags = vehicleContent.risk_flags ?? []
+
   if (!vehicle) return null
 
-  const riskFlags: string[] = []
-  if (vehicle.mileage && vehicle.mileage > VERY_HIGH_MILEAGE_THRESHOLD) {
-    riskFlags.push('Very High Miles')
-  } else if (vehicle.mileage && vehicle.mileage > HIGH_MILEAGE_THRESHOLD) {
-    riskFlags.push('High Mileage')
-  }
+  const summary = [vehicle.year, vehicle.make, vehicle.model, vehicle.trim]
+    .filter(Boolean)
+    .join(' ')
 
-  const editable = !!onCorrectField
+  const editable = !!vehicleId && !!onCorrectVehicleField
 
-  const handleSave = (field: keyof Vehicle, raw: string) => {
-    if (!onCorrectField) return
+  const handleSave = (field: string, raw: string) => {
+    if (!onCorrectVehicleField || !vehicleId) return
     if (field === 'year' || field === 'mileage') {
       const num = parseInt(raw.replace(/[^0-9]/g, ''), 10)
-      if (!isNaN(num)) onCorrectField(field, num)
+      if (!isNaN(num)) onCorrectVehicleField(vehicleId, field, num)
     } else {
-      onCorrectField(field, raw)
+      onCorrectVehicleField(vehicleId, field, raw)
     }
   }
 
   return (
     <AppCard compact gap="$2">
+      <Text
+        fontSize={12}
+        fontWeight="600"
+        color="$placeholderColor"
+        textTransform="uppercase"
+        letterSpacing={0.5}
+      >
+        {title}
+      </Text>
+
       <XStack justifyContent="space-between" alignItems="flex-start">
         <YStack flex={1} gap="$1.5">
           <Text fontSize={16} fontWeight="700" color="$color" numberOfLines={1}>
-            {vehicleSummary(vehicle)}
+            {summary}
           </Text>
+          {vehicle.engine && (
+            <Text fontSize={13} color="$placeholderColor" numberOfLines={1}>
+              {vehicle.engine}
+            </Text>
+          )}
           <XStack gap="$3">
             {vehicle.mileage != null && editable ? (
               <EditableText
@@ -137,7 +170,7 @@ export function VehicleCard({ vehicle, onCorrectField }: VehicleCardProps) {
             ) : null}
           </XStack>
           {vehicle.vin && (
-            <Text fontSize={11} color="$placeholderColor" fontFamily="$mono">
+            <Text fontSize={12} color="$placeholderColor" fontFamily="$mono">
               VIN: {vehicle.vin.substring(0, 11)}...
             </Text>
           )}
@@ -145,11 +178,22 @@ export function VehicleCard({ vehicle, onCorrectField }: VehicleCardProps) {
       </XStack>
 
       {riskFlags.length > 0 && (
-        <XStack gap="$2" flexWrap="wrap">
+        <YStack gap="$1.5">
           {riskFlags.map((flag) => (
-            <StatusPill key={flag} status="red" label={flag} size="sm" />
+            <XStack
+              key={flag}
+              backgroundColor="$danger"
+              borderRadius={8}
+              paddingHorizontal="$2"
+              paddingVertical="$1"
+              alignSelf="flex-start"
+            >
+              <Text color="$white" fontSize={12} fontWeight="600" flexShrink={1}>
+                {flag}
+              </Text>
+            </XStack>
           ))}
-        </XStack>
+        </YStack>
       )}
     </AppCard>
   )

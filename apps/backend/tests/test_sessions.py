@@ -1,9 +1,20 @@
+"""Tests for session CRUD, cascade deletes, buyer_context, deal_summary, search, auto_title."""
+
 from app.core.security import create_access_token, hash_password
+from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, DealPhase, MessageRole, SessionType, UserRole
+from app.models.enums import (
+    BuyerContext,
+    DealPhase,
+    MessageRole,
+    SessionType,
+    UserRole,
+    VehicleRole,
+)
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
+from app.models.vehicle import Vehicle
 
 
 def _create_user_and_token(db) -> tuple[User, str]:
@@ -23,6 +34,25 @@ def _create_user_and_token(db) -> tuple[User, str]:
 
 def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _create_vehicle(db, session_id: str, **kwargs) -> Vehicle:
+    vehicle = Vehicle(session_id=session_id, role=VehicleRole.PRIMARY, **kwargs)
+    db.add(vehicle)
+    db.commit()
+    db.refresh(vehicle)
+    return vehicle
+
+
+def _create_deal(db, session_id: str, vehicle_id: str, **kwargs) -> Deal:
+    deal = Deal(session_id=session_id, vehicle_id=vehicle_id, **kwargs)
+    db.add(deal)
+    db.commit()
+    db.refresh(deal)
+    return deal
+
+
+# --- cascade delete tests ---
 
 
 def test_delete_session_cascades_to_messages_and_deal_state(client, db):
@@ -61,6 +91,35 @@ def test_delete_session_cascades_to_messages_and_deal_state(client, db):
     # Child rows are also gone (the cascade fix)
     assert db.query(DealState).filter(DealState.session_id == session_id).count() == 0
     assert db.query(Message).filter(Message.session_id == session_id).count() == 0
+
+
+def test_delete_session_cascades_to_vehicles_and_deals(client, db):
+    """Deleting a session cascades to vehicles and deals."""
+    _user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    # Add vehicle and deal
+    vehicle = _create_vehicle(db, session_id, make="Honda", model="Civic", year=2024)
+    _create_deal(db, session_id, vehicle.id, current_offer=28000)
+
+    # Sanity check
+    assert db.query(Vehicle).filter(Vehicle.session_id == session_id).count() == 1
+    assert db.query(Deal).filter(Deal.session_id == session_id).count() == 1
+
+    # Delete the session
+    resp = client.delete(f"/api/sessions/{session_id}", headers=headers)
+    assert resp.status_code == 204
+
+    assert db.query(Vehicle).filter(Vehicle.session_id == session_id).count() == 0
+    assert db.query(Deal).filter(Deal.session_id == session_id).count() == 0
 
 
 def test_delete_session_returns_404_for_nonexistent(client, db):
@@ -150,7 +209,7 @@ def test_create_session_without_buyer_context_defaults_to_researching(client, db
 
 
 def test_deal_state_response_includes_buyer_context(client, db):
-    """The GET /api/deals/:session_id response includes buyer_context."""
+    """The GET /api/deal/:session_id response includes buyer_context."""
     _user, token = _create_user_and_token(db)
     headers = _auth_header(token)
 
@@ -179,7 +238,7 @@ def test_deal_state_response_includes_buyer_context(client, db):
 
 
 def test_session_response_includes_deal_summary(client, db):
-    """Session list response includes deal_summary with vehicle and phase info."""
+    """Session list response includes deal_summary with vehicle and phase info from Deal/Vehicle models."""
     user, token = _create_user_and_token(db)
     headers = _auth_header(token)
 
@@ -191,13 +250,19 @@ def test_session_response_includes_deal_summary(client, db):
     assert resp.status_code == 201
     session_id = resp.json()["id"]
 
-    # Populate deal state with vehicle info
+    # Create Vehicle and Deal objects
+    vehicle = _create_vehicle(db, session_id, make="Honda", model="Civic", year=2024)
+    deal = _create_deal(
+        db,
+        session_id,
+        vehicle.id,
+        phase=DealPhase.NEGOTIATION,
+        current_offer=28500,
+    )
+
+    # Set active_deal_id on the deal_state
     deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
-    deal_state.vehicle_year = 2024
-    deal_state.vehicle_make = "Honda"
-    deal_state.vehicle_model = "Civic"
-    deal_state.phase = DealPhase.NEGOTIATION
-    deal_state.current_offer = 28500
+    deal_state.active_deal_id = deal.id
     db.commit()
 
     # Fetch sessions list
@@ -213,6 +278,61 @@ def test_session_response_includes_deal_summary(client, db):
     assert summary["vehicle_model"] == "Civic"
     assert summary["phase"] == "negotiation"
     assert summary["current_offer"] == 28500
+    assert summary["deal_count"] == 1
+
+
+def test_session_response_deal_summary_with_multiple_deals(client, db):
+    """deal_summary returns deal_count reflecting multiple deals."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    vehicle = _create_vehicle(db, session_id, make="Honda", model="Civic", year=2024)
+    deal1 = _create_deal(
+        db, session_id, vehicle.id, dealer_name="Dealer A", current_offer=28000
+    )
+    _create_deal(
+        db, session_id, vehicle.id, dealer_name="Dealer B", current_offer=27500
+    )
+
+    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
+    deal_state.active_deal_id = deal1.id
+    db.commit()
+
+    resp = client.get("/api/sessions", headers=headers)
+    assert resp.status_code == 200
+    summary = resp.json()[0]["deal_summary"]
+    assert summary["deal_count"] == 2
+    assert summary["current_offer"] == 28000  # Active deal's offer
+
+
+def test_session_response_deal_summary_no_deals(client, db):
+    """deal_summary with no deals returns zero deal_count and null fields."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+
+    resp = client.get("/api/sessions", headers=headers)
+    assert resp.status_code == 200
+    summary = resp.json()[0]["deal_summary"]
+    assert summary is not None
+    assert summary["deal_count"] == 0
+    assert summary["vehicle_make"] is None
+    assert summary["current_offer"] is None
+    assert summary["phase"] is None
 
 
 def test_session_response_includes_last_message_preview(client, db):
@@ -319,3 +439,118 @@ def test_manual_title_update_sets_auto_title_false(client, db):
     # Verify auto_title is now False
     db.refresh(session)
     assert session.auto_title is False
+
+
+# --- linked_session_ids tests ---
+
+
+def test_update_linked_session_ids(client, db):
+    """PATCH with linked_session_ids updates the session."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    # Create two sessions
+    resp1 = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    session_id_1 = resp1.json()["id"]
+
+    resp2 = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    session_id_2 = resp2.json()["id"]
+
+    # Link session 2 to session 1
+    resp = client.patch(
+        f"/api/sessions/{session_id_1}",
+        json={"linked_session_ids": [session_id_2]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["linked_session_ids"] == [session_id_2]
+
+    session = db.query(ChatSession).filter(ChatSession.id == session_id_1).first()
+    assert session.linked_session_ids == [session_id_2]
+
+
+def test_update_linked_session_ids_rejects_other_users_sessions(client, db):
+    """PATCH with linked_session_ids rejects sessions owned by another user."""
+    user1, token1 = _create_user_and_token(db)
+    headers1 = _auth_header(token1)
+
+    # Create session for user1
+    resp1 = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers1,
+    )
+    session_id_1 = resp1.json()["id"]
+
+    # Create user2 and their session
+    user2 = User(
+        email="other@example.com",
+        hashed_password=hash_password("password"),
+        role=UserRole.BUYER,
+        display_name="Other",
+    )
+    db.add(user2)
+    db.commit()
+    db.refresh(user2)
+    token2 = create_access_token({"sub": user2.id})
+    resp2 = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=_auth_header(token2),
+    )
+    other_session_id = resp2.json()["id"]
+
+    # Try to link to other user's session
+    resp = client.patch(
+        f"/api/sessions/{session_id_1}",
+        json={"linked_session_ids": [other_session_id]},
+        headers=headers1,
+    )
+    assert resp.status_code == 403
+
+
+def test_update_linked_session_ids_empty_list(client, db):
+    """PATCH with empty linked_session_ids clears the links."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    # Create two sessions and link them
+    resp1 = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    session_id_1 = resp1.json()["id"]
+
+    resp2 = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    session_id_2 = resp2.json()["id"]
+
+    client.patch(
+        f"/api/sessions/{session_id_1}",
+        json={"linked_session_ids": [session_id_2]},
+        headers=headers,
+    )
+
+    # Clear links
+    resp = client.patch(
+        f"/api/sessions/{session_id_1}",
+        json={"linked_session_ids": []},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["linked_session_ids"] == []
+
+    session = db.query(ChatSession).filter(ChatSession.id == session_id_1).first()
+    assert session.linked_session_ids == []

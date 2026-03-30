@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
@@ -26,7 +26,7 @@ import {
   WEB_FONT_FAMILY,
 } from '@/lib/constants'
 import type { BuyerContext, DealState, HealthStatus } from '@/lib/types'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, getActiveDeal } from '@/lib/utils'
 import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useRouter } from 'expo-router'
@@ -34,8 +34,8 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { useChat } from '@/hooks/useChat'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { InsightsPanel, QuickActions, CompactPhaseIndicator } from '@/components/insights'
-import { STATUS_LABELS, STATUS_THEMES } from '@/components/insights/HeroSection'
+import { STATUS_LABELS, STATUS_THEMES } from '@/lib/constants'
+import { InsightsPanel, QuickActions, CompactPhaseIndicator } from '@/components/insights-panel'
 import { ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
 function useMobileInsightsWidth() {
@@ -63,39 +63,51 @@ function getPreviewItems(
 ): PreviewItem[] {
   if (!dealState) return [{ type: 'text', label: 'Tap to view insights' }]
 
+  const activeDeal = getActiveDeal(dealState)
   const items: PreviewItem[] = []
 
+  // 0. Multi-deal indicator
+  if (dealState.deals.length >= 2) {
+    items.push({ type: 'text', label: `${dealState.deals.length} deals` })
+  }
+
+  // Merge deal-level + session-level red flags
+  const allFlags = [...(activeDeal?.redFlags ?? []), ...dealState.redFlags]
+
   // 1. Critical red flag — highest priority
-  const criticalFlag = dealState.redFlags.find(
+  const criticalFlag = allFlags.find(
     (flag) => flag.severity === 'critical' && !dismissedFlagIds.has(flag.id)
   )
   if (criticalFlag) {
     items.push({ type: 'flag', label: criticalFlag.message })
   }
 
-  // 2. Deal health
-  const healthStatus = dealState.health?.status ?? computeBasicHealth(dealState.numbers)
+  // 2. Deal health (from active deal)
+  const numbers = activeDeal?.numbers
+  const healthStatus = activeDeal?.health?.status ?? (numbers ? computeBasicHealth(numbers) : null)
   if (healthStatus) {
     items.push({ type: 'health', status: healthStatus })
   }
 
-  // 3. Current offer or listing price
-  if (dealState.numbers.currentOffer != null) {
-    items.push({ type: 'text', label: formatCurrency(dealState.numbers.currentOffer) })
-  } else if (dealState.numbers.listingPrice != null) {
-    items.push({ type: 'text', label: `List ${formatCurrency(dealState.numbers.listingPrice)}` })
+  // 3. Current offer or listing price (from active deal)
+  if (numbers?.currentOffer != null) {
+    items.push({ type: 'text', label: formatCurrency(numbers.currentOffer) })
+  } else if (numbers?.listingPrice != null) {
+    items.push({ type: 'text', label: `List ${formatCurrency(numbers.listingPrice)}` })
   }
 
-  // 4. Savings
-  const savings =
-    dealState.savingsEstimate ??
-    computeSavings(dealState.firstOffer, dealState.numbers.currentOffer)
-  if (savings != null && savings > 0) {
-    items.push({ type: 'savings', label: `Saved ${formatCurrency(savings)}` })
+  // 4. Savings (from active deal)
+  if (activeDeal) {
+    const savings =
+      activeDeal.savingsEstimate ??
+      computeSavings(activeDeal.firstOffer, activeDeal.numbers.currentOffer)
+    if (savings != null && savings > 0) {
+      items.push({ type: 'savings', label: `Saved ${formatCurrency(savings)}` })
+    }
   }
 
   // 5. Warning flag count (non-critical)
-  const warningCount = dealState.redFlags.filter(
+  const warningCount = allFlags.filter(
     (flag) => flag.severity === 'warning' && !dismissedFlagIds.has(flag.id)
   ).length
   if (warningCount > 0 && !criticalFlag) {
@@ -137,8 +149,8 @@ const GREETING_MESSAGES: Record<BuyerContext, string> = {
 
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
-  const activeSession = useChatStore((state) =>
-    state.sessions.find((s) => s.id === state.activeSessionId)
+  const activeSessionTitle = useChatStore(
+    (state) => state.sessions.find((s) => s.id === state.activeSessionId)?.title
   )
   const createSession = useChatStore((state) => state.createSession)
   const addGreeting = useChatStore((state) => state.addGreeting)
@@ -157,21 +169,13 @@ export default function ChatScreen() {
   const insightsSlide = useRef(new Animated.Value(mobileInsightsWidth)).current
   const insightsBackdropOpacity = useRef(new Animated.Value(0)).current
 
-  const {
-    messages,
-    isSending,
-    isLoading,
-    streamingText,
-    dealState,
-    send,
-    handleQuickAction,
-    toggleChecklistItem,
-  } = useChat(activeSessionId)
+  const { messages, isSending, isLoading, streamingText, send, handleQuickAction } =
+    useChat(activeSessionId)
+
+  // Subscribe to dealState only for mobile preview — desktop doesn't need it
+  const dealState = useDealStore((s) => s.dealState)
 
   const dismissedFlagIds = useDealStore((s) => s.dismissedFlagIds)
-  const dismissRedFlag = useDealStore((s) => s.dismissRedFlag)
-  const correctNumber = useDealStore((s) => s.correctNumber)
-  const correctVehicleField = useDealStore((s) => s.correctVehicleField)
 
   const showContextPicker = !activeSessionId && !isLoading
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
@@ -275,17 +279,36 @@ export default function ChatScreen() {
     aiResponseCount - quickActionsUpdatedAtResponse >= QUICK_ACTIONS_STALENESS_THRESHOLD
   const isStaleStatic = !hasDynamicActions && aiResponseCount >= STATIC_ACTIONS_STALENESS_THRESHOLD
 
-  const effectiveQuickActions = hasDynamicActions
-    ? isStaleDynamic
-      ? []
-      : storeQuickActions
-    : isStaleStatic
-      ? []
-      : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? [])
+  const effectiveQuickActions = useMemo(
+    () =>
+      hasDynamicActions
+        ? isStaleDynamic
+          ? []
+          : storeQuickActions
+        : isStaleStatic
+          ? []
+          : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? []),
+    [hasDynamicActions, isStaleDynamic, storeQuickActions, isStaleStatic, dealState?.buyerContext]
+  )
 
   const showQuickActions = !showContextPicker && hasRealExchange && effectiveQuickActions.length > 0
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewItems = getPreviewItems(dealState, dismissedFlagIds)
+  const activeDealForPreview = dealState ? getActiveDeal(dealState) : null
+
+  const quickActionsFooter = useMemo(
+    () =>
+      showQuickActions ? (
+        <YStack paddingHorizontal="$4" paddingTop="$2" paddingBottom="$1">
+          <QuickActions
+            actions={effectiveQuickActions}
+            onAction={handleQuickAction}
+            disabled={isSending}
+          />
+        </YStack>
+      ) : null,
+    [showQuickActions, effectiveQuickActions, handleQuickAction, isSending]
+  )
 
   if (isLoading && messages.length === 0) {
     return (
@@ -324,7 +347,7 @@ export default function ChatScreen() {
         textAlign="center"
         numberOfLines={1}
       >
-        {activeSession?.title || APP_NAME}
+        {activeSessionTitle || APP_NAME}
       </Text>
       <TouchableOpacity
         onPress={handleNewSession}
@@ -444,7 +467,9 @@ export default function ChatScreen() {
                   )
               }
             })}
-            {dealState && <CompactPhaseIndicator currentPhase={dealState.phase} />}
+            {activeDealForPreview?.phase && (
+              <CompactPhaseIndicator currentPhase={activeDealForPreview.phase} />
+            )}
           </XStack>
         </XStack>
       </Pressable>
@@ -464,17 +489,7 @@ export default function ChatScreen() {
             streamingText={streamingText}
             topPadding={mobileChatTopInset}
             bottomPadding={12}
-            footer={
-              showQuickActions ? (
-                <YStack paddingHorizontal="$4" paddingTop="$2" paddingBottom="$1">
-                  <QuickActions
-                    actions={effectiveQuickActions}
-                    onAction={handleQuickAction}
-                    disabled={isSending}
-                  />
-                </YStack>
-              ) : null
-            }
+            footer={quickActionsFooter}
           />
           {mobileInsightsPreview ? (
             <YStack
@@ -516,14 +531,16 @@ export default function ChatScreen() {
             {header}
 
             <XStack flex={1}>
+              {chatColumn}
+
+              {/* AI Insights Panel — right sidebar on desktop */}
               <Animated.View
                 style={{
                   width: dealState && !showContextPicker ? 360 : 0,
                   overflow: 'hidden',
-                  borderRightWidth: dealState && !showContextPicker ? 1 : 0,
-                  borderRightColor: theme.borderColor?.val as string,
+                  borderLeftWidth: dealState && !showContextPicker ? 1 : 0,
+                  borderLeftColor: theme.borderColor?.val as string,
                   backgroundColor: theme.backgroundStrong?.val as string,
-                  // CSS transition for smooth slide
                   ...(Platform.OS === 'web' ? { transition: 'width 250ms ease-out' } : {}),
                 }}
               >
@@ -539,20 +556,11 @@ export default function ChatScreen() {
                         } as any
                       }
                     >
-                      <InsightsPanel
-                        dealState={dealState}
-                        dismissedFlagIds={dismissedFlagIds}
-                        onToggleChecklist={toggleChecklistItem}
-                        onDismissFlag={dismissRedFlag}
-                        onCorrectNumber={correctNumber}
-                        onCorrectVehicleField={correctVehicleField}
-                      />
+                      <InsightsPanel />
                     </ScrollView>
                   </View>
                 ) : null}
               </Animated.View>
-
-              {chatColumn}
             </XStack>
           </YStack>
         </ThemedSafeArea>
@@ -669,16 +677,7 @@ export default function ChatScreen() {
                     </XStack>
 
                     <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-                      {dealState ? (
-                        <InsightsPanel
-                          dealState={dealState}
-                          dismissedFlagIds={dismissedFlagIds}
-                          onToggleChecklist={toggleChecklistItem}
-                          onDismissFlag={dismissRedFlag}
-                          onCorrectNumber={correctNumber}
-                          onCorrectVehicleField={correctVehicleField}
-                        />
-                      ) : null}
+                      {dealState ? <InsightsPanel /> : null}
                     </ScrollView>
                   </YStack>
                 </ThemedSafeArea>

@@ -11,9 +11,11 @@ logger = logging.getLogger(__name__)
 MAX_TITLE_LENGTH = 40
 
 
-def build_vehicle_title(deal_state_dict: dict) -> str | None:
-    """Build a title from vehicle info. Returns None if no vehicle data."""
-    vehicle = deal_state_dict.get("vehicle")
+def build_vehicle_title(vehicle: dict | None) -> str | None:
+    """Build a title from a vehicle dict. Returns None if no vehicle data.
+
+    Accepts a flat vehicle dict with keys: year, make, model, trim.
+    """
     if not vehicle or not vehicle.get("make"):
         return None
 

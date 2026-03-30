@@ -1,4 +1,11 @@
-import type { BuyerContext, ChecklistItem, DealPhase, QuickAction, Scorecard } from './types'
+import type {
+  BuyerContext,
+  ChecklistItem,
+  DealPhase,
+  HealthStatus,
+  QuickAction,
+  Scorecard,
+} from './types'
 
 // ─── App ───
 
@@ -152,3 +159,19 @@ export const POST_PURCHASE_CHECKLIST: ChecklistItem[] = [
   { label: 'Save all signed documents', done: false },
   { label: 'Check for any post-sale charges', done: false },
 ]
+
+// ─── Health Status Display ───
+
+export const STATUS_LABELS: Record<HealthStatus, string> = {
+  good: 'Good Deal',
+  fair: 'Fair Deal',
+  concerning: 'Concerning',
+  bad: 'Bad Deal',
+}
+
+export const STATUS_THEMES: Record<HealthStatus, 'success' | 'warning' | 'danger'> = {
+  good: 'success',
+  fair: 'warning',
+  concerning: 'warning',
+  bad: 'danger',
+}

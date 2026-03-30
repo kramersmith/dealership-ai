@@ -48,6 +48,7 @@ function mapDealSummary(ds: any): import('./types').DealSummary | null {
     currentOffer: ds.current_offer ?? null,
     listingPrice: ds.listing_price ?? null,
     scoreOverall: ds.score_overall ?? null,
+    dealCount: ds.deal_count ?? 0,
   }
 }
 
@@ -62,6 +63,147 @@ function mapSession(s: any): Session {
     updatedAt: s.updated_at,
     createdAt: s.created_at,
   }
+}
+
+/** Map a single vehicle from backend snake_case to frontend Vehicle type. */
+function mapVehicle(v: any): import('./types').Vehicle {
+  return {
+    id: v.id,
+    role: v.role,
+    year: v.year,
+    make: v.make,
+    model: v.model,
+    trim: v.trim ?? undefined,
+    vin: v.vin ?? undefined,
+    mileage: v.mileage ?? undefined,
+    color: v.color ?? undefined,
+    engine: v.engine ?? undefined,
+  }
+}
+
+/** Map a single deal from backend flat fields to frontend Deal type. */
+function mapDeal(d: any): import('./types').Deal {
+  return {
+    id: d.id,
+    vehicleId: d.vehicle_id,
+    dealerName: d.dealer_name ?? null,
+    phase: d.phase,
+    numbers: {
+      msrp: d.msrp,
+      invoicePrice: d.invoice_price,
+      listingPrice: d.listing_price,
+      yourTarget: d.your_target,
+      walkAwayPrice: d.walk_away_price,
+      currentOffer: d.current_offer,
+      monthlyPayment: d.monthly_payment,
+      apr: d.apr,
+      loanTermMonths: d.loan_term_months,
+      downPayment: d.down_payment,
+      tradeInValue: d.trade_in_value,
+    },
+    scorecard: {
+      price: d.score_price,
+      financing: d.score_financing,
+      tradeIn: d.score_trade_in,
+      fees: d.score_fees,
+      overall: d.score_overall,
+    },
+    health: d.health_status
+      ? {
+          status: d.health_status,
+          summary: d.health_summary ?? '',
+          recommendation: d.recommendation ?? null,
+        }
+      : null,
+    redFlags: (d.red_flags ?? []).map((f: any) => ({
+      id: f.id,
+      severity: f.severity,
+      message: f.message,
+    })),
+    informationGaps: (d.information_gaps ?? []).map((g: any) => ({
+      label: g.label,
+      reason: g.reason,
+      priority: g.priority,
+    })),
+    firstOffer: d.first_offer ?? null,
+    preFiPrice: d.pre_fi_price ?? null,
+    savingsEstimate: d.savings_estimate ?? null,
+  }
+}
+
+/** Map an AI panel card from backend snake_case to frontend AiPanelCard type. */
+function mapAiPanelCard(c: any): import('./types').AiPanelCard {
+  return {
+    type: c.type,
+    title: c.title,
+    content: c.content ?? {},
+    priority: c.priority,
+  }
+}
+
+/** Map a deal comparison from backend to frontend DealComparison type. */
+function mapDealComparison(dc: any): import('./types').DealComparison | null {
+  if (!dc) return null
+  return {
+    summary: dc.summary,
+    recommendation: dc.recommendation,
+    bestDealId: dc.best_deal_id,
+    highlights: (dc.highlights ?? []).map((h: any) => ({
+      label: h.label,
+      values: (h.values ?? []).map((v: any) => ({
+        dealId: v.deal_id,
+        value: v.value,
+        isWinner: v.is_winner,
+      })),
+      note: h.note ?? undefined,
+    })),
+  }
+}
+
+/** Map camelCase vehicle field names to snake_case for the backend. */
+const VEHICLE_FIELD_MAP: Record<string, string> = {
+  vehicleId: 'vehicle_id',
+  year: 'year',
+  make: 'make',
+  model: 'model',
+  trim: 'trim',
+  vin: 'vin',
+  mileage: 'mileage',
+  color: 'color',
+  engine: 'engine',
+  role: 'role',
+}
+
+/** Map camelCase deal field names to snake_case for the backend. */
+const DEAL_FIELD_MAP: Record<string, string> = {
+  dealId: 'deal_id',
+  vehicleId: 'vehicle_id',
+  dealerName: 'dealer_name',
+  phase: 'phase',
+  msrp: 'msrp',
+  invoicePrice: 'invoice_price',
+  listingPrice: 'listing_price',
+  yourTarget: 'your_target',
+  walkAwayPrice: 'walk_away_price',
+  currentOffer: 'current_offer',
+  monthlyPayment: 'monthly_payment',
+  apr: 'apr',
+  loanTermMonths: 'loan_term_months',
+  downPayment: 'down_payment',
+  tradeInValue: 'trade_in_value',
+}
+
+/** Convert a corrections object from camelCase keys to snake_case. */
+function toSnakeCase(
+  obj: Record<string, any>,
+  fieldMap: Record<string, string>
+): Record<string, any> {
+  const result: Record<string, any> = {}
+  for (const [key, value] of Object.entries(obj)) {
+    const snakeKey = fieldMap[key] ?? key
+    result[snakeKey] = value
+  }
+  return result
 }
 
 class ApiClient implements ApiService {
@@ -151,7 +293,9 @@ class ApiClient implements ApiService {
     sessionId: string,
     content: string,
     imageUri?: string,
-    onChunk?: (text: string) => void
+    onChunk?: (text: string) => void,
+    onToolResult?: (toolCall: ToolCall) => void,
+    onTextDone?: (finalText: string) => void
   ): Promise<Message> {
     // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
     // is buffered by React Native's polyfill and doesn't deliver chunks live.
@@ -165,6 +309,7 @@ class ApiClient implements ApiService {
       const toolCalls: ToolCall[] = []
       let processed = 0
       let buffer = ''
+      let sseError: string | null = null
 
       xhr.onprogress = () => {
         const newData = xhr.responseText.slice(processed)
@@ -193,14 +338,25 @@ class ApiClient implements ApiService {
 
           try {
             const data = JSON.parse(dataStr)
-            if ((eventType === 'text' || eventType === 'followup_text') && data.chunk) {
+            if (eventType === 'text' && data.chunk) {
               fullText += data.chunk
               onChunk?.(fullText)
+            } else if (eventType === 'done') {
+              // Text streaming is complete — finalize immediately
+              // (don't wait for onload which blocks on Stages 2+3)
+              fullText = data.text ?? fullText
+              onTextDone?.(fullText)
+            } else if (eventType === 'error') {
+              console.error('[apiClient] SSE error event:', data.message ?? data)
+              sseError = data.message ?? 'An error occurred'
             } else if (eventType === 'tool_result' && data.tool) {
-              toolCalls.push({ name: data.tool as ToolCall['name'], args: data.data })
+              const toolCall: ToolCall = { name: data.tool as ToolCall['name'], args: data.data }
+              toolCalls.push(toolCall)
+              // Process tool results incrementally as they arrive
+              onToolResult?.(toolCall)
             }
-          } catch {
-            // Skip malformed SSE data
+          } catch (e) {
+            console.debug('[apiClient] Skipping malformed SSE data:', dataStr, e)
           }
         }
       }
@@ -209,6 +365,10 @@ class ApiClient implements ApiService {
         if (xhr.status >= 200 && xhr.status < 300) {
           // Process any remaining data not caught by onprogress
           xhr.onprogress?.(null as any)
+          if (sseError) {
+            reject(new Error(sseError))
+            return
+          }
           resolve({
             id: Math.random().toString(36).substring(2),
             sessionId,
@@ -233,48 +393,10 @@ class ApiClient implements ApiService {
     const ds = await request<any>(`/deal/${sessionId}`)
     return {
       sessionId: ds.session_id,
-      phase: ds.phase,
       buyerContext: ds.buyer_context || DEFAULT_BUYER_CONTEXT,
-      numbers: {
-        msrp: ds.msrp,
-        invoicePrice: ds.invoice_price,
-        listingPrice: ds.listing_price,
-        yourTarget: ds.your_target,
-        walkAwayPrice: ds.walk_away_price,
-        currentOffer: ds.current_offer,
-        monthlyPayment: ds.monthly_payment,
-        apr: ds.apr,
-        loanTermMonths: ds.loan_term_months,
-        downPayment: ds.down_payment,
-        tradeInValue: ds.trade_in_value,
-      },
-      vehicle: ds.vehicle_make
-        ? {
-            year: ds.vehicle_year,
-            make: ds.vehicle_make,
-            model: ds.vehicle_model,
-            trim: ds.vehicle_trim,
-            vin: ds.vehicle_vin,
-            mileage: ds.vehicle_mileage,
-            color: ds.vehicle_color,
-          }
-        : null,
-      scorecard: {
-        price: ds.score_price,
-        financing: ds.score_financing,
-        tradeIn: ds.score_trade_in,
-        fees: ds.score_fees,
-        overall: ds.score_overall,
-      },
-      checklist: ds.checklist || [],
-      timerStartedAt: ds.timer_started_at,
-      health: ds.health_status
-        ? {
-            status: ds.health_status,
-            summary: ds.health_summary ?? '',
-            recommendation: ds.recommendation ?? null,
-          }
-        : null,
+      activeDealId: ds.active_deal_id ?? null,
+      vehicles: (ds.vehicles ?? []).map(mapVehicle),
+      deals: (ds.deals ?? []).map(mapDeal),
       redFlags: (ds.red_flags ?? []).map((f: any) => ({
         id: f.id,
         severity: f.severity,
@@ -285,26 +407,49 @@ class ApiClient implements ApiService {
         reason: g.reason,
         priority: g.priority,
       })),
-      firstOffer: ds.first_offer ?? null,
-      preFiPrice: ds.pre_fi_price ?? null,
-      savingsEstimate: ds.savings_estimate ?? null,
+      checklist: ds.checklist || [],
+      timerStartedAt: ds.timer_started_at ?? null,
+      aiPanelCards: (ds.ai_panel_cards ?? []).map(mapAiPanelCard),
+      dealComparison: mapDealComparison(ds.deal_comparison),
     }
   }
 
   async correctDealState(
     sessionId: string,
-    corrections: Record<string, string | number | null>
+    corrections: {
+      vehicleCorrections?: {
+        vehicleId: string
+        [field: string]: string | number | null | undefined
+      }[]
+      dealCorrections?: { dealId: string; [field: string]: string | number | null | undefined }[]
+    }
   ): Promise<{
+    dealId: string
     healthStatus: string | null
     healthSummary: string | null
     recommendation: string | null
     redFlags: RedFlag[]
   }> {
+    const payload: Record<string, any> = {}
+
+    if (corrections.vehicleCorrections) {
+      payload.vehicle_corrections = corrections.vehicleCorrections.map((vc) =>
+        toSnakeCase(vc, VEHICLE_FIELD_MAP)
+      )
+    }
+
+    if (corrections.dealCorrections) {
+      payload.deal_corrections = corrections.dealCorrections.map((dc) =>
+        toSnakeCase(dc, DEAL_FIELD_MAP)
+      )
+    }
+
     const res = await request<any>(`/deal/${sessionId}`, {
       method: 'PATCH',
-      body: JSON.stringify(corrections),
+      body: JSON.stringify(payload),
     })
     return {
+      dealId: res.deal_id ?? '',
       healthStatus: res.health_status ?? null,
       healthSummary: res.health_summary ?? null,
       recommendation: res.recommendation ?? null,

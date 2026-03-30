@@ -9,176 +9,26 @@ from starlette.responses import StreamingResponse
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, DealPhase, HealthStatus, MessageRole
+from app.models.enums import MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.chat import ChatMessageRequest, MessageResponse
 from app.services.claude import (
-    assess_deal_state,
+    analyze_deal,
     build_messages,
     build_system_prompt,
-    generate_quick_actions,
+    extract_deal_facts,
+    generate_ai_panel_cards,
+    merge_extraction_results,
     stream_chat,
-    stream_followup_text,
 )
+from app.services.deal_state import apply_extraction, deal_state_to_dict
 from app.services.post_chat_processing import update_session_metadata
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _apply_tool_call(deal_state: DealState, tool_name: str, tool_data: dict) -> None:
-    """Apply a tool call result to the deal state in-place."""
-    if tool_name == "update_deal_numbers":
-        for field in [
-            "msrp",
-            "invoice_price",
-            "listing_price",
-            "your_target",
-            "walk_away_price",
-            "current_offer",
-            "monthly_payment",
-            "apr",
-            "loan_term_months",
-            "down_payment",
-            "trade_in_value",
-        ]:
-            if field in tool_data:
-                setattr(deal_state, field, tool_data[field])
-
-        # Snapshot first offer for savings tracking
-        if (
-            "current_offer" in tool_data
-            and deal_state.first_offer is None
-            and deal_state.current_offer is not None
-        ):
-            deal_state.first_offer = deal_state.current_offer
-
-    elif tool_name == "update_deal_phase":
-        if "phase" in tool_data:
-            # Snapshot pre-F&I price when entering financing phase
-            if (
-                tool_data["phase"] == DealPhase.FINANCING
-                and deal_state.pre_fi_price is None
-                and deal_state.current_offer is not None
-            ):
-                deal_state.pre_fi_price = deal_state.current_offer
-            deal_state.phase = tool_data["phase"]
-
-    elif tool_name == "update_scorecard":
-        for field in [
-            "score_price",
-            "score_financing",
-            "score_trade_in",
-            "score_fees",
-            "score_overall",
-        ]:
-            if field in tool_data:
-                setattr(deal_state, field, tool_data[field])
-
-    elif tool_name == "set_vehicle":
-        field_map = {
-            "year": "vehicle_year",
-            "make": "vehicle_make",
-            "model": "vehicle_model",
-            "trim": "vehicle_trim",
-            "vin": "vehicle_vin",
-            "mileage": "vehicle_mileage",
-            "color": "vehicle_color",
-        }
-        for src, dst in field_map.items():
-            if src in tool_data:
-                setattr(deal_state, dst, tool_data[src])
-
-    elif tool_name == "update_checklist":
-        if "items" in tool_data:
-            deal_state.checklist = tool_data["items"]
-
-    elif tool_name == "update_buyer_context":
-        if "buyer_context" in tool_data:
-            try:
-                validated = BuyerContext(tool_data["buyer_context"])
-            except ValueError:
-                logger.warning(
-                    "Invalid buyer_context from tool call: %s",
-                    tool_data["buyer_context"],
-                )
-                return
-            deal_state.buyer_context = validated
-
-    elif tool_name == "update_deal_health":
-        if "status" in tool_data:
-            try:
-                deal_state.health_status = HealthStatus(tool_data["status"])
-            except ValueError:
-                logger.warning(
-                    "Invalid health_status from tool call: %s",
-                    tool_data["status"],
-                )
-                return
-        if "summary" in tool_data:
-            deal_state.health_summary = tool_data["summary"]
-        if "recommendation" in tool_data:
-            deal_state.recommendation = tool_data["recommendation"]
-
-    elif tool_name == "update_red_flags":
-        if "flags" in tool_data:
-            deal_state.red_flags = tool_data["flags"]
-
-    elif tool_name == "update_information_gaps":
-        if "gaps" in tool_data:
-            deal_state.information_gaps = tool_data["gaps"]
-
-    elif tool_name == "update_quick_actions":
-        # Quick actions are ephemeral UI state handled client-side only — no persistence needed.
-        pass
-
-
-def _deal_state_to_dict(ds: DealState) -> dict:
-    """Convert deal state to dict for system prompt context."""
-    return {
-        "phase": ds.phase,
-        "buyer_context": ds.buyer_context,
-        "numbers": {
-            "msrp": ds.msrp,
-            "invoice_price": ds.invoice_price,
-            "listing_price": ds.listing_price,
-            "your_target": ds.your_target,
-            "walk_away_price": ds.walk_away_price,
-            "current_offer": ds.current_offer,
-            "monthly_payment": ds.monthly_payment,
-            "apr": ds.apr,
-            "loan_term_months": ds.loan_term_months,
-            "down_payment": ds.down_payment,
-            "trade_in_value": ds.trade_in_value,
-        },
-        "vehicle": {
-            "year": ds.vehicle_year,
-            "make": ds.vehicle_make,
-            "model": ds.vehicle_model,
-            "trim": ds.vehicle_trim,
-            "mileage": ds.vehicle_mileage,
-        }
-        if ds.vehicle_make
-        else None,
-        "scorecard": {
-            "price": ds.score_price,
-            "financing": ds.score_financing,
-            "trade_in": ds.score_trade_in,
-            "fees": ds.score_fees,
-            "overall": ds.score_overall,
-        },
-        "health": {
-            "status": ds.health_status,
-            "summary": ds.health_summary,
-            "recommendation": ds.recommendation,
-        },
-        "red_flags": ds.red_flags or [],
-        "information_gaps": ds.information_gaps or [],
-        "checklist": ds.checklist or [],
-    }
 
 
 @router.post("/{session_id}/message")
@@ -221,7 +71,7 @@ async def send_message(
 
     # Load deal state
     deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
-    deal_state_dict = _deal_state_to_dict(deal_state) if deal_state else None
+    deal_state_dict = deal_state_to_dict(deal_state, db) if deal_state else None
 
     # Load linked session context (if any)
     linked_messages = None
@@ -242,118 +92,143 @@ async def send_message(
         full_text = ""
         all_tool_calls = []
 
-        async for sse_event in stream_chat(system_prompt, messages):
-            yield sse_event
+        # ── Stage 1: Stream text (no tools) ──
+        logger.debug("Stage 1: Streaming text response, session_id=%s", session_id)
+        try:
+            async for sse_event in stream_chat(system_prompt, messages):
+                yield sse_event
 
-            # Parse the event to capture text and tool calls for persistence
-            if sse_event.startswith("event: done"):
-                data_line = sse_event.split("data: ", 1)[1].split("\n")[0]
-                done_data = json.loads(data_line)
-                full_text = done_data.get("text", "")
-                all_tool_calls = done_data.get("tool_calls", [])
+                # Parse the done event to capture the full text
+                if sse_event.startswith("event: done"):
+                    try:
+                        data_line = sse_event.split("data: ", 1)[1].split("\n")[0]
+                        done_data = json.loads(data_line)
+                        full_text = done_data.get("text", "")
+                    except (IndexError, json.JSONDecodeError):
+                        logger.exception(
+                            "Failed to parse done event: session_id=%s",
+                            session_id,
+                        )
+        except Exception:
+            logger.exception("Stage 1 streaming failed: session_id=%s", session_id)
+            yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
+            return
 
-        # Log what Claude returned
         logger.debug(
-            "Claude response: text_length=%d, tool_calls=%s, session_id=%s",
+            "Stage 1 complete: text_length=%d, session_id=%s",
             len(full_text),
-            [tc["name"] for tc in all_tool_calls],
             session_id,
         )
 
-        # Two-pass: if Claude responded with only tool calls and no text,
-        # fire a lightweight follow-up to generate the text response
-        if not full_text.strip() and all_tool_calls:
-            logger.info(
-                "Tool-only response detected, firing follow-up: session_id=%s",
+        # Build full message list for extraction and panel generation
+        all_messages = [*history_dicts, {"role": "user", "content": body.content}]
+        if full_text:
+            all_messages.append({"role": "assistant", "content": full_text})
+
+        # ── Stage 2: Extract data + analyze deal (parallel subagents) ──
+        if deal_state_dict:
+            logger.debug(
+                "Stage 2: Running factual extractor + analyst in parallel, session_id=%s",
                 session_id,
             )
-            try:
-                async for sse_event in stream_followup_text(messages, all_tool_calls):
-                    yield sse_event
+            results = await asyncio.gather(
+                extract_deal_facts(deal_state_dict, all_messages, full_text),
+                analyze_deal(deal_state_dict, all_messages, full_text),
+                return_exceptions=True,
+            )
 
-                    if sse_event.startswith("event: followup_done"):
-                        data_line = sse_event.split("data: ", 1)[1].split("\n")[0]
-                        followup_data = json.loads(data_line)
-                        full_text = followup_data.get("text", "")
+            facts: dict = {}
+            analysis: dict = {}
+
+            if isinstance(results[0], Exception):
+                logger.exception(
+                    "Factual extraction failed: session_id=%s",
+                    session_id,
+                    exc_info=results[0],
+                )
+            elif isinstance(results[0], dict):
+                facts = results[0]
+                logger.debug(
+                    "Factual extractor keys: %s, session_id=%s",
+                    list(facts.keys()) if facts else "(empty)",
+                    session_id,
+                )
+
+            if isinstance(results[1], Exception):
+                logger.exception(
+                    "Deal analysis failed: session_id=%s",
+                    session_id,
+                    exc_info=results[1],
+                )
+            elif isinstance(results[1], dict):
+                analysis = results[1]
+                logger.debug(
+                    "Analyst keys: %s, session_id=%s",
+                    list(analysis.keys()) if analysis else "(empty)",
+                    session_id,
+                )
+
+            # Merge results and apply to DB
+            extraction = merge_extraction_results(facts, analysis)
+            if extraction:
+                try:
+                    applied_tools = apply_extraction(deal_state, extraction, db)
+                    all_tool_calls.extend(applied_tools)
+                    for tool_call in applied_tools:
+                        yield f"event: tool_result\ndata: {json.dumps({'tool': tool_call['name'], 'data': tool_call['args']})}\n\n"
+                    logger.info(
+                        "Stage 2 complete: applied %d tool calls (facts=%d, analysis=%d), session_id=%s",
+                        len(applied_tools),
+                        len(facts),
+                        len(analysis),
+                        session_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Stage 2 extraction apply failed: session_id=%s",
+                        session_id,
+                    )
+            else:
+                logger.debug(
+                    "Stage 2: No extraction data returned, session_id=%s",
+                    session_id,
+                )
+
+        # ── Stage 3: Generate panel cards using updated deal state ──
+        if deal_state:
+            logger.debug(
+                "Stage 3: Generating AI panel cards, session_id=%s", session_id
+            )
+            try:
+                # Rebuild deal state dict after extraction so panel sees updated data
+                updated_state_dict = deal_state_to_dict(deal_state, db)
+                ai_cards = await generate_ai_panel_cards(
+                    updated_state_dict, full_text, all_messages
+                )
+                if ai_cards:
+                    deal_state.ai_panel_cards = ai_cards
+                    panel_tool_call = {
+                        "name": "update_insights_panel",
+                        "args": {"cards": ai_cards},
+                    }
+                    all_tool_calls.append(panel_tool_call)
+                    yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_insights_panel', 'data': {'cards': ai_cards}})}\n\n"
+                    logger.info(
+                        "Stage 3 complete: generated %d AI panel cards, session_id=%s",
+                        len(ai_cards),
+                        session_id,
+                    )
+                else:
+                    logger.debug(
+                        "Stage 3: No AI panel cards generated, session_id=%s",
+                        session_id,
+                    )
             except Exception:
                 logger.exception(
-                    "Follow-up text generation failed: session_id=%s", session_id
+                    "Stage 3 AI panel generation failed: session_id=%s", session_id
                 )
-
-        # Apply primary tool calls to deal state BEFORE safety-net checks
-        # so the assessment sees updated numbers
-        if deal_state and all_tool_calls:
-            for tc in all_tool_calls:
-                logger.debug("Applying tool call: %s args=%s", tc["name"], tc["args"])
-                _apply_tool_call(deal_state, tc["name"], tc["args"])
-
-        # Determine what safety-net calls are needed
-        called_quick_actions = any(
-            tc["name"] == "update_quick_actions" for tc in all_tool_calls
-        )
-        numbers_changed = any(
-            tc["name"] == "update_deal_numbers" for tc in all_tool_calls
-        )
-        health_updated = any(
-            tc["name"] == "update_deal_health" for tc in all_tool_calls
-        )
-        flags_updated = any(tc["name"] == "update_red_flags" for tc in all_tool_calls)
-        needs_assessment = (
-            numbers_changed
-            and (not health_updated or not flags_updated)
-            and deal_state is not None
-        )
-
-        # Run safety-net calls concurrently
-        qa_task = (
-            asyncio.create_task(generate_quick_actions(messages, full_text))
-            if not called_quick_actions
-            else None
-        )
-        assess_task = (
-            asyncio.create_task(assess_deal_state(_deal_state_to_dict(deal_state)))
-            if needs_assessment
-            else None
-        )
-
-        if qa_task:
-            quick_actions = await qa_task
-            if quick_actions:
-                qa_tool_call = {
-                    "name": "update_quick_actions",
-                    "args": {"actions": quick_actions},
-                }
-                all_tool_calls.append(qa_tool_call)
-                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_quick_actions', 'data': {'actions': quick_actions}})}\n\n"
-                logger.debug(
-                    "Generated quick actions: %s",
-                    [a["label"] for a in quick_actions],
-                )
-
-        if assess_task:
-            assessment = await assess_task
-            if assessment.get("health") and not health_updated:
-                health = assessment["health"]
-                _apply_tool_call(deal_state, "update_deal_health", health)
-                health_tc = {
-                    "name": "update_deal_health",
-                    "args": health,
-                }
-                all_tool_calls.append(health_tc)
-                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_deal_health', 'data': health})}\n\n"
-                logger.debug(
-                    "Assessment generated deal health: %s", health.get("status")
-                )
-            if assessment.get("flags") and not flags_updated:
-                flags = assessment["flags"]
-                _apply_tool_call(deal_state, "update_red_flags", {"flags": flags})
-                flags_tc = {
-                    "name": "update_red_flags",
-                    "args": {"flags": flags},
-                }
-                all_tool_calls.append(flags_tc)
-                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_red_flags', 'data': {'flags': flags}})}\n\n"
-                logger.debug("Assessment generated %d red flags", len(flags))
+        else:
+            logger.debug("Stage 3 skipped: no deal state, session_id=%s", session_id)
 
         # Persist assistant message
         assistant_msg = Message(
@@ -365,9 +240,6 @@ async def send_message(
         db.add(assistant_msg)
 
         # Update session metadata (preview + title)
-        all_messages = [*history_dicts, {"role": "user", "content": body.content}]
-        if full_text:
-            all_messages.append({"role": "assistant", "content": full_text})
         try:
             await update_session_metadata(
                 session=session,
@@ -376,15 +248,30 @@ async def send_message(
                 tool_calls=all_tool_calls,
                 response_text=full_text,
                 user_message=body.content,
+                db=db,
             )
         except Exception:
             logger.exception(
                 "Session metadata update failed: session_id=%s", session_id
             )
+
         # Update session timestamp
         session.updated_at = datetime.now(timezone.utc)
 
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            logger.exception("Final db.commit failed: session_id=%s", session_id)
+            db.rollback()
+            yield f"event: error\ndata: {json.dumps({'message': 'Failed to save response. Please try again.'})}\n\n"
+            return
+
+        logger.info(
+            "Chat response complete: session_id=%s, text_length=%d, tool_calls=%d",
+            session_id,
+            len(full_text),
+            len(all_tool_calls),
+        )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

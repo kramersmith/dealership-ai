@@ -16,7 +16,11 @@ export type ScoreStatus = 'red' | 'yellow' | 'green' | null
 
 // ─── Vehicle ───
 
+export type VehicleRole = 'primary' | 'trade_in'
+
 export interface Vehicle {
+  id: string
+  role: VehicleRole
   year: number
   make: string
   model: string
@@ -24,6 +28,7 @@ export interface Vehicle {
   vin?: string
   mileage?: number
   color?: string
+  engine?: string
 }
 
 // ─── Deal Numbers ───
@@ -89,25 +94,73 @@ export interface InformationGap {
   priority: GapPriority
 }
 
-// ─── Deal State (persistent UI) ───
+// ─── Deal ───
 
-export interface DealState {
-  sessionId: string
+export interface Deal {
+  id: string
+  vehicleId: string
+  dealerName: string | null
   phase: DealPhase
-  buyerContext: BuyerContext
   numbers: DealNumbers
-  vehicle: Vehicle | null
   scorecard: Scorecard
-  checklist: ChecklistItem[]
-  timerStartedAt: string | null
-  // Tier 2 — AI-assessed
   health: DealHealth | null
   redFlags: RedFlag[]
   informationGaps: InformationGap[]
-  // Offer history
   firstOffer: number | null
   preFiPrice: number | null
   savingsEstimate: number | null
+}
+
+// ─── Deal Comparison ───
+
+export interface ComparisonHighlight {
+  label: string
+  values: { dealId: string; value: string; isWinner: boolean }[]
+  note?: string
+}
+
+export interface DealComparison {
+  summary: string
+  recommendation: string
+  bestDealId: string
+  highlights: ComparisonHighlight[]
+}
+
+// ─── AI Panel ───
+
+export type AiCardType =
+  | 'briefing'
+  | 'numbers'
+  | 'comparison'
+  | 'vehicle'
+  | 'warning'
+  | 'tip'
+  | 'checklist'
+  | 'success'
+export type AiCardPriority = 'critical' | 'high' | 'normal' | 'low'
+
+export interface AiPanelCard {
+  type: AiCardType
+  title: string
+  content: Record<string, any>
+  priority: AiCardPriority
+}
+
+// ─── Deal State (session-level + deals + vehicles) ───
+
+export interface DealState {
+  sessionId: string
+  buyerContext: BuyerContext
+  activeDealId: string | null
+  vehicles: Vehicle[]
+  deals: Deal[]
+  // Session-level
+  redFlags: RedFlag[]
+  informationGaps: InformationGap[]
+  checklist: ChecklistItem[]
+  timerStartedAt: string | null
+  aiPanelCards: AiPanelCard[]
+  dealComparison: DealComparison | null
 }
 
 // ─── Quick Actions ───
@@ -125,12 +178,19 @@ export interface ToolCall {
     | 'update_deal_phase'
     | 'update_scorecard'
     | 'set_vehicle'
+    | 'create_deal'
+    | 'switch_active_deal'
+    | 'remove_vehicle'
     | 'update_checklist'
     | 'update_buyer_context'
     | 'update_quick_actions'
     | 'update_deal_health'
-    | 'update_red_flags'
-    | 'update_information_gaps'
+    | 'update_deal_red_flags'
+    | 'update_session_red_flags'
+    | 'update_deal_information_gaps'
+    | 'update_session_information_gaps'
+    | 'update_deal_comparison'
+    | 'update_insights_panel'
   args: Record<string, any>
 }
 
@@ -155,6 +215,7 @@ export interface DealSummary {
   currentOffer: number | null
   listingPrice: number | null
   scoreOverall: ScoreStatus | null
+  dealCount: number
 }
 
 // ─── Sessions ───
@@ -212,15 +273,24 @@ export interface ApiService {
     sessionId: string,
     content: string,
     imageUri?: string,
-    onChunk?: (text: string) => void
+    onChunk?: (text: string) => void,
+    onToolResult?: (toolCall: ToolCall) => void,
+    onTextDone?: (finalText: string) => void
   ): Promise<Message>
 
   // Deal state
   getDealState(sessionId: string): Promise<DealState>
   correctDealState(
     sessionId: string,
-    corrections: Record<string, string | number | null>
+    corrections: {
+      vehicleCorrections?: {
+        vehicleId: string
+        [field: string]: string | number | null | undefined
+      }[]
+      dealCorrections?: { dealId: string; [field: string]: string | number | null | undefined }[]
+    }
   ): Promise<{
+    dealId: string
     healthStatus: string | null
     healthSummary: string | null
     recommendation: string | null
