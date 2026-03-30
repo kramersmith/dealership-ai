@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { CONFIRMATION_DISPLAY_MS } from '@/lib/constants'
 
 interface UseEditableFieldReturn {
   isEditing: boolean
   editValue: string
-  /** True for 2 seconds after a successful save. */
+  /** True briefly after a successful save (auto-dismisses after CONFIRMATION_DISPLAY_MS). */
   justSaved: boolean
   startEditing: () => void
   setEditValue: (value: string) => void
@@ -48,7 +49,7 @@ export function useEditableField(
       onSave(trimmed)
       setJustSaved(true)
       if (savedTimer.current) clearTimeout(savedTimer.current)
-      savedTimer.current = setTimeout(() => setJustSaved(false), 2500)
+      savedTimer.current = setTimeout(() => setJustSaved(false), CONFIRMATION_DISPLAY_MS)
     }
   }, [editValue, displayValue, onSave])
 

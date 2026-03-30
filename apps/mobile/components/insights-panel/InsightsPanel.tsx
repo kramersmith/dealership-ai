@@ -2,9 +2,10 @@ import { useRef, useEffect, useCallback, memo } from 'react'
 import { Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { BarChart3 } from '@tamagui/lucide-icons'
-import type { AiPanelCard, DealState } from '@/lib/types'
+import type { AiPanelCard, DealState, QuotedCard } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useDealStore } from '@/stores/dealStore'
+import { useChatStore } from '@/stores/chatStore'
 import { AiCard } from './AiCard'
 
 /** Animate a card sliding in. Only animates on first mount. */
@@ -13,21 +14,21 @@ const AnimatedCard = memo(function AnimatedCard({
   card,
   dealState,
   skipAnimation,
-  onCorrectNumber,
   onCorrectVehicleField,
   onToggleChecklist,
+  onSendReply,
 }: {
   index: number
   card: AiPanelCard
   dealState: DealState
   skipAnimation: boolean
-  onCorrectNumber?: (dealId: string, field: string, value: number | null) => void
   onCorrectVehicleField?: (
     vehicleId: string,
     field: string,
     value: string | number | undefined
   ) => void
   onToggleChecklist?: (index: number) => void
+  onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
 }) {
   const opacity = useRef(new Animated.Value(skipAnimation ? 1 : 0)).current
   const translateY = useRef(new Animated.Value(skipAnimation ? 0 : 10)).current
@@ -57,9 +58,9 @@ const AnimatedCard = memo(function AnimatedCard({
       <AiCard
         card={card}
         dealState={dealState}
-        onCorrectNumber={onCorrectNumber}
         onCorrectVehicleField={onCorrectVehicleField}
         onToggleChecklist={onToggleChecklist}
+        onSendReply={onSendReply}
       />
     </Animated.View>
   )
@@ -95,7 +96,6 @@ function EmptyState() {
 /** The InsightsPanel subscribes directly to aiPanelCards from the deal store. */
 export const InsightsPanel = memo(function InsightsPanel() {
   const dealState = useDealStore((s) => s.dealState)
-  const correctNumber = useDealStore((s) => s.correctNumber)
   const correctVehicleField = useDealStore((s) => s.correctVehicleField)
   const toggleChecklistItem = useDealStore((s) => s.toggleChecklistItem)
   const cards = dealState?.aiPanelCards ?? []
@@ -108,13 +108,6 @@ export const InsightsPanel = memo(function InsightsPanel() {
   }
 
   // Stable callbacks for inline editing
-  const handleCorrectNumber = useCallback(
-    (dealId: string, field: string, value: number | null) => {
-      correctNumber(dealId, field as any, value)
-    },
-    [correctNumber]
-  )
-
   const handleCorrectVehicleField = useCallback(
     (vehicleId: string, field: string, value: string | number | undefined) => {
       correctVehicleField(vehicleId, field as any, value)
@@ -128,6 +121,10 @@ export const InsightsPanel = memo(function InsightsPanel() {
     },
     [toggleChecklistItem]
   )
+
+  const handleSendReply = useCallback(async (text: string, quotedCard: QuotedCard) => {
+    await useChatStore.getState().sendMessage(text, undefined, quotedCard)
+  }, [])
 
   if (cards.length === 0) {
     return (
@@ -148,9 +145,9 @@ export const InsightsPanel = memo(function InsightsPanel() {
           card={card}
           dealState={dealState!}
           skipAnimation={skipAnimation}
-          onCorrectNumber={handleCorrectNumber}
           onCorrectVehicleField={handleCorrectVehicleField}
           onToggleChecklist={handleToggleChecklist}
+          onSendReply={handleSendReply}
         />
       ))}
     </YStack>

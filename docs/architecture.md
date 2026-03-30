@@ -31,10 +31,11 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble (markdown rendering), ChatInput, VoiceButton, ContextPicker, CopyableBlock
+│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview), ChatInput, VoiceButton, ContextPicker, CopyableBlock
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
 │   │   │   ├── insights-panel/   # AI-driven InsightsPanel with card-based layout:
-│   │   │   │                    # AiCard (base renderer), BriefingCard, NumbersCard,
+│   │   │   │                    # AiCard (base renderer + reply button), CardReplyInput,
+│   │   │   │                    # renderCardByType, BriefingCard, NumbersCard,
 │   │   │   │                    # AiVehicleCard, WarningCard, TipCard, SuccessCard,
 │   │   │   │                    # AiChecklistCard, AiComparisonCard, CompactPhaseIndicator,
 │   │   │   │                    # PanelMarkdown, QuickActions

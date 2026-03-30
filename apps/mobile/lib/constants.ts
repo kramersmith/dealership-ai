@@ -149,6 +149,11 @@ export const MAX_INSIGHTS_PREVIEW_ITEMS = 3
 /** Maximum width in pixels for chat bubbles (keeps text readable on wide screens). */
 export const CHAT_BUBBLE_MAX_WIDTH = 600
 
+// ─── Confirmation / Feedback Timing ───
+
+/** Duration in ms to show "saved" / "sent" confirmation before auto-dismissing. */
+export const CONFIRMATION_DISPLAY_MS = 2500
+
 // ─── Post-Purchase ───
 
 /** Default post-purchase checklist items, used as fallback when AI doesn't provide them. */

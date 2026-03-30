@@ -194,6 +194,12 @@ export interface ToolCall {
   args: Record<string, any>
 }
 
+export interface QuotedCard {
+  title: string
+  type: AiCardType
+  content: Record<string, any>
+}
+
 export interface Message {
   id: string
   sessionId: string
@@ -201,6 +207,7 @@ export interface Message {
   content: string
   imageUri?: string
   toolCalls?: ToolCall[]
+  quotedCard?: QuotedCard
   createdAt: string
 }
 

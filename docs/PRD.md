@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03-29
+**Last updated:** 2026-03-30
 
 ---
 
@@ -195,17 +195,19 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 | Card Type | Component | Purpose |
 |-----------|-----------|---------|
 | `briefing` | BriefingCard | Top-level deal overview and AI recommendation |
-| `numbers` | NumbersCard | Financial figures with inline editing |
+| `numbers` | NumbersCard | Financial figures (read-only display) |
 | `vehicle` | AiVehicleCard | Vehicle details with inline editing |
-| `warning` | WarningCard | Deal problems and red flags with severity |
+| `warning` | WarningCard | Deal problems and red flags with accent bar styling |
 | `tip` | TipCard | Contextual advice and suggestions |
 | `checklist` | AiChecklistCard | Phase-appropriate to-do items |
 | `success` | SuccessCard | Positive deal signals |
 | `comparison` | AiComparisonCard | Side-by-side deal comparison |
 
-**Supporting components:** AiCard (base card renderer), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
+**Supporting components:** AiCard (base card renderer with card reply button), CardReplyInput (slide-in reply drawer), renderCardByType (card type dispatch), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
 
-**Inline editing:** Users can tap to correct AI-extracted values on NumbersCard, AiVehicleCard, and dealer name. Corrections are sent as structured payloads (vehicle_corrections and deal_corrections arrays) to `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment.
+**Card reply system:** Every insight card has a MessageCircle reply icon. Tapping it opens a slide-in input drawer attached to the card. Submitting sends a chat message with the card context quoted, so the AI can respond with full awareness of what the user is referencing. A QuotedCardPreview renders a compact summary of the referenced card inside the user's chat bubble.
+
+**Inline editing:** Users can tap to correct AI-extracted values on AiVehicleCard and dealer name. Corrections are sent as structured payloads (vehicle_corrections arrays) to `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment.
 
 #### 4.3 Session Management (Buyer)
 

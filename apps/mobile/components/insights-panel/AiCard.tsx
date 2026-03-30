@@ -1,79 +1,140 @@
-import type { AiPanelCard, DealState } from '@/lib/types'
+import { useState, useCallback, useRef } from 'react'
+import { TouchableOpacity, Animated } from 'react-native'
+import { YStack } from 'tamagui'
+import { MessageCircle } from '@tamagui/lucide-icons'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import type { AiPanelCard, DealState, QuotedCard } from '@/lib/types'
 import { getActiveDeal, getVehicleForDeal } from '@/lib/utils'
-import { BriefingCard } from './BriefingCard'
-import { NumbersCard } from './NumbersCard'
-import { AiVehicleCard } from './AiVehicleCard'
-import { WarningCard } from './WarningCard'
-import { AiComparisonCard } from './AiComparisonCard'
-import { TipCard } from './TipCard'
-import { AiChecklistCard } from './AiChecklistCard'
-import { SuccessCard } from './SuccessCard'
+import { renderCardByType } from './renderCardByType'
+import { CardReplyInput } from './CardReplyInput'
+
+/** Duration in ms for the reply drawer close animation. */
+const REPLY_CLOSE_DURATION_MS = 200
+/** Duration in ms for the reply drawer open animation. */
+const REPLY_OPEN_DURATION_MS = 250
 
 interface AiCardProps {
   card: AiPanelCard
   dealState: DealState
-  onCorrectNumber?: (dealId: string, field: string, value: number | null) => void
   onCorrectVehicleField?: (
     vehicleId: string,
     field: string,
     value: string | number | undefined
   ) => void
   onToggleChecklist?: (index: number) => void
+  onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
 }
 
 export function AiCard({
   card,
   dealState,
-  onCorrectNumber,
   onCorrectVehicleField,
   onToggleChecklist,
+  onSendReply,
 }: AiCardProps) {
-  switch (card.type) {
-    case 'briefing':
-      return <BriefingCard title={card.title} content={card.content} priority={card.priority} />
+  const [replyOpen, setReplyOpen] = useState(false)
+  const [replyVisible, setReplyVisible] = useState(false)
+  const slideAnim = useRef(new Animated.Value(0)).current
 
-    case 'numbers':
-      return (
-        <NumbersCard
-          title={card.title}
-          content={card.content}
-          dealId={dealState.activeDealId}
-          onCorrectNumber={onCorrectNumber}
-        />
-      )
+  // Resolve vehicle ID for inline corrections
+  const activeDeal = card.type === 'vehicle' ? getActiveDeal(dealState) : null
+  const activeVehicle = activeDeal ? getVehicleForDeal(dealState.vehicles, activeDeal) : null
 
-    case 'vehicle': {
-      // Look up the real vehicle ID from the deal state for corrections
-      const activeDeal = getActiveDeal(dealState)
-      const activeVehicle = activeDeal ? getVehicleForDeal(dealState.vehicles, activeDeal) : null
-      return (
-        <AiVehicleCard
-          title={card.title}
-          content={card.content}
-          vehicleId={activeVehicle?.id}
-          onCorrectVehicleField={onCorrectVehicleField}
-        />
-      )
+  const toggleReply = useCallback(() => {
+    if (replyOpen) {
+      // Close: slide up then unmount
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: REPLY_CLOSE_DURATION_MS,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }).start(({ finished }) => {
+        if (finished) {
+          setReplyOpen(false)
+          setReplyVisible(false)
+        }
+      })
+    } else {
+      // Open: mount then slide down
+      setReplyOpen(true)
+      setReplyVisible(true)
+      slideAnim.setValue(0)
+      Animated.timing(slideAnim, {
+        toValue: 1,
+        duration: REPLY_OPEN_DURATION_MS,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }).start()
     }
+  }, [replyOpen, slideAnim])
 
-    case 'warning':
-      return <WarningCard title={card.title} content={card.content} priority={card.priority} />
+  const handleClose = useCallback(() => {
+    Animated.timing(slideAnim, {
+      toValue: 0,
+      duration: REPLY_CLOSE_DURATION_MS,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start(({ finished }) => {
+      if (finished) {
+        setReplyOpen(false)
+        setReplyVisible(false)
+      }
+    })
+  }, [slideAnim])
 
-    case 'comparison':
-      return <AiComparisonCard title={card.title} content={card.content} />
-
-    case 'tip':
-      return <TipCard title={card.title} content={card.content} />
-
-    case 'checklist':
-      return (
-        <AiChecklistCard title={card.title} content={card.content} onToggle={onToggleChecklist} />
-      )
-
-    case 'success':
-      return <SuccessCard title={card.title} content={card.content} />
-
-    default:
-      return null
-  }
+  return (
+    <YStack>
+      <YStack
+        position="relative"
+        zIndex={1}
+        {...(replyVisible
+          ? {
+              borderBottomLeftRadius: 0,
+              borderBottomRightRadius: 0,
+            }
+          : {})}
+      >
+        {renderCardByType({
+          type: card.type,
+          title: card.title,
+          content: card.content,
+          priority: card.priority,
+          vehicleId: activeVehicle?.id,
+          onCorrectVehicleField,
+          onToggleChecklist,
+        })}
+        {onSendReply && (
+          <TouchableOpacity
+            onPress={toggleReply}
+            activeOpacity={0.6}
+            style={{
+              position: 'absolute',
+              top: 4,
+              right: 4,
+              width: 44,
+              height: 44,
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <MessageCircle size={14} color="$placeholderColor" opacity={0.6} />
+          </TouchableOpacity>
+        )}
+      </YStack>
+      {replyOpen && onSendReply && (
+        <Animated.View
+          style={{
+            opacity: slideAnim,
+            transform: [
+              {
+                translateY: slideAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-20, 0],
+                }),
+              },
+            ],
+          }}
+        >
+          <CardReplyInput card={card} onSend={onSendReply} onClose={handleClose} />
+        </Animated.View>
+      )}
+    </YStack>
+  )
 }

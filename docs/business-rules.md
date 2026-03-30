@@ -1,6 +1,6 @@
 # Business Rules
 
-Last updated: 2026-03-29
+Last updated: 2026-03-30
 
 ## Table of Contents
 
@@ -307,7 +307,7 @@ If the primary Claude model updates deal numbers but doesn't call `update_deal_h
 
 ### User Corrections
 
-Users can inline-edit financial figures, vehicle fields, and dealer name on the frontend (NumbersCard, AiVehicleCard components). Corrections are sent as structured payloads (vehicle_corrections and deal_corrections arrays) to `PATCH /api/deal/{session_id}`, which:
+Users can inline-edit vehicle fields and dealer name on the frontend (AiVehicleCard component). NumbersCard is now read-only display; users can ask questions about numbers via the card reply system instead. Corrections are sent as structured payloads (vehicle_corrections and deal_corrections arrays) to `PATCH /api/deal/{session_id}`, which:
 1. Applies corrections to the specified vehicles and/or deals by ID
 2. Snapshots `first_offer` if this is the first time `current_offer` is set on a deal
 3. Vehicle corrections propagate to linked deals for re-assessment

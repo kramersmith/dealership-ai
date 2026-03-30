@@ -9,6 +9,7 @@ import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { buildMarkdownStyles } from './markdownStyles'
 import { CopyableBlock } from './CopyableBlock'
 import { extractTextFromNode } from './markdownUtils'
+import { QuotedCardPreview } from './QuotedCardPreview'
 
 interface ChatBubbleProps {
   message: Message
@@ -112,6 +113,7 @@ export const ChatBubble = memo(function ChatBubble({
               </Text>
             </YStack>
           )}
+          {isUser && message.quotedCard && <QuotedCardPreview card={message.quotedCard} />}
           {isUser ? (
             <Text fontSize={15} lineHeight={22} color="white">
               {message.content}

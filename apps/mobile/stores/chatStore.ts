@@ -1,8 +1,15 @@
 import { create } from 'zustand'
-import type { BuyerContext, Message, QuickAction, Session, ToolCall } from '@/lib/types'
+import type { BuyerContext, Message, QuickAction, QuotedCard, Session, ToolCall } from '@/lib/types'
 import { MAX_QUICK_ACTIONS } from '@/lib/constants'
 import { api } from '@/lib/api'
 import { useDealStore } from './dealStore'
+
+/** Build the message content sent to the backend, optionally prefixing with quoted card context. */
+function buildMessageContent(text: string, quotedCard?: QuotedCard): string {
+  if (!quotedCard) return text
+  const cardSummary = JSON.stringify(quotedCard.content)
+  return `[Referring to "${quotedCard.title}" (${quotedCard.type} card): ${cardSummary}]\n\n${text}`
+}
 
 interface ChatState {
   activeSessionId: string | null
@@ -35,7 +42,7 @@ interface ChatState {
   ) => Promise<Session | null>
   deleteSession: (sessionId: string) => Promise<void>
   addGreeting: (content: string) => void
-  sendMessage: (content: string, imageUri?: string) => Promise<void>
+  sendMessage: (content: string, imageUri?: string, quotedCard?: QuotedCard) => Promise<void>
   clearSendError: () => void
 }
 
@@ -178,7 +185,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
-  sendMessage: async (content, imageUri) => {
+  sendMessage: async (content, imageUri, quotedCard) => {
     const { activeSessionId } = get()
     if (!activeSessionId) return
 
@@ -189,6 +196,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       role: 'user',
       content,
       imageUri,
+      quotedCard,
       createdAt: new Date().toISOString(),
     }
     set((state) => ({
@@ -265,9 +273,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // Stream text chunks to the store for live display
+      const apiContent = buildMessageContent(content, quotedCard)
       const assistantMessage = await api.sendMessage(
         activeSessionId,
-        content,
+        apiContent,
         imageUri,
         (text) => set({ streamingText: text }),
         handleToolResult,
