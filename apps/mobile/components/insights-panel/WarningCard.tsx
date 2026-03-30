@@ -17,30 +17,37 @@ export function WarningCard({ title, content, priority }: WarningCardProps) {
 
   const isCritical = severity === 'critical' || priority === 'critical'
   const accentColor = isCritical ? '$danger' : '$warning'
-  const borderWidth = isCritical ? 3 : 2
   const Icon = isCritical ? AlertCircle : AlertTriangle
 
   return (
-    <AppCard compact>
-      <YStack borderLeftWidth={borderWidth} borderLeftColor={accentColor} paddingLeft="$3" gap="$2">
-        <XStack gap="$2.5" alignItems="flex-start">
-          <YStack paddingTop="$0.5">
-            <Icon size={15} color={accentColor} />
-          </YStack>
-          <YStack flex={1} gap="$1.5">
-            <Text fontSize={14} fontWeight="600" color="$color">
-              {title}
-            </Text>
-            <PanelMarkdown>{message}</PanelMarkdown>
-          </YStack>
+    <AppCard compact borderTopWidth={2} borderTopColor={accentColor}>
+      <YStack gap="$3">
+        {/* Title row */}
+        <XStack gap="$2" alignItems="center">
+          <Icon size={16} color={accentColor} />
+          <Text fontSize={14} fontWeight="700" color={accentColor} flex={1}>
+            {title}
+          </Text>
         </XStack>
 
+        {/* Description */}
+        <PanelMarkdown>{message}</PanelMarkdown>
+
+        {/* Recommended action */}
         {action && (
-          <YStack borderTopWidth={1} borderTopColor="$borderColor" paddingTop="$2" marginTop="$1">
-            <Text fontSize={13} fontWeight="600" color="$color">
+          <XStack
+            backgroundColor="$backgroundHover"
+            borderRadius={8}
+            borderLeftWidth={2}
+            borderLeftColor={accentColor}
+            paddingVertical="$2"
+            paddingLeft="$2.5"
+            paddingRight="$3"
+          >
+            <Text fontSize={13} fontWeight="500" color="$placeholderColor" flex={1} lineHeight={20}>
               {action}
             </Text>
-          </YStack>
+          </XStack>
         )}
       </YStack>
     </AppCard>
