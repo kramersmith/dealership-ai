@@ -3,8 +3,7 @@ import { TouchableOpacity, Animated } from 'react-native'
 import { YStack } from 'tamagui'
 import { MessageCircle } from '@tamagui/lucide-icons'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import type { AiPanelCard, DealState, QuotedCard } from '@/lib/types'
-import { getActiveDeal, getVehicleForDeal } from '@/lib/utils'
+import type { AiPanelCard, QuotedCard } from '@/lib/types'
 import { renderCardByType } from './renderCardByType'
 import { CardReplyInput } from './CardReplyInput'
 
@@ -15,30 +14,14 @@ const REPLY_OPEN_DURATION_MS = 250
 
 interface AiCardProps {
   card: AiPanelCard
-  dealState: DealState
-  onCorrectVehicleField?: (
-    vehicleId: string,
-    field: string,
-    value: string | number | undefined
-  ) => void
   onToggleChecklist?: (index: number) => void
   onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
 }
 
-export function AiCard({
-  card,
-  dealState,
-  onCorrectVehicleField,
-  onToggleChecklist,
-  onSendReply,
-}: AiCardProps) {
+export function AiCard({ card, onToggleChecklist, onSendReply }: AiCardProps) {
   const [replyOpen, setReplyOpen] = useState(false)
   const [replyVisible, setReplyVisible] = useState(false)
   const slideAnim = useRef(new Animated.Value(0)).current
-
-  // Resolve vehicle ID for inline corrections
-  const activeDeal = card.type === 'vehicle' ? getActiveDeal(dealState) : null
-  const activeVehicle = activeDeal ? getVehicleForDeal(dealState.vehicles, activeDeal) : null
 
   const toggleReply = useCallback(() => {
     if (replyOpen) {
@@ -96,8 +79,6 @@ export function AiCard({
           title: card.title,
           content: card.content,
           priority: card.priority,
-          vehicleId: activeVehicle?.id,
-          onCorrectVehicleField,
           onToggleChecklist,
         })}
         {onSendReply && (

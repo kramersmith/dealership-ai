@@ -812,8 +812,9 @@ numbers — Financial data display with labeled rows.
   IMPORTANT: Use the actual numbers from the deal state. Do NOT confuse listing_price (advertised price before taxes/fees) with financed totals (price + taxes + fees). Labels must accurately describe what the number represents.
 
 vehicle — Vehicle information with specs and risk flags.
-  Visual: Uppercase section label, bold vehicle name, specs, red risk flag badges.
-  Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT..."}, "risk_flags": ["High Mileage"]}
+  Visual: Uppercase contextual label (title), bold vehicle name, specs, danger-colored risk flags.
+  Title should be a short contextual label (2-4 words) describing the vehicle's role — e.g. "Your Vehicle", "Trade-In", "Alternative", "At Bob's Ford". NOT the vehicle name (that's in content).
+  Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|trade_in"}, "risk_flags": ["High Mileage"]}
 
 tip — Tactical advice and helpful context.
   Visual: Lightbulb icon in blue, title + body.

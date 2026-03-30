@@ -13,13 +13,6 @@ interface RenderCardOptions {
   title: string
   content: Record<string, any>
   priority?: AiCardPriority
-  /** Vehicle-specific: real vehicle ID for inline corrections. */
-  vehicleId?: string
-  onCorrectVehicleField?: (
-    vehicleId: string,
-    field: string,
-    value: string | number | undefined
-  ) => void
   onToggleChecklist?: (index: number) => void
 }
 
@@ -29,15 +22,7 @@ interface RenderCardOptions {
  * in a single place.
  */
 export function renderCardByType(options: RenderCardOptions): React.ReactNode {
-  const {
-    type,
-    title,
-    content,
-    priority = 'normal',
-    vehicleId,
-    onCorrectVehicleField,
-    onToggleChecklist,
-  } = options
+  const { type, title, content, priority = 'normal', onToggleChecklist } = options
 
   switch (type) {
     case 'briefing':
@@ -47,14 +32,7 @@ export function renderCardByType(options: RenderCardOptions): React.ReactNode {
       return <NumbersCard title={title} content={content} />
 
     case 'vehicle':
-      return (
-        <AiVehicleCard
-          title={title}
-          content={content}
-          vehicleId={vehicleId}
-          onCorrectVehicleField={onCorrectVehicleField}
-        />
-      )
+      return <AiVehicleCard title={title} content={content} />
 
     case 'warning':
       return <WarningCard title={title} content={content} priority={priority} />

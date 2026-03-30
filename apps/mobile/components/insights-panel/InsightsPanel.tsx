@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, memo } from 'react'
 import { Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { BarChart3 } from '@tamagui/lucide-icons'
-import type { AiPanelCard, DealState, QuotedCard } from '@/lib/types'
+import type { AiPanelCard, QuotedCard } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore } from '@/stores/chatStore'
@@ -12,21 +12,13 @@ import { AiCard } from './AiCard'
 const AnimatedCard = memo(function AnimatedCard({
   index,
   card,
-  dealState,
   skipAnimation,
-  onCorrectVehicleField,
   onToggleChecklist,
   onSendReply,
 }: {
   index: number
   card: AiPanelCard
-  dealState: DealState
   skipAnimation: boolean
-  onCorrectVehicleField?: (
-    vehicleId: string,
-    field: string,
-    value: string | number | undefined
-  ) => void
   onToggleChecklist?: (index: number) => void
   onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
 }) {
@@ -55,13 +47,7 @@ const AnimatedCard = memo(function AnimatedCard({
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <AiCard
-        card={card}
-        dealState={dealState}
-        onCorrectVehicleField={onCorrectVehicleField}
-        onToggleChecklist={onToggleChecklist}
-        onSendReply={onSendReply}
-      />
+      <AiCard card={card} onToggleChecklist={onToggleChecklist} onSendReply={onSendReply} />
     </Animated.View>
   )
 })
@@ -96,7 +82,6 @@ function EmptyState() {
 /** The InsightsPanel subscribes directly to aiPanelCards from the deal store. */
 export const InsightsPanel = memo(function InsightsPanel() {
   const dealState = useDealStore((s) => s.dealState)
-  const correctVehicleField = useDealStore((s) => s.correctVehicleField)
   const toggleChecklistItem = useDealStore((s) => s.toggleChecklistItem)
   const cards = dealState?.aiPanelCards ?? []
   const hasAnimatedOnce = useRef(false)
@@ -107,14 +92,7 @@ export const InsightsPanel = memo(function InsightsPanel() {
     hasAnimatedOnce.current = true
   }
 
-  // Stable callbacks for inline editing
-  const handleCorrectVehicleField = useCallback(
-    (vehicleId: string, field: string, value: string | number | undefined) => {
-      correctVehicleField(vehicleId, field as any, value)
-    },
-    [correctVehicleField]
-  )
-
+  // Stable callbacks
   const handleToggleChecklist = useCallback(
     (index: number) => {
       toggleChecklistItem(index)
@@ -143,9 +121,7 @@ export const InsightsPanel = memo(function InsightsPanel() {
           key={`panel-card-${i}`}
           index={i}
           card={card}
-          dealState={dealState!}
           skipAnimation={skipAnimation}
-          onCorrectVehicleField={handleCorrectVehicleField}
           onToggleChecklist={handleToggleChecklist}
           onSendReply={handleSendReply}
         />
