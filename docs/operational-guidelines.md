@@ -1,6 +1,6 @@
 # Operational Guidelines
 
-**Last updated:** 2026-03-26
+**Last updated:** 2026-03-31
 
 ---
 
@@ -75,4 +75,5 @@ See `docs/logging-guidelines.md` for log level reference, PII rules, and configu
 - Max tokens per response: 4096
 - Message history truncated to last 20 messages per request
 - Deal assessment safety net: 512 max tokens (Haiku fast model)
+- Situation assessment: 1024 max tokens (Haiku fast model)
 - Future: per-user daily token limits, usage tracking table

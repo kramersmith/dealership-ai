@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.chat import ChatMessageRequest, MessageResponse
 from app.services.claude import (
     analyze_deal,
+    assess_situation,
     build_messages,
     build_system_prompt,
     extract_deal_facts,
@@ -128,17 +129,19 @@ async def send_message(
         # ── Stage 2: Extract data + analyze deal (parallel subagents) ──
         if deal_state_dict:
             logger.debug(
-                "Stage 2: Running factual extractor + analyst in parallel, session_id=%s",
+                "Stage 2: Running factual extractor + analyst + situation assessor in parallel, session_id=%s",
                 session_id,
             )
             results = await asyncio.gather(
                 extract_deal_facts(deal_state_dict, all_messages, full_text),
                 analyze_deal(deal_state_dict, all_messages, full_text),
+                assess_situation(deal_state_dict, all_messages, full_text),
                 return_exceptions=True,
             )
 
             facts: dict = {}
             analysis: dict = {}
+            situation: dict = {}
 
             if isinstance(results[0], Exception):
                 logger.exception(
@@ -168,6 +171,21 @@ async def send_message(
                     session_id,
                 )
 
+            if isinstance(results[2], Exception):
+                logger.exception(
+                    "Situation assessment failed: session_id=%s",
+                    session_id,
+                    exc_info=results[2],
+                )
+            elif isinstance(results[2], dict):
+                situation = results[2]
+                if situation:
+                    logger.debug(
+                        "Situation assessor stance=%s, session_id=%s",
+                        situation.get("stance"),
+                        session_id,
+                    )
+
             # Merge results and apply to DB
             extraction = merge_extraction_results(facts, analysis)
             if extraction:
@@ -191,6 +209,21 @@ async def send_message(
             else:
                 logger.debug(
                     "Stage 2: No extraction data returned, session_id=%s",
+                    session_id,
+                )
+
+            # Apply situation context (separate from extraction pipeline)
+            if situation:
+                deal_state.negotiation_context = situation
+                situation_tool_call = {
+                    "name": "update_negotiation_context",
+                    "args": situation,
+                }
+                all_tool_calls.append(situation_tool_call)
+                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_negotiation_context', 'data': situation})}\n\n"
+                logger.info(
+                    "Situation context updated: stance=%s, session_id=%s",
+                    situation.get("stance"),
                     session_id,
                 )
 

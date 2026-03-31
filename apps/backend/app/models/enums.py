@@ -67,6 +67,19 @@ class Difficulty(StrEnum):
     HARD = "hard"
 
 
+class NegotiationStance(StrEnum):
+    RESEARCHING = "researching"
+    PREPARING = "preparing"
+    ENGAGING = "engaging"
+    NEGOTIATING = "negotiating"
+    HOLDING = "holding"
+    WALKING = "walking"
+    WAITING = "waiting"
+    FINANCING = "financing"
+    CLOSING = "closing"
+    POST_PURCHASE = "post_purchase"
+
+
 class AiCardType(StrEnum):
     BRIEFING = "briefing"
     NUMBERS = "numbers"

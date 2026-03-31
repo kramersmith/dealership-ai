@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-03-29**
+**Last updated: 2026-03-31**
 
 ---
 
@@ -97,16 +97,16 @@ graph TB
 1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL).
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
-4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, and linked session context.
+4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, negotiation context summary, and linked session context.
 5. Backend opens a streaming connection to the Claude API (Sonnet) with 10 tool definitions.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays each chunk as an SSE event to the client:
   - `event: text` -- conversation text chunks
-  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps)
+  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
   - `event: done` -- final payload with full text and all tool calls
 8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. **Two-pass extraction:** Factual extractor and analyst subagents run in parallel via Haiku. The analyst calls `analyze_deal()` to generate health status, red flags, AI panel cards, and recommendations.
+10. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku. The analyst calls `analyze_deal()` to generate health status, red flags, AI panel cards, and recommendations. The situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage).
 11. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
 12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
 13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
@@ -398,6 +398,7 @@ erDiagram
         json checklist
         datetime timer_started_at
         json ai_panel_cards "AI-generated card objects"
+        json negotiation_context "stance, situation, key numbers, scripts, pending actions, leverage"
         json deal_comparison "AI-generated, spans deals"
         datetime updated_at
     }
@@ -533,6 +534,7 @@ erDiagram
 | `checklist`        | JSON     | default empty list                      | Array of {label, done}      |
 | `timer_started_at` | DateTime | Nullable                                | Negotiation timer           |
 | `ai_panel_cards`   | JSON     | default empty list                      | AI-generated card objects for InsightsPanel |
+| `negotiation_context` | JSON  | Nullable                                | AI-maintained situational awareness (stance, situation, key numbers, scripts, pending actions, leverage) |
 | `deal_comparison`  | JSON     | Nullable                                | AI-generated comparison spanning deals |
 | `updated_at`       | DateTime | default now(UTC), on update             |                             |
 
@@ -578,7 +580,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation, two-pass extraction (factual extractor + analyst subagents), deal re-assessment |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation, two-pass extraction (factual extractor + analyst + situation assessor subagents), deal re-assessment |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
 | Tool use       | 10 tool definitions (primary model only)   |
 | Streaming      | Yes (messages.stream)  |
@@ -586,7 +588,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. After the primary response, a two-pass extraction runs factual extractor and analyst subagents in parallel via the async Anthropic client with the fast model (Haiku). The factual extractor pulls structured data (vehicle, numbers, scorecard, phase), while the analyst generates health assessment, red flags, AI panel cards, and recommendations via `analyze_deal()`. Quick action generation and session title generation also use the async client with Haiku.
+The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. After the primary response, a two-pass extraction runs factual extractor, analyst, and situation assessor subagents in parallel via the async Anthropic client with the fast model (Haiku). The factual extractor pulls structured data (vehicle, numbers, scorecard, phase), the analyst generates health assessment, red flags, AI panel cards, and recommendations via `analyze_deal()`, and the situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage). Quick action generation and session title generation also use the async client with Haiku.
 
 ### No Other External Integrations (v1)
 
@@ -637,6 +639,7 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 | `GapPriority` | `high`, `medium`, `low` |
 | `VehicleRole` | `primary`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
+| `NegotiationStance` | `researching`, `preparing`, `engaging`, `negotiating`, `holding`, `walking`, `waiting`, `financing`, `closing`, `post_purchase` |
 | `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 

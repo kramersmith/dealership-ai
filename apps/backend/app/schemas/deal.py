@@ -134,4 +134,5 @@ class DealStateResponse(BaseModel):
     timer_started_at: datetime | None = None
     ai_panel_cards: list[dict] = []
     deal_comparison: dict | None = None
+    negotiation_context: dict | None = None
     updated_at: datetime

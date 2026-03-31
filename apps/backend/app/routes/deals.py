@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -62,6 +63,18 @@ def get_deal_state(
     vehicles = db.query(Vehicle).filter(Vehicle.session_id == session_id).all()
     deals = db.query(Deal).filter(Deal.session_id == session_id).all()
 
+    # Defensive: checklist may be stored as a JSON string instead of a list
+    checklist = deal_state.checklist or []
+    if isinstance(checklist, str):
+        try:
+            checklist = json.loads(checklist)
+        except (ValueError, TypeError):
+            logger.warning(
+                "Checklist stored as unparseable string, resetting to empty: session_id=%s",
+                session_id,
+            )
+            checklist = []
+
     return DealStateResponse(
         session_id=deal_state.session_id,
         buyer_context=deal_state.buyer_context,
@@ -70,10 +83,11 @@ def get_deal_state(
         deals=[DealResponse.model_validate(d) for d in deals],
         red_flags=deal_state.red_flags or [],
         information_gaps=deal_state.information_gaps or [],
-        checklist=deal_state.checklist or [],
+        checklist=checklist,
         timer_started_at=deal_state.timer_started_at,
         ai_panel_cards=deal_state.ai_panel_cards or [],
         deal_comparison=deal_state.deal_comparison,
+        negotiation_context=deal_state.negotiation_context,
         updated_at=deal_state.updated_at,
     )
 

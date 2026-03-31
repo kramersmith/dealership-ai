@@ -49,6 +49,9 @@ class DealState(Base):
     # Deal comparison (AI-generated, session-level since it spans deals)
     deal_comparison: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Negotiation context (AI-maintained situational awareness)
+    negotiation_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),

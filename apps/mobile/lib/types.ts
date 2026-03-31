@@ -146,6 +146,47 @@ export interface AiPanelCard {
   priority: AiCardPriority
 }
 
+// ─── Negotiation Context ───
+
+export type NegotiationStance =
+  | 'researching'
+  | 'preparing'
+  | 'engaging'
+  | 'negotiating'
+  | 'holding'
+  | 'walking'
+  | 'waiting'
+  | 'financing'
+  | 'closing'
+  | 'post_purchase'
+
+export interface NegotiationKeyNumber {
+  label: string
+  value: string
+  note: string | null
+}
+
+export interface NegotiationScript {
+  label: string
+  text: string
+}
+
+export interface NegotiationPendingAction {
+  action: string
+  detail: string | null
+  done: boolean
+}
+
+export interface NegotiationContext {
+  situation: string
+  stance: NegotiationStance
+  keyNumbers?: NegotiationKeyNumber[]
+  scripts?: NegotiationScript[]
+  pendingActions?: NegotiationPendingAction[]
+  leverage?: string[]
+  updatedAt?: string
+}
+
 // ─── Deal State (session-level + deals + vehicles) ───
 
 export interface DealState {
@@ -161,6 +202,7 @@ export interface DealState {
   timerStartedAt: string | null
   aiPanelCards: AiPanelCard[]
   dealComparison: DealComparison | null
+  negotiationContext: NegotiationContext | null
 }
 
 // ─── Quick Actions ───
@@ -191,6 +233,7 @@ export interface ToolCall {
     | 'update_session_information_gaps'
     | 'update_deal_comparison'
     | 'update_insights_panel'
+    | 'update_negotiation_context'
   args: Record<string, any>
 }
 

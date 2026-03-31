@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 
 import anthropic
 
@@ -12,6 +13,7 @@ from app.models.enums import (
     DealPhase,
     GapPriority,
     HealthStatus,
+    NegotiationStance,
     RedFlagSeverity,
     ScoreStatus,
 )
@@ -28,6 +30,10 @@ PANEL_GENERATOR_MAX_TOKENS = 2048
 CONTEXT_RECENT_MESSAGES = 4
 CONTEXT_MESSAGE_TRUNCATION = 400
 CONTEXT_ASSISTANT_TRUNCATION = 800
+SITUATION_MAX_TOKENS = 1024
+SITUATION_RECENT_MESSAGES = 6
+SITUATION_MESSAGE_TRUNCATION = 600
+SITUATION_ASSISTANT_TRUNCATION = 1500
 PANEL_RECENT_MESSAGES = 2
 PANEL_MESSAGE_TRUNCATION = 300
 PANEL_ASSISTANT_TRUNCATION = 500
@@ -460,6 +466,125 @@ Red flag rules:
 Call the analyze_deal tool with your assessment. Only include fields that have meaningful updates."""
 
 
+# ─── Situation Assessor (negotiation context) ───
+
+SITUATION_ASSESSOR_TOOL = {
+    "name": "assess_situation",
+    "description": "Update the buyer's negotiation context — their current situation, key numbers, active scripts, and pending actions. Only call this when the situation has meaningfully changed.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "situation": {
+                "type": "string",
+                "description": "ONE short sentence (max 15 words) of what is happening RIGHT NOW. E.g. 'Walked out. Waiting for dealer callback at $33K.' or 'Researching F-250 Lariat, narrowing specs before dealer contact.'",
+            },
+            "stance": {
+                "type": "string",
+                "enum": [s.value for s in NegotiationStance],
+                "description": "The buyer's current negotiation stance.",
+            },
+            "key_numbers": {
+                "type": "array",
+                "description": "The 2-4 most important numbers for the current moment.",
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {
+                            "type": "string",
+                            "description": "Short label, e.g. 'Target OTD', 'Their Offer', 'Gap'",
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Formatted value, e.g. '$33,000'",
+                        },
+                        "note": {
+                            "type": ["string", "null"],
+                            "description": "Optional short note, e.g. 'Hold firm'",
+                        },
+                    },
+                    "required": ["label", "value"],
+                },
+            },
+            "scripts": {
+                "type": "array",
+                "description": "Word-for-word things the buyer should say. Max 3.",
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {
+                            "type": "string",
+                            "description": "When to use this script, e.g. 'When they call back'",
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "The exact words to say.",
+                        },
+                    },
+                    "required": ["label", "text"],
+                },
+            },
+            "pending_actions": {
+                "type": "array",
+                "description": "What the buyer should do or wait for. Max 5.",
+                "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "The action, e.g. 'Wait for dealer callback'",
+                        },
+                        "detail": {
+                            "type": ["string", "null"],
+                            "description": "Optional detail, e.g. 'Don't contact them first'",
+                        },
+                        "done": {"type": "boolean", "default": False},
+                    },
+                    "required": ["action"],
+                },
+            },
+            "leverage": {
+                "type": "array",
+                "description": "Current advantages the buyer has. Max 3.",
+                "maxItems": 3,
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["situation", "stance"],
+    },
+}
+
+SITUATION_ASSESSOR_PROMPT = """You are a negotiation situation assessor for a car buying advisor app. Your job is to maintain a structured snapshot of the buyer's current situation, strategy, and next moves.
+
+You receive the current deal state (including any previous negotiation_context) and the recent conversation.
+
+CRITICAL RULES:
+
+1. ONLY call the tool if the buyer's SITUATION has meaningfully changed. Examples of meaningful changes:
+   - Buyer arrived at dealership (stance change)
+   - Buyer made or received an offer (new key numbers)
+   - Buyer walked out or is waiting (stance change + new scripts)
+   - New information changes the strategy (e.g., bank won't finance, new defect found)
+   - Assistant provided new scripts the buyer should use
+
+2. If the latest exchange is a TANGENTIAL QUESTION (e.g., asking about tire costs while waiting for a callback), DO NOT call the tool. The previous context is still correct.
+
+3. When you DO update, PRESERVE information from the previous context that is still relevant:
+   - If the buyer was waiting for a callback and asks about tire credits, the "waiting for callback" pending action and scripts should persist
+   - Only replace scripts when the assistant provided NEW scripts in the latest response
+   - Only replace pending_actions when actions were completed or new ones were given
+
+4. Extract scripts from the assistant's blockquoted text (lines starting with > in the response). These are word-for-word things the buyer should say.
+
+5. key_numbers should reflect what matters NOW — not all deal numbers. During active negotiation: target, their offer, gap. During financing: APR, monthly, total interest. During research: budget, fair price range.
+
+6. leverage should capture concrete advantages, not generic advice. Good: "Car listed 45 days", "Pre-approved at 4.9%". Bad: "You have leverage".
+
+If the situation has NOT meaningfully changed, do not call the tool — return nothing."""
+
+
 def _build_conversation_context(
     messages: list[dict],
     assistant_text: str,
@@ -584,6 +709,64 @@ async def analyze_deal(
         return {}
 
 
+async def assess_situation(
+    deal_state_dict: dict,
+    messages: list[dict],
+    assistant_text: str,
+) -> dict:
+    """Assess the buyer's negotiation situation and maintain structured context.
+
+    Uses a wider conversation window than the extractor to capture situational
+    nuance. Returns the negotiation context dict, or empty dict if no change.
+    """
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    state_json = json.dumps(deal_state_dict, indent=2, default=str)
+    conversation_context = _build_conversation_context(
+        messages,
+        assistant_text,
+        recent_count=SITUATION_RECENT_MESSAGES,
+        msg_truncation=SITUATION_MESSAGE_TRUNCATION,
+        assistant_truncation=SITUATION_ASSISTANT_TRUNCATION,
+    )
+
+    try:
+        response = await client.messages.create(  # type: ignore[call-overload]
+            model=settings.CLAUDE_FAST_MODEL,
+            max_tokens=SITUATION_MAX_TOKENS,
+            tools=[SITUATION_ASSESSOR_TOOL],
+            tool_choice={"type": "auto"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
+                        f"Conversation:\n{conversation_context}\n\n"
+                        f"{SITUATION_ASSESSOR_PROMPT}"
+                    ),
+                }
+            ],
+        )
+
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "assess_situation":
+                result = block.input
+                logger.debug(
+                    "Situation assessor returned stance=%s",
+                    result.get("stance") if isinstance(result, dict) else "(invalid)",
+                )
+                if isinstance(result, dict):
+                    result["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    return result
+                return {}
+
+        logger.debug("Situation assessor did not call tool — no situation change")
+        return {}
+
+    except Exception:
+        logger.exception("Situation assessment failed")
+        return {}
+
+
 def merge_extraction_results(facts: dict, analysis: dict) -> dict:
     """Merge factual extraction and analyst results into a single extraction dict.
 
@@ -635,6 +818,22 @@ def build_system_prompt(
         preamble = CONTEXT_PREAMBLES.get(BuyerContext(buyer_context))
         if preamble:
             context_preamble = f"\nBuyer situation: {preamble}"
+
+        # Inject negotiation context summary for primary model awareness
+        negotiation_context = deal_state_dict.get("negotiation_context")
+        if negotiation_context and isinstance(negotiation_context, dict):
+            stance = negotiation_context.get("stance", "")
+            situation = negotiation_context.get("situation", "")
+            if stance and situation:
+                context_preamble += f"\nNegotiation status: [{stance}] {situation}"
+            pending_actions = negotiation_context.get("pending_actions", [])
+            pending_summary = ", ".join(
+                item["action"]
+                for item in pending_actions
+                if isinstance(item, dict) and not item.get("done")
+            )
+            if pending_summary:
+                context_preamble += f"\nPending actions: {pending_summary}"
 
     deal_context = ""
     if deal_state_dict:
@@ -806,6 +1005,7 @@ warning — Genuine problems or dealer tactics that could hurt the buyer.
 
 numbers — Financial data display with labeled rows.
   Visual: Uppercase section label, label-value rows. Values highlighted good (green), bad (red), or neutral.
+  Labels must be SHORT (2-4 words max). Good: "Listing Price", "Your Target", "Gap". Bad: "Fair Range (Gas, 2017-2020, 80-140k mi)" — too long, will wrap on mobile.
   Schema: {"rows": [{"label": "Field", "value": "$32,000", "field": "current_offer", "highlight": "good|bad|neutral"}]}
   Editable fields (include "field"): msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
   Groups: {"groups": [{"key": "pricing", "rows": [...]}, {"key": "financing", "rows": [...]}]}
@@ -813,7 +1013,15 @@ numbers — Financial data display with labeled rows.
 
 vehicle — Vehicle information with specs and risk flags.
   Visual: Uppercase contextual label (title), bold vehicle name, specs, danger-colored risk flags.
-  Title should be a short contextual label (2-4 words) describing the vehicle's role — e.g. "Your Vehicle", "Trade-In", "Alternative", "At Bob's Ford". NOT the vehicle name (that's in content).
+  Title should be a short contextual label (2-4 words) that matches the buyer's situation:
+  - Researching/shopping: "Target Vehicle", "Searching For"
+  - Evaluating a specific vehicle: "Under Consideration", "Candidate"
+  - Found a specific listing: "At [Dealer Name]", "[City] Listing"
+  - Actively negotiating/bought: "Your Vehicle", "Your Deal"
+  - Trade-in: "Trade-In"
+  - Comparing multiple: "Option A", "Option B"
+  NEVER use "Your Vehicle" when the buyer is still searching — that implies ownership. NOT the vehicle name (that's in content).
+  risk_flags should be genuine concerns about the vehicle — not open preferences. If the buyer says "I'm open to diesel or gas", that is NOT a risk flag. Risk flags are for actual problems: high mileage, accident history, missing records, mechanical concerns.
   Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|trade_in"}, "risk_flags": ["High Mileage"]}
 
 tip — Tactical advice and helpful context.
@@ -854,7 +1062,7 @@ EXAMPLES:
 
 Early research panel:
 [
-  {"type": "vehicle", "title": "Your Vehicle", "content": {"vehicle": {"year": 2024, "make": "Toyota", "model": "Camry", "trim": "SE"}, "risk_flags": []}, "priority": "normal"},
+  {"type": "vehicle", "title": "Target Vehicle", "content": {"vehicle": {"year": 2024, "make": "Toyota", "model": "Camry", "trim": "SE"}, "risk_flags": []}, "priority": "normal"},
   {"type": "briefing", "title": "Getting Started", "content": {"body": "Good choice on the Camry SE. Next step: get pre-approved from your bank before visiting dealers."}, "priority": "high"},
   {"type": "tip", "title": "Pre-Approval Advantage", "content": {"body": "A bank pre-approval forces the dealer to compete on price alone and gives you a rate floor."}, "priority": "normal"},
   {"type": "checklist", "title": "Research Checklist", "content": {"items": [{"label": "Get pre-approved financing", "done": false}, {"label": "Check KBB/Edmunds fair purchase price", "done": false}]}, "priority": "normal"}
@@ -871,6 +1079,18 @@ DON'T DO THIS:
 - {"type": "warning", "title": "Price Negotiation in Progress"} — This is a status update, not a warning. Use briefing.
 - {"type": "briefing", "priority": "critical"} — Critical on a briefing renders as blue (same as high), not red. If you need red, use warning.
 - {"type": "warning", "title": "Next Steps"} — Next steps are advice, not a problem. Use briefing or tip.
+
+NEGOTIATION CONTEXT:
+If the deal state contains a "negotiation_context" object, it represents the AI advisor's maintained understanding of the buyer's current situation. This context PERSISTS across conversation turns — it is the ground truth for where things stand.
+
+CRITICAL: Your cards must ALWAYS reflect the negotiation context when present:
+- The briefing card should reflect the "situation" field — what is happening right now
+- If "scripts" are present, include a dedicated briefing card (title: the script label) with the script text in a blockquote-style body. Scripts are word-for-word things the buyer should say.
+- If "pending_actions" are present, include them as a checklist card
+- If "key_numbers" are present, use them to build the numbers card (they represent what matters NOW, not all deal numbers)
+- If "leverage" points are present, include a tip card surfacing the buyer's advantages
+
+The negotiation context takes PRECEDENCE over your own interpretation of the truncated conversation. Do NOT generate cards that ignore or contradict it. If the context says the buyer is waiting for a callback with specific scripts, those scripts MUST appear in the panel even if the latest message was about something else.
 
 RULES:
 - ALWAYS include a vehicle card if a vehicle has been identified

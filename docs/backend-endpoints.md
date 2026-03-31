@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03-29
+Last updated: 2026-03-31
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -517,12 +517,13 @@ Get the current deal state for a session.
   "checklist": [],
   "timer_started_at": null,
   "ai_panel_cards": [],
+  "negotiation_context": null,
   "deal_comparison": null,
   "updated_at": "2026-03-24T12:00:00Z"
 }
 ```
 
-The response contains session-level state plus arrays of `vehicles` and `deals`. Each deal is linked to a vehicle via `vehicle_id`. The `active_deal_id` indicates which deal the panel is currently showing.
+The response contains session-level state plus arrays of `vehicles` and `deals`. Each deal is linked to a vehicle via `vehicle_id`. The `active_deal_id` indicates which deal the panel is currently showing. The `negotiation_context` object (nullable) contains the AI-maintained situational awareness: `stance` (NegotiationStance enum value), `situation` (short description), `key_numbers` (array of label/value/note), `scripts` (array of label/text), `pending_actions` (array of action/detail/done), and `leverage` (array of strings).
 
 **Error responses:**
 

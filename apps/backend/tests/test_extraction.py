@@ -300,3 +300,78 @@ async def test_analyze_deal_handles_api_error(mock_anthropic_class):
         "test response",
     )
     assert result == {}
+
+
+# ─── assess_situation (mocked API) ───
+
+
+@pytest.mark.asyncio
+@patch("app.services.claude.anthropic.AsyncAnthropic")
+async def test_assess_situation_returns_tool_input(mock_anthropic_class):
+    """assess_situation returns the tool input from the API response."""
+    from app.services.claude import assess_situation
+
+    tool_result = {"stance": "firm", "leverage_points": ["competing offer"]}
+    mock_tool_block = MagicMock()
+    mock_tool_block.type = "tool_use"
+    mock_tool_block.name = "assess_situation"
+    mock_tool_block.input = tool_result
+
+    mock_response = MagicMock()
+    mock_response.content = [mock_tool_block]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_anthropic_class.return_value = mock_client
+
+    result = await assess_situation(
+        {"buyer_context": "at_dealership", "vehicles": [], "deals": []},
+        [{"role": "user", "content": "test"}],
+        "test response",
+    )
+    assert result["stance"] == "firm"
+    assert result["leverage_points"] == ["competing offer"]
+    assert "updated_at" in result
+
+
+@pytest.mark.asyncio
+@patch("app.services.claude.anthropic.AsyncAnthropic")
+async def test_assess_situation_no_tool_call(mock_anthropic_class):
+    """assess_situation returns empty dict if model doesn't call tool."""
+    from app.services.claude import assess_situation
+
+    mock_text_block = MagicMock()
+    mock_text_block.type = "text"
+    mock_text_block.text = "No situation change."
+
+    mock_response = MagicMock()
+    mock_response.content = [mock_text_block]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_anthropic_class.return_value = mock_client
+
+    result = await assess_situation(
+        {"buyer_context": "researching", "vehicles": [], "deals": []},
+        [{"role": "user", "content": "test"}],
+        "test response",
+    )
+    assert result == {}
+
+
+@pytest.mark.asyncio
+@patch("app.services.claude.anthropic.AsyncAnthropic")
+async def test_assess_situation_handles_api_error(mock_anthropic_class):
+    """assess_situation returns empty dict on API exception."""
+    from app.services.claude import assess_situation
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
+    mock_anthropic_class.return_value = mock_client
+
+    result = await assess_situation(
+        {"buyer_context": "researching", "vehicles": [], "deals": []},
+        [{"role": "user", "content": "test"}],
+        "test response",
+    )
+    assert result == {}

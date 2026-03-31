@@ -24,7 +24,7 @@ export function WarningCard({ title, content, priority }: WarningCardProps) {
       <YStack gap="$3">
         {/* Title row */}
         <XStack gap="$2" alignItems="center">
-          <Icon size={16} color={accentColor} />
+          <Icon size={14} color={accentColor} />
           <Text fontSize={14} fontWeight="700" color={accentColor} flex={1}>
             {title}
           </Text>

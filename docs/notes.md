@@ -1,6 +1,6 @@
 # AI Car Buying App — Project Notes
 
-## Last updated: March 29, 2026
+## Last updated: March 31, 2026
 
 ---
 
@@ -41,7 +41,7 @@ The chat is for back-and-forth; the surrounding UI keeps the customer grounded a
 Design principle: **everything the customer needs to stay rational and informed should be visible without asking for it.**
 
 ### Onboarding — buyer context selection (BUILT)
-When starting a new chat, the buyer sees three situation cards (WelcomePrompts component):
+When starting a new chat, the buyer sees three situation cards (ContextPicker component):
 - **"Researching"** — comparing cars and prices from home. AI is educational and thorough. Dashboard prioritizes vehicle card and numbers.
 - **"Have a deal to review"** — buyer has a quote or offer. AI is analytical and direct. Dashboard prioritizes numbers and scorecard.
 - **"At the dealership"** — buyer is there right now. AI is brief and tactical with ready-to-use scripts. Dashboard prioritizes scorecard and numbers.

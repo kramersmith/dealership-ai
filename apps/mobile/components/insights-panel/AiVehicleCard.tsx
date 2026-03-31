@@ -1,7 +1,16 @@
-import { XStack, YStack, Text } from 'tamagui'
+import { View, Text as RNText, StyleSheet, Platform } from 'react-native'
+import { useTheme } from 'tamagui'
 import { AlertTriangle } from '@tamagui/lucide-icons'
 import { formatMileage } from '@/lib/utils'
-import { AppCard } from '@/components/shared'
+
+// NOTE: This component uses plain RN View/Text instead of Tamagui YStack/XStack/Text.
+// This is a workaround for a Tamagui web runtime bug where the CSS class serialization
+// calls JSON.stringify on the theme context, hitting a circular reference
+// ("property 'Provider' closes the circle"). Other card components that use AppCard
+// (NumbersCard, WarningCard, etc.) are not affected. The exact trigger is unknown —
+// restoring the old EditableText sub-component (with useTheme + TextInput) prevents
+// the crash, suggesting Tamagui's babel plugin uses file-level heuristics to decide
+// whether to apply its optimization. Filed as a known issue to investigate further.
 
 interface VehicleContent {
   vehicle: {
@@ -19,7 +28,7 @@ interface VehicleContent {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  primary: 'Your Vehicle',
+  primary: 'Target Vehicle',
   trade_in: 'Trade-In',
 }
 
@@ -29,11 +38,12 @@ interface AiVehicleCardProps {
 }
 
 export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
+  const theme = useTheme()
   const vehicleContent = content as VehicleContent
   const vehicle = vehicleContent.vehicle
   const riskFlags = vehicleContent.risk_flags ?? []
 
-  if (!vehicle) return null
+  if (!vehicle || typeof vehicle !== 'object') return null
 
   const name = [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(' ')
   const titleIsVehicleName = name.toLowerCase() === title.toLowerCase()
@@ -49,53 +59,117 @@ export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
     .filter(Boolean)
     .join(' · ')
 
-  return (
-    <AppCard compact>
-      <YStack gap="$3">
-        <Text
-          fontSize={12}
-          fontWeight="600"
-          color="$placeholderColor"
-          textTransform="uppercase"
-          letterSpacing={0.5}
-        >
-          {label}
-        </Text>
+  const bgColor = theme.backgroundStrong?.val as string
+  const borderColor = theme.borderColor?.val as string
+  const textColor = theme.color?.val as string
+  const mutedColor = theme.placeholderColor?.val as string
+  const dangerColor = theme.danger?.val as string
+  const shadowColor = theme.shadowColor?.val as string
 
-        <YStack gap="$1.5">
-          <Text fontSize={16} fontWeight="700" color="$color" numberOfLines={1}>
+  return (
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: bgColor,
+          borderColor,
+          ...(Platform.OS === 'web'
+            ? { boxShadow: `0 1px 3px ${shadowColor}, 0 1px 2px ${shadowColor}` }
+            : {
+                shadowColor,
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 1,
+                shadowRadius: 3,
+                elevation: 2,
+              }),
+        } as any,
+      ]}
+    >
+      <View style={styles.content}>
+        <RNText style={[styles.label, { color: mutedColor }]}>{label}</RNText>
+
+        <View style={styles.specsSection}>
+          <RNText style={[styles.name, { color: textColor }]} numberOfLines={1}>
             {name}
-          </Text>
-          {specs && (
-            <Text fontSize={13} color="$placeholderColor" numberOfLines={1}>
+          </RNText>
+          {specs ? (
+            <RNText style={[styles.specs, { color: mutedColor }]} numberOfLines={1}>
               {specs}
-            </Text>
-          )}
-          {vehicle.vin && (
-            <Text fontSize={12} color="$placeholderColor" fontFamily="$mono">
-              VIN: {vehicle.vin}
-            </Text>
-          )}
-        </YStack>
+            </RNText>
+          ) : null}
+          {vehicle.vin ? (
+            <RNText style={[styles.vin, { color: mutedColor }]}>VIN: {vehicle.vin}</RNText>
+          ) : null}
+        </View>
 
         {riskFlags.length > 0 && (
           <>
-            <YStack height={1} backgroundColor="$borderColor" />
-            <YStack gap="$2">
+            <View style={[styles.divider, { backgroundColor: borderColor }]} />
+            <View style={styles.flagsSection}>
               {riskFlags.map((flag) => (
-                <XStack key={flag} gap="$1.5" alignItems="flex-start">
-                  <YStack paddingTop="$0.5">
-                    <AlertTriangle size={14} color="$danger" />
-                  </YStack>
-                  <Text fontSize={13} color="$danger" flex={1} lineHeight={20}>
-                    {flag}
-                  </Text>
-                </XStack>
+                <View key={flag} style={styles.flagRow}>
+                  <View style={styles.flagIcon}>
+                    <AlertTriangle size={14} color={dangerColor} />
+                  </View>
+                  <RNText style={[styles.flagText, { color: dangerColor }]}>{flag}</RNText>
+                </View>
               ))}
-            </YStack>
+            </View>
           </>
         )}
-      </YStack>
-    </AppCard>
+      </View>
+    </View>
   )
 }
+
+const styles = StyleSheet.create({
+  card: {
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+  },
+  content: {
+    gap: 12,
+  },
+  // Must match CardTitle styling (fontSize 12, fontWeight 600, uppercase, letterSpacing 0.5).
+  // Duplicated here because this component uses RN primitives instead of Tamagui.
+  label: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  specsSection: {
+    gap: 6,
+  },
+  name: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  specs: {
+    fontSize: 13,
+  },
+  vin: {
+    fontSize: 12,
+    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+  },
+  divider: {
+    height: 1,
+  },
+  flagsSection: {
+    gap: 8,
+  },
+  flagRow: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'flex-start',
+  },
+  flagIcon: {
+    paddingTop: 2,
+  },
+  flagText: {
+    fontSize: 13,
+    flex: 1,
+    lineHeight: 20,
+  },
+})

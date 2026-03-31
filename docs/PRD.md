@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03-30
+**Last updated:** 2026-03-31
 
 ---
 
@@ -196,18 +196,20 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 |-----------|-----------|---------|
 | `briefing` | BriefingCard | Top-level deal overview and AI recommendation |
 | `numbers` | NumbersCard | Financial figures (read-only display) |
-| `vehicle` | AiVehicleCard | Vehicle details with inline editing |
-| `warning` | WarningCard | Deal problems and red flags with accent bar styling |
+| `vehicle` | AiVehicleCard | Vehicle details with contextual title labels (RN primitives) |
+| `warning` | WarningCard | Deal problems and red flags with top accent bar styling |
 | `tip` | TipCard | Contextual advice and suggestions |
-| `checklist` | AiChecklistCard | Phase-appropriate to-do items |
+| `checklist` | AiChecklistCard | Phase-appropriate to-do items (read-only with progress bar) |
 | `success` | SuccessCard | Positive deal signals |
 | `comparison` | AiComparisonCard | Side-by-side deal comparison |
 
-**Supporting components:** AiCard (base card renderer with card reply button), CardReplyInput (slide-in reply drawer), renderCardByType (card type dispatch), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
+**Supporting components:** AiCard (base card renderer with card reply button), CardReplyInput (slide-in reply drawer), CardTitle (shared uppercase muted label component), SituationBar (negotiation context display with stance badge and situation summary), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
 
 **Card reply system:** Every insight card has a MessageCircle reply icon. Tapping it opens a slide-in input drawer attached to the card. Submitting sends a chat message with the card context quoted, so the AI can respond with full awareness of what the user is referencing. A QuotedCardPreview renders a compact summary of the referenced card inside the user's chat bubble.
 
-**Inline editing:** Users can tap to correct AI-extracted values on AiVehicleCard and dealer name. Corrections are sent as structured payloads (vehicle_corrections arrays) to `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment.
+**Inline editing:** Users can tap to correct dealer name. Corrections are sent as structured payloads to `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment. AiVehicleCard inline editing is temporarily disabled (Tamagui web runtime workaround). Users can ask about or correct values via the card reply system instead.
+
+**Negotiation context:** The backend maintains a structured negotiation context (stance, situation, key numbers, scripts, pending actions, leverage) via a situation assessor subagent that runs in parallel with other extraction subagents. The SituationBar component displays the current stance and situation summary above the card list. Negotiation context is persisted on the deal state and emitted as `update_negotiation_context` tool_result events.
 
 #### 4.3 Session Management (Buyer)
 

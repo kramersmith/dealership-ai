@@ -799,6 +799,25 @@ def test_apply_extraction_checklist(db):
     assert deal_state.checklist == items
 
 
+def test_apply_extraction_checklist_string_input(db):
+    """Checklist extraction handles a JSON string and parses it into a list."""
+    import json
+
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+
+    items = [
+        {"label": "Get pre-approved", "done": False},
+        {"label": "Check credit score", "done": True},
+    ]
+    # Pass checklist as a JSON string instead of a list
+    applied = apply_extraction(deal_state, {"checklist": json.dumps(items)}, db)
+
+    tool_call = _find_tool(applied, "update_checklist")
+    assert tool_call is not None
+    assert deal_state.checklist == items
+
+
 # ─── apply_extraction: buyer_context ───
 
 
@@ -1005,6 +1024,33 @@ def test_deal_state_to_dict_deal_red_flags_and_gaps(db):
     assert result["deals"][0]["red_flags"][0]["id"] == "test"
     assert len(result["deals"][0]["information_gaps"]) == 1
     assert result["deals"][0]["information_gaps"][0]["label"] == "Credit"
+
+
+def test_deal_state_to_dict_includes_negotiation_context(db):
+    """deal_state_to_dict includes negotiation_context when set."""
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+    negotiation_context = {
+        "stance": "negotiating",
+        "situation": "Waiting for dealer counter-offer at $33K.",
+        "key_numbers": [{"label": "Target", "value": "$33,000"}],
+    }
+    deal_state.negotiation_context = negotiation_context
+    db.commit()
+
+    result = deal_state_to_dict(deal_state, db)
+
+    assert result["negotiation_context"] == negotiation_context
+
+
+def test_deal_state_to_dict_negotiation_context_none(db):
+    """deal_state_to_dict returns None for negotiation_context when not set."""
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+
+    result = deal_state_to_dict(deal_state, db)
+
+    assert result["negotiation_context"] is None
 
 
 # ─── PATCH /deal/{session_id} with new format ───

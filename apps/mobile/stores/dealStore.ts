@@ -10,6 +10,7 @@ import type {
   AiPanelCard,
   ChecklistItem,
   InformationGap,
+  NegotiationContext,
   RedFlag,
   Scorecard,
   ToolCall,
@@ -33,7 +34,6 @@ interface DealStore {
   applyToolCalls: (toolCalls: ToolCall[]) => void
 
   // Direct setters
-  toggleChecklistItem: (index: number) => void
   startTimer: () => void
   dismissRedFlag: (id: string) => void
 
@@ -326,6 +326,11 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       return { ...dealState, aiPanelCards: cards }
     }
 
+    case 'update_negotiation_context': {
+      const context = snakeToCamel(toolCall.args) as NegotiationContext
+      return { ...dealState, negotiationContext: context }
+    }
+
     case 'update_checklist': {
       const items = toolCall.args.items as ChecklistItem[]
       return { ...dealState, checklist: items }
@@ -379,6 +384,7 @@ export const useDealStore = create<DealStore>((set, get) => ({
         timerStartedAt: null,
         aiPanelCards: [],
         dealComparison: null,
+        negotiationContext: null,
       },
       dismissedFlagIds: new Set(),
     })
@@ -405,16 +411,6 @@ export const useDealStore = create<DealStore>((set, get) => ({
       dealState = applyToolCallToState(dealState, toolCall)
     }
     set({ dealState })
-  },
-
-  toggleChecklistItem: (index) => {
-    const { dealState } = get()
-    if (!dealState) return
-    const checklist = [...dealState.checklist]
-    if (checklist[index]) {
-      checklist[index] = { ...checklist[index], done: !checklist[index].done }
-    }
-    set({ dealState: { ...dealState, checklist } })
   },
 
   startTimer: () => {

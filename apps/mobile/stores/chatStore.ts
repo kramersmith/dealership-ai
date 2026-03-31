@@ -7,8 +7,12 @@ import { useDealStore } from './dealStore'
 /** Build the message content sent to the backend, optionally prefixing with quoted card context. */
 function buildMessageContent(text: string, quotedCard?: QuotedCard): string {
   if (!quotedCard) return text
-  const cardSummary = JSON.stringify(quotedCard.content)
-  return `[Referring to "${quotedCard.title}" (${quotedCard.type} card): ${cardSummary}]\n\n${text}`
+  try {
+    const cardSummary = JSON.stringify(quotedCard.content)
+    return `[Referring to "${quotedCard.title}" (${quotedCard.type} card): ${cardSummary}]\n\n${text}`
+  } catch {
+    return `[Referring to "${quotedCard.title}" (${quotedCard.type} card)]\n\n${text}`
+  }
 }
 
 interface ChatState {

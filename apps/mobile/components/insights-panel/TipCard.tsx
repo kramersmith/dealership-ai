@@ -1,7 +1,8 @@
-import { XStack, YStack, Text } from 'tamagui'
+import { YStack } from 'tamagui'
 import { Lightbulb } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
 import { PanelMarkdown } from './PanelMarkdown'
+import { CardTitle } from './CardTitle'
 
 interface TipCardProps {
   title: string
@@ -13,17 +14,10 @@ export function TipCard({ title, content }: TipCardProps) {
 
   return (
     <AppCard compact>
-      <XStack gap="$2.5" alignItems="flex-start">
-        <YStack paddingTop="$0.5">
-          <Lightbulb size={15} color="$brand" />
-        </YStack>
-        <YStack flex={1} gap="$1.5">
-          <Text fontSize={14} fontWeight="600" color="$color">
-            {title}
-          </Text>
-          <PanelMarkdown>{body}</PanelMarkdown>
-        </YStack>
-      </XStack>
+      <YStack gap="$2">
+        <CardTitle icon={<Lightbulb size={14} color="$brand" />}>{title}</CardTitle>
+        <PanelMarkdown>{body}</PanelMarkdown>
+      </YStack>
     </AppCard>
   )
 }

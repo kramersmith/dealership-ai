@@ -1,3 +1,4 @@
+import json
 import logging
 
 from sqlalchemy.orm import Session
@@ -431,6 +432,14 @@ def apply_extraction(
     # Checklist
     if "checklist" in extraction:
         checklist_data = extraction["checklist"]
+        if isinstance(checklist_data, str):
+            try:
+                checklist_data = json.loads(checklist_data)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Checklist extraction contained unparseable string, resetting to empty"
+                )
+                checklist_data = []
         deal_state.checklist = (
             checklist_data.get("items", checklist_data)
             if isinstance(checklist_data, dict)
@@ -619,6 +628,7 @@ def deal_state_to_dict(deal_state: DealState, db: Session) -> dict:
         "session_information_gaps": deal_state.information_gaps or [],
         "checklist": deal_state.checklist or [],
         "ai_panel_cards": deal_state.ai_panel_cards or [],
+        "negotiation_context": deal_state.negotiation_context,
     }
 
 

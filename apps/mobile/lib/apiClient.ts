@@ -9,6 +9,7 @@ import type {
   ToolCall,
 } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
+import { snakeToCamel } from './utils'
 
 const API_BASE = 'http://localhost:8001/api'
 
@@ -411,6 +412,9 @@ class ApiClient implements ApiService {
       timerStartedAt: ds.timer_started_at ?? null,
       aiPanelCards: (ds.ai_panel_cards ?? []).map(mapAiPanelCard),
       dealComparison: mapDealComparison(ds.deal_comparison),
+      negotiationContext: ds.negotiation_context
+        ? (snakeToCamel(ds.negotiation_context) as DealState['negotiationContext'])
+        : null,
     }
   }
 

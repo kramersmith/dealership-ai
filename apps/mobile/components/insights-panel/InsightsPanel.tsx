@@ -7,19 +7,18 @@ import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore } from '@/stores/chatStore'
 import { AiCard } from './AiCard'
+import { SituationBar } from './SituationBar'
 
 /** Animate a card sliding in. Only animates on first mount. */
 const AnimatedCard = memo(function AnimatedCard({
   index,
   card,
   skipAnimation,
-  onToggleChecklist,
   onSendReply,
 }: {
   index: number
   card: AiPanelCard
   skipAnimation: boolean
-  onToggleChecklist?: (index: number) => void
   onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
 }) {
   const opacity = useRef(new Animated.Value(skipAnimation ? 1 : 0)).current
@@ -47,7 +46,7 @@ const AnimatedCard = memo(function AnimatedCard({
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <AiCard card={card} onToggleChecklist={onToggleChecklist} onSendReply={onSendReply} />
+      <AiCard card={card} onSendReply={onSendReply} />
     </Animated.View>
   )
 })
@@ -82,7 +81,6 @@ function EmptyState() {
 /** The InsightsPanel subscribes directly to aiPanelCards from the deal store. */
 export const InsightsPanel = memo(function InsightsPanel() {
   const dealState = useDealStore((s) => s.dealState)
-  const toggleChecklistItem = useDealStore((s) => s.toggleChecklistItem)
   const cards = dealState?.aiPanelCards ?? []
   const hasAnimatedOnce = useRef(false)
 
@@ -91,14 +89,6 @@ export const InsightsPanel = memo(function InsightsPanel() {
   if (cards.length > 0 && !hasAnimatedOnce.current) {
     hasAnimatedOnce.current = true
   }
-
-  // Stable callbacks
-  const handleToggleChecklist = useCallback(
-    (index: number) => {
-      toggleChecklistItem(index)
-    },
-    [toggleChecklistItem]
-  )
 
   const handleSendReply = useCallback(async (text: string, quotedCard: QuotedCard) => {
     await useChatStore.getState().sendMessage(text, undefined, quotedCard)
@@ -113,19 +103,24 @@ export const InsightsPanel = memo(function InsightsPanel() {
     )
   }
 
+  const negotiationContext = dealState?.negotiationContext ?? null
+
   return (
-    <YStack flex={1} paddingHorizontal="$3.5" paddingVertical="$3" gap="$3">
+    <YStack flex={1} paddingHorizontal="$3.5" paddingTop="$3" gap="$3">
       <PanelHeader />
+      {negotiationContext?.situation && negotiationContext?.stance && (
+        <SituationBar context={negotiationContext} />
+      )}
       {cards.map((card, i) => (
         <AnimatedCard
           key={`panel-card-${i}`}
           index={i}
           card={card}
           skipAnimation={skipAnimation}
-          onToggleChecklist={handleToggleChecklist}
           onSendReply={handleSendReply}
         />
       ))}
+      <YStack height={24} />
     </YStack>
   )
 })

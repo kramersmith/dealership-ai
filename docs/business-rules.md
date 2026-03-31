@@ -1,17 +1,18 @@
 # Business Rules
 
-Last updated: 2026-03-30
+Last updated: 2026-03-31
 
 ## Table of Contents
 
 1. [Buyer Context](#buyer-context)
-2. [Deal Phases](#deal-phases)
-3. [Deal Scoring](#deal-scoring)
-4. [Chat Sessions](#chat-sessions)
-5. [AI Tool Definitions](#ai-tool-definitions)
-6. [Simulations](#simulations)
-7. [Authentication](#authentication)
-8. [Claude API](#claude-api)
+2. [Negotiation Context](#negotiation-context)
+3. [Deal Phases](#deal-phases)
+4. [Deal Scoring](#deal-scoring)
+5. [Chat Sessions](#chat-sessions)
+6. [AI Tool Definitions](#ai-tool-definitions)
+7. [Simulations](#simulations)
+8. [Authentication](#authentication)
+9. [Claude API](#claude-api)
 
 ---
 
@@ -44,6 +45,71 @@ When the buyer starts a new chat:
 1. ContextPicker shows three situation cards
 2. Tapping a card creates a session with that `buyer_context` and shows a context-specific greeting
 3. The buyer can skip the cards entirely by typing or uploading directly (defaults to `researching`)
+
+---
+
+## Negotiation Context
+
+The backend maintains a **negotiation context** — a structured snapshot of the buyer's current situation, strategy, and next moves. This is separate from buyer context (which is a coarse session-level setting) and operates at a finer granularity, updating as the conversation progresses.
+
+### Negotiation Stance
+
+The `NegotiationStance` enum tracks where the buyer is in the negotiation lifecycle:
+
+| Stance | Description | SituationBar Color |
+|---|---|---|
+| `researching` | Gathering information, comparing options | Brand (blue) |
+| `preparing` | Getting ready to engage a dealer | Brand |
+| `engaging` | Initial dealer contact or visit | Brand |
+| `negotiating` | Active price/terms negotiation | Brand |
+| `holding` | Holding firm on a position | Warning (yellow) |
+| `walking` | Walked away from the deal | Warning |
+| `waiting` | Waiting for dealer callback or response | Warning |
+| `financing` | Working through financing/F&I | Positive (green) |
+| `closing` | Final signatures and delivery | Positive |
+| `post_purchase` | Deal complete | Positive |
+
+### Context Structure
+
+The negotiation context contains:
+- **situation** — One short sentence (max 15 words) describing what is happening right now
+- **stance** — Current NegotiationStance value
+- **key_numbers** — 2-4 most important numbers for the current moment (label, value, optional note)
+- **scripts** — Up to 3 word-for-word things the buyer should say (label describing when to use, text to say)
+- **pending_actions** — Up to 5 things the buyer should do or wait for (action, optional detail, done flag)
+- **leverage** — Up to 3 concrete advantages the buyer has (not generic advice)
+
+### Situation Assessor Subagent
+
+The situation assessor runs in parallel with the factual extractor and analyst subagents (Stage 2 of the chat pipeline). It uses Haiku (`CLAUDE_FAST_MODEL`) with `auto` tool choice, meaning it can choose not to call its tool when the situation hasn't meaningfully changed.
+
+**Update triggers:**
+- Buyer arrived at or left the dealership (stance change)
+- Buyer made or received an offer (new key numbers)
+- Buyer walked out or is waiting (stance change + new scripts)
+- New information changes the strategy
+- Assistant provided new scripts the buyer should use
+
+**Skip triggers (no update):**
+- Tangential questions that don't change the situation (e.g., asking about tire costs while waiting for a callback)
+- The previous context is still accurate
+
+**Preservation rules:** When updating, the assessor preserves relevant information from the previous context (pending actions still in progress, scripts still applicable). It only replaces content when the assistant provided new scripts or actions were completed.
+
+### System Prompt Integration
+
+The negotiation context is injected into the primary model's system prompt as a summary: stance, situation, and pending actions. This gives the primary model awareness of the maintained context without requiring it to track this information itself.
+
+### Panel Card Integration
+
+The panel generator prompt instructs card generation to reflect the negotiation context when present:
+- Briefing card reflects the situation field
+- Scripts appear as dedicated briefing cards with blockquote-style text
+- Pending actions map to checklist cards
+- Key numbers drive the numbers card content
+- Leverage points surface as tip cards
+
+The negotiation context takes precedence over the panel generator's own interpretation of the truncated conversation.
 
 ---
 
@@ -307,7 +373,7 @@ If the primary Claude model updates deal numbers but doesn't call `update_deal_h
 
 ### User Corrections
 
-Users can inline-edit vehicle fields and dealer name on the frontend (AiVehicleCard component). NumbersCard is now read-only display; users can ask questions about numbers via the card reply system instead. Corrections are sent as structured payloads (vehicle_corrections and deal_corrections arrays) to `PATCH /api/deal/{session_id}`, which:
+Users can inline-edit dealer name on the frontend. AiVehicleCard inline editing is temporarily disabled (Tamagui web runtime workaround); users can correct vehicle details via the card reply system. NumbersCard is read-only display. Corrections are sent as structured payloads (vehicle_corrections and deal_corrections arrays) to `PATCH /api/deal/{session_id}`, which:
 1. Applies corrections to the specified vehicles and/or deals by ID
 2. Snapshots `first_offer` if this is the first time `current_offer` is set on a deal
 3. Vehicle corrections propagate to linked deals for re-assessment
@@ -391,7 +457,7 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 | Setting | Value | Description |
 |---|---|---|
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat with tool use |
-| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation, session title generation, deal assessment safety net) |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation, session title generation, deal assessment safety net, situation assessment) |
 | `CLAUDE_MAX_TOKENS` | `4096` | Maximum tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages included in context window |
 
@@ -431,5 +497,6 @@ If Claude doesn't call `update_quick_actions` during the primary response, the b
 - Quick action generation capped at 256 tokens (fast model)
 - Session title generation capped at 30 tokens (fast model)
 - Deal assessment safety net capped at 512 tokens (fast model)
+- Situation assessment capped at 1024 tokens (fast model)
 - Message history limited to 20 messages to control context size
 - Linked session context limited to last 10 messages, each truncated to 200 characters

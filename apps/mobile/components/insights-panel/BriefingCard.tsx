@@ -1,7 +1,8 @@
-import { YStack, Text } from 'tamagui'
+import { YStack } from 'tamagui'
 import type { AiCardPriority } from '@/lib/types'
 import { AppCard } from '@/components/shared'
 import { PanelMarkdown } from './PanelMarkdown'
+import { CardTitle } from './CardTitle'
 
 interface BriefingCardProps {
   title: string
@@ -14,16 +15,13 @@ export function BriefingCard({ title, content, priority }: BriefingCardProps) {
   const showAccent = priority === 'critical' || priority === 'high'
 
   return (
-    <AppCard compact>
-      <YStack
-        borderLeftWidth={showAccent ? 3 : 0}
-        borderLeftColor={showAccent ? '$brand' : undefined}
-        paddingLeft={showAccent ? '$3' : undefined}
-        gap="$2"
-      >
-        <Text fontSize={14} fontWeight="600" color="$color">
-          {title}
-        </Text>
+    <AppCard
+      compact
+      borderTopWidth={showAccent ? 2 : 1}
+      borderTopColor={showAccent ? '$brand' : '$borderColor'}
+    >
+      <YStack gap="$2">
+        <CardTitle>{title}</CardTitle>
         <PanelMarkdown>{body}</PanelMarkdown>
       </YStack>
     </AppCard>

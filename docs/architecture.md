@@ -35,9 +35,11 @@ dealership-ai/
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
 │   │   │   ├── insights-panel/   # AI-driven InsightsPanel with card-based layout:
 │   │   │   │                    # AiCard (base renderer + reply button), CardReplyInput,
-│   │   │   │                    # renderCardByType, BriefingCard, NumbersCard,
-│   │   │   │                    # AiVehicleCard, WarningCard, TipCard, SuccessCard,
-│   │   │   │                    # AiChecklistCard, AiComparisonCard, CompactPhaseIndicator,
+│   │   │   │                    # CardTitle (shared label component), SituationBar
+│   │   │   │                    # (negotiation context), BriefingCard, NumbersCard,
+│   │   │   │                    # AiVehicleCard (RN primitives), WarningCard, TipCard,
+│   │   │   │                    # SuccessCard, AiChecklistCard (read-only + progress bar),
+│   │   │   │                    # AiComparisonCard, CompactPhaseIndicator,
 │   │   │   │                    # PanelMarkdown, QuickActions
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
 │   │   ├── hooks/
@@ -66,7 +68,7 @@ dealership-ai/
 │       │   ├── schemas/         # Pydantic request/response
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
-│       │       ├── claude.py    # Claude API + two-pass extraction (factual extractor + analyst subagents) + SSE streaming
+│       │       ├── claude.py    # Claude API + two-pass extraction (factual extractor + analyst + situation assessor subagents) + SSE streaming
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
@@ -111,6 +113,7 @@ dealership-ai/
 - Timer: timer_started_at
 - AI panel cards: JSON array of AI-generated card objects for the InsightsPanel
 - Deal comparison: JSON (AI-generated, session-level since it spans deals)
+- Negotiation context: JSON (AI-maintained situational awareness — stance, situation summary, key numbers, scripts, pending actions, leverage)
 
 **simulations** — (id, session_id, scenario_type, difficulty [Difficulty enum: easy/medium/hard], ai_persona JSON, score, feedback, completed_at)
 
@@ -131,6 +134,7 @@ All domain values use Python `StrEnum` for type safety:
 | `GapPriority` | `high`, `medium`, `low` |
 | `VehicleRole` | `primary`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
+| `NegotiationStance` | `researching`, `preparing`, `engaging`, `negotiating`, `holding`, `walking`, `waiting`, `financing`, `closing`, `post_purchase` |
 | `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 
@@ -176,7 +180,8 @@ POST   /simulations/{id}/complete     # End + score
 **Extraction architecture:** The backend uses a two-pass extraction approach with parallel subagents:
 1. **Factual extractor** — extracts structured data (vehicle, deal numbers, scorecard, phase, buyer context, checklist, quick actions) from conversation
 2. **Analyst subagent** — runs in parallel to generate deal health assessment, red flags, information gaps, and AI panel cards
-3. Results are merged and applied to the database via `apply_extraction()` in `deal_state.py`
+3. **Situation assessor** — runs in parallel to maintain the buyer's negotiation context (stance, situation summary, key numbers, scripts, pending actions, leverage). Only updates when the situation meaningfully changes. Uses `auto` tool choice so it can skip updates for tangential exchanges.
+4. Results are merged and applied to the database via `apply_extraction()` in `deal_state.py`. Negotiation context is applied separately and emitted as an `update_negotiation_context` tool_result SSE event.
 
 **Deal state service** (`app/services/deal_state.py`):
 - `apply_extraction()` — applies extracted data to Vehicle, Deal, and DealState models; auto-creates deals for new primary vehicles; returns tool calls for frontend
@@ -191,7 +196,7 @@ POST   /simulations/{id}/complete     # End + score
 5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data including `create_deal` for backend-created deals)
 6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
 7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
-8. **Two-pass extraction:** Factual extractor and analyst subagents run in parallel via Haiku to extract structured data and generate AI panel cards
+8. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context
 9. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events
 10. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
 11. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → InsightsPanel re-renders with AI-generated cards. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.

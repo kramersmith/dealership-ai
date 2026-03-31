@@ -1,6 +1,7 @@
 import { XStack, YStack, Text, Theme } from 'tamagui'
 import type { DealComparison, ComparisonHighlight } from '@/lib/types'
 import { AppCard } from '@/components/shared'
+import { CardTitle } from './CardTitle'
 
 interface AiComparisonCardProps {
   title: string
@@ -46,15 +47,7 @@ export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
 
   return (
     <AppCard compact gap="$2">
-      <Text
-        fontSize={12}
-        fontWeight="600"
-        color="$placeholderColor"
-        textTransform="uppercase"
-        letterSpacing={0.5}
-      >
-        {title}
-      </Text>
+      <CardTitle>{title}</CardTitle>
 
       {summary && (
         <Text fontSize={13} color="$color" lineHeight={20}>

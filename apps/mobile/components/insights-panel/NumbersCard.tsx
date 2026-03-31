@@ -3,6 +3,7 @@ import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { AppCard } from '@/components/shared'
+import { CardTitle } from './CardTitle'
 
 interface NumberRow {
   label: string
@@ -72,15 +73,7 @@ export function NumbersCard({ title, content }: NumbersCardProps) {
   return (
     <AppCard compact>
       <YStack gap="$3">
-        <Text
-          fontSize={12}
-          fontWeight="600"
-          color="$placeholderColor"
-          textTransform="uppercase"
-          letterSpacing={0.5}
-        >
-          {title}
-        </Text>
+        <CardTitle>{title}</CardTitle>
 
         {allGroups.map((group, gi) => (
           <YStack key={group.key}>

@@ -55,7 +55,7 @@ FastAPI app with layered architecture:
 
 - **Routes** (`app/routes/`) — Endpoint definitions: auth, sessions, chat (SSE streaming), deals, simulations
 - **Schemas** (`app/schemas/`) — Pydantic models for request/response validation
-- **Services** (`app/services/`) — Business logic: Claude API integration with two-pass extraction (factual extractor + analyst subagents in parallel), SSE streaming, deal state logic (`deal_state.py`: apply_extraction, deal_state_to_dict, build_deal_assessment_dict), post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback)
+- **Services** (`app/services/`) — Business logic: Claude API integration with two-pass extraction (factual extractor + analyst + situation assessor subagents in parallel), SSE streaming, deal state logic (`deal_state.py`: apply_extraction, deal_state_to_dict, build_deal_assessment_dict), post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback)
 - **Models** (`app/models/`) — SQLAlchemy ORM: User, ChatSession, Message, DealState, Vehicle, Deal, Simulation
 - **Core** (`app/core/`) — Config (Pydantic Settings), security (JWT + bcrypt), deps (FastAPI DI)
 
@@ -65,7 +65,7 @@ Key patterns:
 - Server-side quick actions: if Claude doesn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
 - Assessment safety net: if Claude updates numbers but doesn't call `update_deal_health` or `update_red_flags`, the backend runs a Haiku assessment (`assess_deal_state`) to fill in health status, red flags, and recommendation
 - Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (text from two-pass follow-up), `done`
-- Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, AiCardType, AiCardPriority (all `StrEnum`)
+- Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, NegotiationStance, AiCardType, AiCardPriority (all `StrEnum`)
 - Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
 - Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)
 - SQLite for local dev, PostgreSQL via Docker for production
@@ -76,7 +76,7 @@ Key patterns:
 React Native + Expo + Tamagui + Zustand:
 
 - **Screens** (`app/`) — Expo Router file-based routing with a single `(app)` route group (role-gated screens)
-- **Components** (`components/`) — Chat (bubbles, input, voice, ContextPicker, CopyableBlock, QuotedCardPreview), Chats (SessionCard with phase dot, preview, deal summary), Insights Panel (`insights-panel/`: AI-driven card-based layout with AiCard base renderer + reply button, CardReplyInput, renderCardByType, BriefingCard, NumbersCard, AiVehicleCard, WarningCard, TipCard, SuccessCard, AiChecklistCard, AiComparisonCard, CompactPhaseIndicator, PanelMarkdown, QuickActions), Shared (AppCard with compact prop, buttons, pills, menu)
+- **Components** (`components/`) — Chat (bubbles, input, voice, ContextPicker, CopyableBlock, QuotedCardPreview), Chats (SessionCard with phase dot, preview, deal summary), Insights Panel (`insights-panel/`: AI-driven card-based layout with AiCard base renderer + reply button, CardReplyInput, CardTitle (shared uppercase muted label), SituationBar (negotiation context display), BriefingCard, NumbersCard, AiVehicleCard (RN primitives, Tamagui workaround), WarningCard, TipCard, SuccessCard, AiChecklistCard (read-only with progress bar), AiComparisonCard, CompactPhaseIndicator, PanelMarkdown, QuickActions), Shared (AppCard with compact prop, buttons, pills, menu)
 - **Stores** (`stores/`) — Zustand: auth, chat, deal, simulation, theme
 - **Hooks** (`hooks/`) — useChat (orchestrates messages + tool calls with event-based SSE parsing and optimistic rollback), useEditableField (inline editing with debounced backend sync), useScreenWidth (responsive breakpoint), useIconEntrance (animated icon transitions between screens)
 - **API** (`lib/`) — API client connecting to the FastAPI backend (no mock layer), `snakeToCamel` utility for mapping backend snake_case fields to frontend camelCase, `dealComputations.ts` for derived deal metrics (savings, `computeOfferDelta`, `getNextActionRecommendation`)
@@ -84,9 +84,12 @@ React Native + Expo + Tamagui + Zustand:
 Key patterns:
 - ContextPicker component (`components/chat/ContextPicker.tsx`, renamed from WelcomePrompts) shows 3 situation cards when starting a new buyer chat session; user can skip by typing directly
 - Buyer context (researching, reviewing_deal, at_dealership) drives static fallback quick actions, system prompt preamble, and hardcoded greeting messages
-- InsightsPanel renders AI-generated cards (`ai_panel_cards` on deal state) with card types: briefing, numbers, vehicle, warning, tip, checklist, success, comparison — replacing the previous fixed-widget tiered layout
+- InsightsPanel renders AI-generated cards (`ai_panel_cards` on deal state) with card types: briefing, numbers, vehicle, warning, tip, checklist, success, comparison — replacing the previous fixed-widget tiered layout. SituationBar displays the negotiation context (stance + situation) above cards when present.
+- Card design standardization: all cards use a shared CardTitle component (uppercase muted label, optional icon and right content). Status cards (briefing high/critical, success) use top accent bars instead of left borders.
 - Card reply system: every insight card has a MessageCircle reply icon that opens a CardReplyInput slide-in drawer; submitting sends a chat message with quoted card context (`QuotedCard` type on Message, rendered as `QuotedCardPreview` in chat bubbles). `chatStore.sendMessage` accepts an optional `quotedCard` param.
-- Inline editing on AiVehicleCard and dealer name — corrections sent as structured payloads (vehicle_corrections) to `PATCH /api/deal/{session_id}` with automatic Haiku re-assessment. NumbersCard is read-only display (no inline editing).
+- AiVehicleCard uses RN primitives (View/Text/StyleSheet) instead of Tamagui as a workaround for a Tamagui web runtime circular reference bug. Uses contextual title labels based on buyer situation (e.g., "Target Vehicle" during research, "Your Vehicle" during negotiation).
+- AiChecklistCard is read-only (no toggle interaction) with a progress bar. Inline editing on dealer name only — corrections sent as structured payloads to `PATCH /api/deal/{session_id}` with automatic Haiku re-assessment.
+- Negotiation context: `NegotiationContext` type with stance, situation, key numbers, scripts, pending actions, and leverage. Displayed via SituationBar in InsightsPanel. DealStore handles `update_negotiation_context` tool calls from the backend situation assessor.
 - DealStore: handles backend-emitted `create_deal` events for deal/vehicle creation; no longer auto-creates deals client-side
 - Quick actions are dynamically generated by Claude via the `update_quick_actions` tool; static context-based fallbacks show before the first AI exchange and when dynamic actions go stale
 - AuthGuard component (`components/shared/AuthGuard.tsx`) protects the `(app)` route group
