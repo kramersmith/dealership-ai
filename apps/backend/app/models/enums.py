@@ -96,3 +96,19 @@ class AiCardPriority(StrEnum):
     HIGH = "high"
     NORMAL = "normal"
     LOW = "low"
+
+
+class IdentityConfirmationStatus(StrEnum):
+    UNCONFIRMED = "unconfirmed"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
+class IntelligenceProvider(StrEnum):
+    NHTSA_VPIC = "nhtsa_vpic"
+    VINAUDIT = "vinaudit"
+
+
+class IntelligenceStatus(StrEnum):
+    SUCCESS = "success"
+    PARTIAL = "partial"

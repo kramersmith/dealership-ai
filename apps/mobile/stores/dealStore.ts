@@ -15,6 +15,7 @@ import type {
   Scorecard,
   ToolCall,
   Vehicle,
+  VehicleIntelligence,
   VehicleRole,
 } from '@/lib/types'
 import { EMPTY_DEAL_NUMBERS, EMPTY_SCORECARD } from '@/lib/constants'
@@ -45,6 +46,15 @@ interface DealStore {
     field: keyof Vehicle,
     value: string | number | undefined
   ) => void
+  setVehicleIntelligenceLoading: (
+    vehicleId: string,
+    action: 'decode' | 'history' | 'valuation',
+    error?: string | null
+  ) => void
+  setVehicleIntelligence: (vehicleId: string, intelligence: VehicleIntelligence) => void
+  decodeVehicleVin: (vehicleId: string, vin?: string) => Promise<void>
+  checkVehicleHistory: (vehicleId: string, vin?: string) => Promise<void>
+  getVehicleValuation: (vehicleId: string, vin?: string) => Promise<void>
 }
 
 /** Debounce timer for backend correction calls. */
@@ -53,6 +63,32 @@ let correctionTimer: ReturnType<typeof setTimeout> | null = null
 /** Accumulated corrections waiting to be sent to backend. */
 let pendingVehicleCorrections: Map<string, Record<string, string | number | null>> = new Map()
 let pendingDealCorrections: Map<string, Record<string, string | number | null>> = new Map()
+
+type IntelligenceAction = 'decode' | 'history' | 'valuation'
+
+async function runIntelligenceAction(
+  get: () => DealStore,
+  apiFn: (sessionId: string, vehicleId: string, vin?: string) => Promise<VehicleIntelligence>,
+  vehicleId: string,
+  action: IntelligenceAction,
+  vin: string | undefined,
+  fallbackError: string
+) {
+  const { dealState, setVehicleIntelligenceLoading, setVehicleIntelligence } = get()
+  if (!dealState) return
+  setVehicleIntelligenceLoading(vehicleId, action)
+  try {
+    const intelligence = await apiFn(dealState.sessionId, vehicleId, vin)
+    setVehicleIntelligence(vehicleId, intelligence)
+    await get().loadDealState(dealState.sessionId)
+  } catch (err) {
+    setVehicleIntelligenceLoading(
+      vehicleId,
+      action,
+      err instanceof Error ? err.message : fallbackError
+    )
+  }
+}
 
 function debouncedSendCorrections(sessionId: string, set: any, get: any) {
   if (correctionTimer) clearTimeout(correctionTimer)
@@ -468,5 +504,76 @@ export const useDealStore = create<DealStore>((set, get) => ({
       pendingVehicleCorrections.set(vehicleId, existing)
       debouncedSendCorrections(dealState.sessionId, set, get)
     }
+  },
+
+  setVehicleIntelligenceLoading: (vehicleId, action, error = null) => {
+    const { dealState } = get()
+    if (!dealState) return
+    const vehicles = dealState.vehicles.map((vehicle) =>
+      vehicle.id !== vehicleId
+        ? vehicle
+        : {
+            ...vehicle,
+            intelligence: {
+              decode: vehicle.intelligence?.decode ?? null,
+              historyReport: vehicle.intelligence?.historyReport ?? null,
+              valuation: vehicle.intelligence?.valuation ?? null,
+              loadingAction: action,
+              error,
+            },
+          }
+    )
+    set({ dealState: { ...dealState, vehicles } })
+  },
+
+  setVehicleIntelligence: (vehicleId, intelligence) => {
+    const { dealState } = get()
+    if (!dealState) return
+    const vehicles = dealState.vehicles.map((vehicle) =>
+      vehicle.id !== vehicleId
+        ? vehicle
+        : {
+            ...vehicle,
+            intelligence: {
+              ...intelligence,
+              loadingAction: null,
+              error: intelligence.error ?? null,
+            },
+          }
+    )
+    set({ dealState: { ...dealState, vehicles } })
+  },
+
+  decodeVehicleVin: async (vehicleId, vin) => {
+    await runIntelligenceAction(
+      get,
+      api.decodeVehicleVin.bind(api),
+      vehicleId,
+      'decode',
+      vin,
+      'VIN decode failed'
+    )
+  },
+
+  checkVehicleHistory: async (vehicleId, vin) => {
+    await runIntelligenceAction(
+      get,
+      api.checkVehicleHistory.bind(api),
+      vehicleId,
+      'history',
+      vin,
+      'Vehicle history lookup failed'
+    )
+  },
+
+  getVehicleValuation: async (vehicleId, vin) => {
+    await runIntelligenceAction(
+      get,
+      api.getVehicleValuation.bind(api),
+      vehicleId,
+      'valuation',
+      vin,
+      'Vehicle valuation lookup failed'
+    )
   },
 }))

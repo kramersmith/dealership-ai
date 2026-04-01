@@ -9,9 +9,11 @@ from app.models.enums import (
     BuyerContext,
     DealPhase,
     HealthStatus,
+    IdentityConfirmationStatus,
     VehicleRole,
 )
 from app.models.vehicle import Vehicle
+from app.services.vehicle_intelligence import build_vehicle_intelligence_response
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,72 @@ DEAL_NUMBER_FIELDS = (
     "down_payment",
     "trade_in_value",
 )
+
+
+def _is_vehicle_identity_confirmed(vehicle: Vehicle) -> bool:
+    return vehicle.identity_confirmation_status == IdentityConfirmationStatus.CONFIRMED
+
+
+def _compact_raw_payload(payload: dict | None) -> dict | None:
+    """Strip empty/irrelevant fields from raw NHTSA payload to reduce LLM token usage."""
+    if not payload:
+        return None
+    return {
+        key: value
+        for key, value in payload.items()
+        if value not in (None, "", "Not Applicable", "0", "0.0")
+        and not key.endswith("ID")  # MakeID, ModelID, ManufacturerId, etc.
+        and key
+        not in ("ErrorCode", "ErrorText", "AdditionalErrorText", "VehicleDescriptor")
+    }
+
+
+def _build_prompt_vehicle_dict(vehicle: Vehicle, db: Session) -> dict:
+    intelligence = build_vehicle_intelligence_response(vehicle.id, db).model_dump(
+        mode="json"
+    )
+    if not _is_vehicle_identity_confirmed(vehicle):
+        intelligence["decode"] = None
+    elif intelligence.get("decode") and intelligence["decode"].get("raw_payload"):
+        intelligence["decode"]["raw_payload"] = _compact_raw_payload(
+            intelligence["decode"]["raw_payload"]
+        )
+
+    return {
+        "id": vehicle.id,
+        "role": vehicle.role,
+        "year": vehicle.year if _is_vehicle_identity_confirmed(vehicle) else None,
+        "make": vehicle.make if _is_vehicle_identity_confirmed(vehicle) else None,
+        "model": vehicle.model if _is_vehicle_identity_confirmed(vehicle) else None,
+        "trim": vehicle.trim if _is_vehicle_identity_confirmed(vehicle) else None,
+        "vin": vehicle.vin,
+        "mileage": vehicle.mileage,
+        "color": vehicle.color,
+        "engine": vehicle.engine if _is_vehicle_identity_confirmed(vehicle) else None,
+        "identity_confirmation_status": vehicle.identity_confirmation_status,
+        "identity_confirmed_at": vehicle.identity_confirmed_at.isoformat()
+        if vehicle.identity_confirmed_at
+        else None,
+        "identity_confirmation_source": vehicle.identity_confirmation_source,
+        "intelligence": intelligence,
+    }
+
+
+def _build_assessment_vehicle_dict(vehicle: Vehicle, db: Session) -> dict:
+    """Build a compact vehicle dict for deal assessment, gating identity fields."""
+    confirmed = _is_vehicle_identity_confirmed(vehicle)
+    result = {
+        field: getattr(vehicle, field) if field == "mileage" or confirmed else None
+        for field in ("year", "make", "model", "trim", "mileage")
+    }
+    intelligence = build_vehicle_intelligence_response(vehicle.id, db).model_dump(
+        mode="json"
+    )
+    if not confirmed:
+        intelligence["decode"] = None
+    result["intelligence"] = intelligence
+    result["identity_confirmation_status"] = vehicle.identity_confirmation_status
+    return result
 
 
 def get_active_deal(deal_state: DealState, db: Session) -> Deal | None:
@@ -592,14 +660,7 @@ def deal_state_to_dict(deal_state: DealState, db: Session) -> dict:
     return {
         "buyer_context": deal_state.buyer_context,
         "active_deal_id": deal_state.active_deal_id,
-        "vehicles": [
-            {
-                "id": v.id,
-                "role": v.role,
-                **{field: getattr(v, field) for field in VEHICLE_FIELDS},
-            }
-            for v in vehicles
-        ],
+        "vehicles": [_build_prompt_vehicle_dict(v, db) for v in vehicles],
         "deals": [
             {
                 "id": d.id,
@@ -651,10 +712,7 @@ def build_deal_assessment_dict(deal: Deal, db: Session) -> dict:
     # Include the primary vehicle info
     vehicle = db.query(Vehicle).filter(Vehicle.id == deal.vehicle_id).first()
     if vehicle:
-        result["vehicle"] = {
-            field: getattr(vehicle, field)
-            for field in ("year", "make", "model", "trim", "mileage")
-        }
+        result["vehicle"] = _build_assessment_vehicle_dict(vehicle, db)
 
     # Include trade-in vehicle if one exists for this session
     trade_in = (
@@ -666,9 +724,6 @@ def build_deal_assessment_dict(deal: Deal, db: Session) -> dict:
         .first()
     )
     if trade_in:
-        result["trade_in_vehicle"] = {
-            field: getattr(trade_in, field)
-            for field in ("year", "make", "model", "trim", "mileage")
-        }
+        result["trade_in_vehicle"] = _build_assessment_vehicle_dict(trade_in, db)
 
     return result

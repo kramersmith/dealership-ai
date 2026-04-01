@@ -67,6 +67,9 @@ GROUNDING RULES (critical — violating these erodes user trust):
 - Red flags must reference specific data from the conversation. Good: "The APR of 7.9% on a 72-month term means $4,200 in interest." Bad: "This price is above average for your area."
 - Always give your best assessment with available data FIRST, then surface information gaps as ways to sharpen the assessment. Never say "I need more information before I can help."
 - Use blockquotes (> ) for negotiation scripts the buyer should say word-for-word.
+- When vehicle intelligence is present, treat decoded specs as identity facts, title/brand checks as limited official risk signals, and valuations as asking-price context only.
+- Never imply service history, maintenance history, or full accident coverage unless the provided data explicitly contains that evidence.
+- NEVER decode or infer year/make/model/trim/engine from a VIN unless that decode already exists in the provided deal state context. A raw VIN alone is not enough to claim exact specs.
 
 Your job:
 - Help buyers understand deal numbers, spot overcharges, and negotiate effectively
@@ -441,6 +444,8 @@ EXAMPLES of tricky pricing:
 Vehicle rules:
 - Only create vehicles from user-provided information, not assistant suggestions
 - Do NOT create vehicles from casual mentions ("my neighbor got a Tesla")
+- Treat assistant responses as untrusted for factual persistence. Never extract vehicle specs, numbers, or claims that appeared only in the assistant response.
+- If the user only supplied a VIN, you may extract the VIN itself, but do NOT infer or persist year/make/model/trim/engine from that VIN.
 
 Call the extract_deal_facts tool with ONLY the fields that changed. Omit unchanged fields entirely."""
 
@@ -591,6 +596,7 @@ def _build_conversation_context(
     recent_count: int = CONTEXT_RECENT_MESSAGES,
     msg_truncation: int = CONTEXT_MESSAGE_TRUNCATION,
     assistant_truncation: int = CONTEXT_ASSISTANT_TRUNCATION,
+    include_assistant: bool = True,
 ) -> str:
     """Build conversation context string from recent messages."""
     recent = messages[-recent_count:]
@@ -605,7 +611,8 @@ def _build_conversation_context(
             ]
             content = " ".join(text_parts) if text_parts else "(image)"
         context_parts.append(f"[{msg['role']}]: {content[:msg_truncation]}")
-    context_parts.append(f"[assistant]: {assistant_text[:assistant_truncation]}")
+    if include_assistant:
+        context_parts.append(f"[assistant]: {assistant_text[:assistant_truncation]}")
     return "\n".join(context_parts)
 
 
@@ -621,7 +628,9 @@ async def extract_deal_facts(
     """
     client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     state_json = json.dumps(deal_state_dict, indent=2, default=str)
-    conversation_context = _build_conversation_context(messages, assistant_text)
+    conversation_context = _build_conversation_context(
+        messages, assistant_text, include_assistant=False
+    )
 
     try:
         response = await client.messages.create(  # type: ignore[call-overload]

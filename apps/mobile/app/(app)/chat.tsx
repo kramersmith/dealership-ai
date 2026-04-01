@@ -171,6 +171,7 @@ export default function ChatScreen() {
 
   const { messages, isSending, isLoading, streamingText, send, handleQuickAction } =
     useChat(activeSessionId)
+  const vinAssistItems = useChatStore((state) => state.vinAssistItems)
 
   // Subscribe to dealState only for mobile preview — desktop doesn't need it
   const dealState = useDealStore((s) => s.dealState)
@@ -264,6 +265,7 @@ export default function ChatScreen() {
     useChatStore.setState({
       activeSessionId: null,
       messages: [],
+      vinAssistItems: [],
       quickActions: [],
       aiResponseCount: 0,
       quickActionsUpdatedAtResponse: 0,
@@ -485,6 +487,7 @@ export default function ChatScreen() {
         <YStack flex={1} position="relative">
           <ChatMessageList
             messages={messages}
+            vinAssistItems={vinAssistItems}
             isSending={isSending}
             streamingText={streamingText}
             topPadding={mobileChatTopInset}

@@ -1,6 +1,6 @@
 # Development Guide
 
-**Last updated:** 2026-03-26
+**Last updated:** 2026-03-31
 
 ---
 
@@ -85,6 +85,10 @@ make dev-frontend
 | `CLAUDE_MAX_TOKENS` | `4096` | Max tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages to include in context |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `NHTSA_VPIC_BASE_URL` | `https://vpic.nhtsa.dot.gov/api/vehicles` | NHTSA vPIC API base URL |
+| `VINAUDIT_API_KEY` | `` | VinAudit API key (required for history/valuation) |
+| `VINAUDIT_HISTORY_URL` | `https://marketvalue.vinaudit.com/getvehiclehistoryreport.php` | VinAudit history report URL |
+| `VINAUDIT_VALUATION_URL` | `https://marketvalue.vinaudit.com/getmarketvalue.php` | VinAudit valuation URL |
 
 ### Frontend
 

@@ -18,6 +18,69 @@ export type ScoreStatus = 'red' | 'yellow' | 'green' | null
 
 export type VehicleRole = 'primary' | 'trade_in'
 
+export type VehicleIntelligenceStatus = 'idle' | 'loading' | 'success' | 'partial' | 'failed'
+
+export interface VehicleDecode {
+  id: string
+  provider: string
+  status: VehicleIntelligenceStatus | string
+  vin: string
+  year?: number
+  make?: string
+  model?: string
+  trim?: string
+  engine?: string
+  bodyType?: string
+  drivetrain?: string
+  transmission?: string
+  fuelType?: string
+  sourceSummary?: string
+  rawPayload?: Record<string, any>
+  requestedAt: string
+  fetchedAt?: string | null
+  expiresAt?: string | null
+}
+
+export interface VehicleHistoryReport {
+  id: string
+  provider: string
+  status: VehicleIntelligenceStatus | string
+  vin: string
+  titleBrands: string[]
+  titleBrandCount: number
+  hasSalvage: boolean
+  hasTotalLoss: boolean
+  hasTheftRecord: boolean
+  hasOdometerIssue: boolean
+  sourceSummary?: string
+  coverageNotes?: string
+  requestedAt: string
+  fetchedAt?: string | null
+  expiresAt?: string | null
+}
+
+export interface VehicleValuation {
+  id: string
+  provider: string
+  status: VehicleIntelligenceStatus | string
+  vin: string
+  amount?: number | null
+  currency: string
+  valuationLabel: string
+  sourceSummary?: string
+  requestedAt: string
+  fetchedAt?: string | null
+  expiresAt?: string | null
+}
+
+export interface VehicleIntelligence {
+  decode: VehicleDecode | null
+  historyReport: VehicleHistoryReport | null
+  valuation: VehicleValuation | null
+  loadingAction?: 'decode' | 'history' | 'valuation' | null
+  error?: string | null
+}
+
 export interface Vehicle {
   id: string
   role: VehicleRole
@@ -29,6 +92,10 @@ export interface Vehicle {
   mileage?: number
   color?: string
   engine?: string
+  identityConfirmationStatus?: 'unconfirmed' | 'confirmed' | 'rejected'
+  identityConfirmedAt?: string | null
+  identityConfirmationSource?: string | null
+  intelligence?: VehicleIntelligence | null
 }
 
 // ─── Deal Numbers ───
@@ -254,6 +321,26 @@ export interface Message {
   createdAt: string
 }
 
+export interface VinAssistDecodedVehicle {
+  year?: number
+  make?: string
+  model?: string
+  trim?: string
+  partial: boolean
+}
+
+export interface VinAssistItem {
+  id: string
+  sessionId: string
+  vin: string
+  sourceMessageId: string
+  status: 'detected' | 'decoding' | 'decoded' | 'confirmed' | 'skipped' | 'failed' | 'rejected'
+  decodedVehicle?: VinAssistDecodedVehicle
+  vehicleId?: string
+  error?: string | null
+  updatedAt: string
+}
+
 // ─── Deal Summary (lightweight, for session cards) ───
 
 export interface DealSummary {
@@ -346,6 +433,24 @@ export interface ApiService {
     recommendation: string | null
     redFlags: RedFlag[]
   }>
+  getVehicleIntelligence(sessionId: string, vehicleId: string): Promise<VehicleIntelligence>
+  decodeVehicleVin(sessionId: string, vehicleId: string, vin?: string): Promise<VehicleIntelligence>
+  upsertVehicleFromVin(sessionId: string, vin: string): Promise<Vehicle>
+  confirmVehicleIdentity(
+    sessionId: string,
+    vehicleId: string,
+    status: 'confirmed' | 'rejected'
+  ): Promise<Vehicle>
+  checkVehicleHistory(
+    sessionId: string,
+    vehicleId: string,
+    vin?: string
+  ): Promise<VehicleIntelligence>
+  getVehicleValuation(
+    sessionId: string,
+    vehicleId: string,
+    vin?: string
+  ): Promise<VehicleIntelligence>
 
   // Simulations
   getScenarios(): Promise<Scenario[]>

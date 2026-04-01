@@ -11,9 +11,14 @@ from app.models.enums import (
     UserRole,
     VehicleRole,
 )
+from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from app.models.vehicle_decode import VehicleDecode
+from app.models.vehicle_history_report import VehicleHistoryReport
+from app.models.vehicle_valuation import VehicleValuation
+from app.services.claude import _build_conversation_context
 from app.services.deal_state import apply_extraction, deal_state_to_dict
 
 # ─── Helpers ───
@@ -240,6 +245,89 @@ def test_apply_extraction_vehicle_replaces_trade_in(db):
     assert new_vehicle.make == "Honda"
     assert new_vehicle.model == "Accord"
     assert new_vehicle.role == VehicleRole.TRADE_IN
+
+
+def test_deal_state_to_dict_includes_vehicle_intelligence(db):
+    user, _ = _create_user_and_token(db)
+    _, deal_state = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db,
+        deal_state.session_id,
+        make="Honda",
+        model="Civic",
+        vin="1HGCM82633A004352",
+        identity_confirmation_status="confirmed",
+    )
+    db.add(
+        VehicleDecode(
+            vehicle_id=vehicle.id,
+            provider="nhtsa_vpic",
+            status="success",
+            vin="1HGCM82633A004352",
+            make="Honda",
+            model="Civic",
+        )
+    )
+    db.add(
+        VehicleHistoryReport(
+            vehicle_id=vehicle.id,
+            provider="vinaudit",
+            status="success",
+            vin="1HGCM82633A004352",
+            title_brands=["Clean"],
+        )
+    )
+    db.add(
+        VehicleValuation(
+            vehicle_id=vehicle.id,
+            provider="vinaudit",
+            status="success",
+            vin="1HGCM82633A004352",
+            amount=21450,
+        )
+    )
+    db.commit()
+
+    result = deal_state_to_dict(deal_state, db)
+    vehicle_dict = result["vehicles"][0]
+
+    assert vehicle_dict["intelligence"]["decode"]["provider"] == "nhtsa_vpic"
+    assert vehicle_dict["intelligence"]["history_report"]["provider"] == "vinaudit"
+
+
+def test_deal_state_to_dict_hides_unconfirmed_decoded_identity_from_prompt(db):
+    user, _ = _create_user_and_token(db)
+    session, deal_state = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db,
+        deal_state.session_id,
+        year=2022,
+        make="Ford",
+        model="F-250",
+        trim="Lariat",
+        vin="1FT7W2BN0NED52782",
+        identity_confirmation_status="unconfirmed",
+    )
+    db.add(
+        VehicleDecode(
+            vehicle_id=vehicle.id,
+            provider="nhtsa_vpic",
+            status="success",
+            vin="1FT7W2BN0NED52782",
+            year=2022,
+            make="Ford",
+            model="F-250",
+            trim="Lariat",
+        )
+    )
+    db.flush()
+
+    result = deal_state_to_dict(deal_state, db)
+    vehicle_dict = result["vehicles"][0]
+    assert vehicle_dict["make"] is None
+    assert vehicle_dict["model"] is None
+    assert vehicle_dict["trim"] is None
+    assert vehicle_dict["intelligence"]["decode"] is None
 
 
 # ─── apply_extraction: deal ───
@@ -957,7 +1045,12 @@ def test_deal_state_to_dict_with_vehicles_and_deals(db):
     user, _ = _create_user_and_token(db)
     _, deal_state = _create_session_with_deal_state(db, user)
     vehicle = _create_vehicle(
-        db, deal_state.session_id, make="Honda", model="Civic", year=2024
+        db,
+        deal_state.session_id,
+        make="Honda",
+        model="Civic",
+        year=2024,
+        identity_confirmation_status="confirmed",
     )
     deal = _create_deal(
         db,
@@ -1516,7 +1609,13 @@ def test_build_deal_assessment_dict_includes_vehicle(db):
     user, _ = _create_user_and_token(db)
     _, deal_state = _create_session_with_deal_state(db, user)
     vehicle = _create_vehicle(
-        db, deal_state.session_id, make="Honda", model="Civic", year=2024, trim="EX"
+        db,
+        deal_state.session_id,
+        make="Honda",
+        model="Civic",
+        year=2024,
+        trim="EX",
+        identity_confirmation_status="confirmed",
     )
     deal = _create_deal(
         db, deal_state.session_id, vehicle.id, msrp=30000, current_offer=28000
@@ -1539,7 +1638,12 @@ def test_build_deal_assessment_dict_includes_trade_in(db):
     user, _ = _create_user_and_token(db)
     _, deal_state = _create_session_with_deal_state(db, user)
     vehicle = _create_vehicle(
-        db, deal_state.session_id, make="Honda", model="Civic", year=2024
+        db,
+        deal_state.session_id,
+        make="Honda",
+        model="Civic",
+        year=2024,
+        identity_confirmation_status="confirmed",
     )
     _create_vehicle(
         db,
@@ -1549,6 +1653,7 @@ def test_build_deal_assessment_dict_includes_trade_in(db):
         model="Corolla",
         year=2019,
         mileage=45000,
+        identity_confirmation_status="confirmed",
     )
     deal = _create_deal(db, deal_state.session_id, vehicle.id)
     db.flush()
@@ -1590,3 +1695,206 @@ def test_apply_extraction_auto_deal_emits_create_deal(db):
     create_idx = next(i for i, t in enumerate(applied) if t["name"] == "create_deal")
     set_idx = next(i for i, t in enumerate(applied) if t["name"] == "set_vehicle")
     assert create_idx < set_idx
+
+
+# ─── vehicle intelligence routes ───
+
+
+def test_get_deal_state_returns_vehicle_intelligence(client, db):
+    user, token = _create_user_and_token(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db, session.id, make="Honda", model="Civic", vin="1HGCM82633A004352"
+    )
+    db.add(
+        VehicleDecode(
+            vehicle_id=vehicle.id,
+            provider="nhtsa_vpic",
+            status="success",
+            vin="1HGCM82633A004352",
+            make="Honda",
+            model="Civic",
+        )
+    )
+    db.commit()
+
+    response = client.get(f"/api/deal/{session.id}", headers=_auth_header(token))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["vehicles"][0]["intelligence"]["decode"]["provider"] == "nhtsa_vpic"
+
+
+def test_decode_vin_route_persists_artifact_and_updates_vehicle(client, db):
+    user, token = _create_user_and_token(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+
+    async def fake_decode_vin(vehicle_arg, db_arg, vin=None):
+        vehicle_arg.vin = vin
+        vehicle_arg.make = "Honda"
+        vehicle_arg.model = "Civic"
+        db_arg.add(
+            VehicleDecode(
+                vehicle_id=vehicle_arg.id,
+                provider="nhtsa_vpic",
+                status="success",
+                vin=vin,
+                year=2022,
+                make="Honda",
+                model="Civic",
+                trim="Sport",
+            )
+        )
+
+    with patch(
+        "app.routes.deals.decode_vin",
+        new=AsyncMock(side_effect=fake_decode_vin),
+    ):
+        response = client.post(
+            f"/api/deal/{session.id}/vehicles/{vehicle.id}/decode-vin",
+            headers=_auth_header(token),
+            json={"vin": "1HGCM82633A004352"},
+        )
+
+    assert response.status_code == 200
+    db.refresh(vehicle)
+    assert vehicle.vin == "1HGCM82633A004352"
+
+
+def test_upsert_vehicle_from_vin_creates_primary_vehicle_and_active_deal(client, db):
+    user, token = _create_user_and_token(db)
+    session, deal_state = _create_session_with_deal_state(db, user)
+    db.commit()
+
+    response = client.post(
+        f"/api/deal/{session.id}/vehicles/upsert-from-vin",
+        headers=_auth_header(token),
+        json={"vin": "1HGCM82633A004352"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["vin"] == "1HGCM82633A004352"
+    assert payload["role"] == VehicleRole.PRIMARY
+
+    db.refresh(deal_state)
+    assert deal_state.active_deal_id is not None
+    created_vehicle = db.query(Vehicle).filter(Vehicle.id == payload["id"]).first()
+    assert created_vehicle is not None
+
+
+def test_confirm_vehicle_identity_persists_confirmation_and_updates_title(client, db):
+    user, token = _create_user_and_token(db)
+    session, deal_state = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db,
+        session.id,
+        year=2022,
+        make="Ford",
+        model="F-250",
+        trim="Lariat",
+        vin="1FT7W2BN0NED52782",
+    )
+    db.add(
+        VehicleDecode(
+            vehicle_id=vehicle.id,
+            provider="nhtsa_vpic",
+            status="success",
+            vin="1FT7W2BN0NED52782",
+            year=2022,
+            make="Ford",
+            model="F-250",
+            trim="Lariat",
+        )
+    )
+    deal = _create_deal(db, session.id, vehicle.id)
+    deal_state.active_deal_id = deal.id
+    db.add(
+        Message(
+            session_id=session.id,
+            role="assistant",
+            content="Let's verify the truck details before we talk pricing.",
+        )
+    )
+    db.commit()
+
+    with patch(
+        "app.routes.deals.generate_ai_panel_cards",
+        new=AsyncMock(
+            return_value=[
+                {
+                    "type": "vehicle",
+                    "title": "Under Consideration",
+                    "content": {
+                        "vehicle": {"year": 2022, "make": "Ford", "model": "F-250"}
+                    },
+                    "priority": "normal",
+                }
+            ]
+        ),
+    ):
+        response = client.post(
+            f"/api/deal/{session.id}/vehicles/{vehicle.id}/confirm-identity",
+            headers=_auth_header(token),
+            json={"status": "confirmed"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["identity_confirmation_status"] == "confirmed"
+    assert payload["identity_confirmation_source"] == "user_confirmed_decode"
+
+    db.refresh(vehicle)
+    db.refresh(session)
+    db.refresh(deal_state)
+    assert vehicle.identity_confirmation_status == "confirmed"
+    assert session.title == "2022 Ford F-250 Lariat"
+    assert deal_state.ai_panel_cards[0]["type"] == "vehicle"
+    assert payload["intelligence"]["decode"]["provider"] == "nhtsa_vpic"
+
+
+def test_get_vehicle_intelligence_route_returns_history_and_valuation(client, db):
+    user, token = _create_user_and_token(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    db.add(
+        VehicleHistoryReport(
+            vehicle_id=vehicle.id,
+            provider="vinaudit",
+            status="success",
+            vin="1HGCM82633A004352",
+            title_brands=["Clean"],
+        )
+    )
+    db.add(
+        VehicleValuation(
+            vehicle_id=vehicle.id,
+            provider="vinaudit",
+            status="success",
+            vin="1HGCM82633A004352",
+            amount=18200,
+        )
+    )
+    db.commit()
+
+    response = client.get(
+        f"/api/deal/{session.id}/vehicles/{vehicle.id}/intelligence",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["history_report"]["provider"] == "vinaudit"
+    assert payload["valuation"]["amount"] == 18200
+
+
+def test_build_conversation_context_can_exclude_assistant_text():
+    context = _build_conversation_context(
+        [{"role": "user", "content": "VIN: 1FT7W2BN0NED52782"}],
+        "This is a 2022 Ford F-150 XL",
+        include_assistant=False,
+    )
+
+    assert "[user]: VIN: 1FT7W2BN0NED52782" in context
+    assert "[assistant]:" not in context

@@ -79,6 +79,82 @@ function mapVehicle(v: any): import('./types').Vehicle {
     mileage: v.mileage ?? undefined,
     color: v.color ?? undefined,
     engine: v.engine ?? undefined,
+    identityConfirmationStatus: v.identity_confirmation_status ?? 'unconfirmed',
+    identityConfirmedAt: v.identity_confirmed_at ?? null,
+    identityConfirmationSource: v.identity_confirmation_source ?? null,
+    intelligence: v.intelligence ? mapVehicleIntelligence(v.intelligence) : null,
+  }
+}
+
+function mapVehicleDecode(value: any): import('./types').VehicleDecode | null {
+  if (!value) return null
+  return {
+    id: value.id,
+    provider: value.provider,
+    status: value.status,
+    vin: value.vin,
+    year: value.year ?? undefined,
+    make: value.make ?? undefined,
+    model: value.model ?? undefined,
+    trim: value.trim ?? undefined,
+    engine: value.engine ?? undefined,
+    bodyType: value.body_type ?? undefined,
+    drivetrain: value.drivetrain ?? undefined,
+    transmission: value.transmission ?? undefined,
+    fuelType: value.fuel_type ?? undefined,
+    sourceSummary: value.source_summary ?? undefined,
+    rawPayload: value.raw_payload ?? undefined,
+    requestedAt: value.requested_at,
+    fetchedAt: value.fetched_at ?? null,
+    expiresAt: value.expires_at ?? null,
+  }
+}
+
+function mapVehicleHistoryReport(value: any): import('./types').VehicleHistoryReport | null {
+  if (!value) return null
+  return {
+    id: value.id,
+    provider: value.provider,
+    status: value.status,
+    vin: value.vin,
+    titleBrands: value.title_brands ?? [],
+    titleBrandCount: value.title_brand_count ?? 0,
+    hasSalvage: value.has_salvage ?? false,
+    hasTotalLoss: value.has_total_loss ?? false,
+    hasTheftRecord: value.has_theft_record ?? false,
+    hasOdometerIssue: value.has_odometer_issue ?? false,
+    sourceSummary: value.source_summary ?? undefined,
+    coverageNotes: value.coverage_notes ?? undefined,
+    requestedAt: value.requested_at,
+    fetchedAt: value.fetched_at ?? null,
+    expiresAt: value.expires_at ?? null,
+  }
+}
+
+function mapVehicleValuation(value: any): import('./types').VehicleValuation | null {
+  if (!value) return null
+  return {
+    id: value.id,
+    provider: value.provider,
+    status: value.status,
+    vin: value.vin,
+    amount: value.amount ?? null,
+    currency: value.currency ?? 'USD',
+    valuationLabel: value.valuation_label ?? 'Market Asking Price Estimate',
+    sourceSummary: value.source_summary ?? undefined,
+    requestedAt: value.requested_at,
+    fetchedAt: value.fetched_at ?? null,
+    expiresAt: value.expires_at ?? null,
+  }
+}
+
+function mapVehicleIntelligence(value: any): import('./types').VehicleIntelligence {
+  return {
+    decode: mapVehicleDecode(value.decode),
+    historyReport: mapVehicleHistoryReport(value.history_report),
+    valuation: mapVehicleValuation(value.valuation),
+    loadingAction: null,
+    error: null,
   }
 }
 
@@ -463,6 +539,55 @@ class ApiClient implements ApiService {
         message: f.message,
       })),
     }
+  }
+
+  async getVehicleIntelligence(sessionId: string, vehicleId: string) {
+    const res = await request<any>(`/deal/${sessionId}/vehicles/${vehicleId}/intelligence`)
+    return mapVehicleIntelligence(res)
+  }
+
+  async decodeVehicleVin(sessionId: string, vehicleId: string, vin?: string) {
+    const res = await request<any>(`/deal/${sessionId}/vehicles/${vehicleId}/decode-vin`, {
+      method: 'POST',
+      body: JSON.stringify(vin ? { vin } : {}),
+    })
+    return mapVehicleIntelligence(res)
+  }
+
+  async upsertVehicleFromVin(sessionId: string, vin: string) {
+    const res = await request<any>(`/deal/${sessionId}/vehicles/upsert-from-vin`, {
+      method: 'POST',
+      body: JSON.stringify({ vin }),
+    })
+    return mapVehicle(res)
+  }
+
+  async confirmVehicleIdentity(
+    sessionId: string,
+    vehicleId: string,
+    status: 'confirmed' | 'rejected'
+  ) {
+    const res = await request<any>(`/deal/${sessionId}/vehicles/${vehicleId}/confirm-identity`, {
+      method: 'POST',
+      body: JSON.stringify({ status }),
+    })
+    return mapVehicle(res)
+  }
+
+  async checkVehicleHistory(sessionId: string, vehicleId: string, vin?: string) {
+    const res = await request<any>(`/deal/${sessionId}/vehicles/${vehicleId}/check-history`, {
+      method: 'POST',
+      body: JSON.stringify(vin ? { vin } : {}),
+    })
+    return mapVehicleIntelligence(res)
+  }
+
+  async getVehicleValuation(sessionId: string, vehicleId: string, vin?: string) {
+    const res = await request<any>(`/deal/${sessionId}/vehicles/${vehicleId}/get-valuation`, {
+      method: 'POST',
+      body: JSON.stringify(vin ? { vin } : {}),
+    })
+    return mapVehicleIntelligence(res)
   }
 
   // ─── Simulations ───

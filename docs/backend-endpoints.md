@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03-31
+Last updated: 2026-03-31 (vehicle intelligence endpoints added)
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -606,6 +606,164 @@ Correctable deal fields: `dealer_name`, `msrp`, `invoice_price`, `listing_price`
 | `404` | Session not found |
 | `404` | Deal state not found |
 | `404` | Vehicle or deal not found in this session |
+
+---
+
+### POST /api/deal/{session_id}/vehicles/upsert-from-vin
+
+Create or find a vehicle by VIN. If a vehicle with the given VIN already exists in the session, returns it and sets it as the active deal. Otherwise creates a new vehicle, auto-creates a deal, and decodes the VIN via NHTSA vPIC.
+
+**Auth required:** Yes
+
+**Request body:**
+
+```json
+{
+  "vin": "1HGBH41JXMN109186"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `vin` | string | Yes | Vehicle VIN (1-20 chars, alphanumeric with optional spaces/dashes) |
+
+**Response:** `200 OK` — `VehicleResponse` (includes `intelligence` sub-object)
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `400` | Invalid VIN format |
+| `404` | Session/deal state not found |
+
+---
+
+### GET /api/deal/{session_id}/vehicles/{vehicle_id}/intelligence
+
+Get existing vehicle intelligence data (decode, history report, valuation) for a vehicle.
+
+**Auth required:** Yes
+
+**Response:** `200 OK`
+
+```json
+{
+  "decode": { "id": "uuid", "provider": "nhtsa_vpic", "status": "success", "vin": "...", "year": 2024, "make": "Toyota", ... },
+  "history_report": { "id": "uuid", "provider": "vinaudit", "status": "success", ... },
+  "valuation": { "id": "uuid", "provider": "vinaudit", "status": "success", "amount": 28500, ... }
+}
+```
+
+All three sub-objects are nullable (null if not yet fetched).
+
+---
+
+### POST /api/deal/{session_id}/vehicles/{vehicle_id}/decode-vin
+
+Decode a VIN via NHTSA vPIC. Stores the decode result (including raw NHTSA payload) and updates the vehicle's specs.
+
+**Auth required:** Yes
+
+**Request body:**
+
+```json
+{
+  "vin": "1HGBH41JXMN109186"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `vin` | string | No | VIN to decode (defaults to vehicle's stored VIN) |
+
+**Response:** `200 OK` — `VehicleIntelligenceResponse`
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `400` | Invalid VIN / decode error |
+| `502` | External API failure |
+| `503` | Provider not configured |
+
+---
+
+### POST /api/deal/{session_id}/vehicles/{vehicle_id}/confirm-identity
+
+Confirm or reject a vehicle's decoded identity. Confirmation triggers AI panel card refresh and session title update.
+
+**Auth required:** Yes
+
+**Request body:**
+
+```json
+{
+  "status": "confirmed"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `status` | string | Yes | `"confirmed"` or `"rejected"` |
+
+**Response:** `200 OK` — `VehicleResponse`
+
+**Side effects:**
+- Sets `identity_confirmation_status`, `identity_confirmed_at`, `identity_confirmation_source` on the vehicle
+- Regenerates AI panel cards via Haiku
+- Updates session title from confirmed vehicle identity
+
+---
+
+### POST /api/deal/{session_id}/vehicles/{vehicle_id}/check-history
+
+Fetch vehicle history report via VinAudit. Returns title brand info, salvage/theft/odometer flags.
+
+**Auth required:** Yes
+
+**Request body:**
+
+```json
+{
+  "vin": "1HGBH41JXMN109186"
+}
+```
+
+**Response:** `200 OK` — `VehicleIntelligenceResponse`
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `400` | Invalid VIN / lookup error |
+| `502` | External API failure |
+| `503` | Provider not configured (missing `VINAUDIT_API_KEY`) |
+
+---
+
+### POST /api/deal/{session_id}/vehicles/{vehicle_id}/get-valuation
+
+Fetch market valuation via VinAudit. Returns estimated market asking price.
+
+**Auth required:** Yes
+
+**Request body:**
+
+```json
+{
+  "vin": "1HGBH41JXMN109186"
+}
+```
+
+**Response:** `200 OK` — `VehicleIntelligenceResponse`
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `400` | Invalid VIN / valuation error |
+| `502` | External API failure |
+| `503` | Provider not configured (missing `VINAUDIT_API_KEY`) |
 
 ---
 

@@ -2,10 +2,11 @@ import { useRef, useEffect, memo, type ReactNode } from 'react'
 import { ScrollView, Animated } from 'react-native'
 import { YStack, Text, Spinner, useTheme } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
-import type { Message } from '@/lib/types'
+import type { Message, VinAssistItem } from '@/lib/types'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { ChatBubble } from './ChatBubble'
 import { StreamingBubble } from './StreamingBubble'
+import { VinAssistCard } from './VinAssistCard'
 
 /** Returns the ID of a message that was just promoted from StreamingBubble,
  *  so ChatBubble can skip its entrance animation (the text was already visible). */
@@ -27,6 +28,7 @@ function useJustFinalizedId(messages: Message[], streamingText: string) {
 
 interface ChatMessageListProps {
   messages: Message[]
+  vinAssistItems?: VinAssistItem[]
   isSending: boolean
   streamingText?: string
   topPadding?: number
@@ -54,6 +56,7 @@ function EmptyState() {
 
 export const ChatMessageList = memo(function ChatMessageList({
   messages,
+  vinAssistItems = [],
   isSending,
   streamingText = '',
   topPadding = 8,
@@ -95,7 +98,14 @@ export const ChatMessageList = memo(function ChatMessageList({
       }}
     >
       {messages.map((msg) => (
-        <ChatBubble key={msg.id} message={msg} skipAnimation={msg.id === justFinalizedId} />
+        <YStack key={msg.id}>
+          <ChatBubble message={msg} skipAnimation={msg.id === justFinalizedId} />
+          {vinAssistItems
+            .filter((item) => item.sourceMessageId === msg.id)
+            .map((item) => (
+              <VinAssistCard key={item.id} item={item} />
+            ))}
+        </YStack>
       ))}
 
       {isSending ? (

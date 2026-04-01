@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.models.deal import Deal
 from app.models.deal_state import DealState
+from app.models.enums import IdentityConfirmationStatus
 from app.models.session import ChatSession
 from app.models.vehicle import Vehicle
 from app.services.title_generator import build_vehicle_title, generate_session_title
@@ -38,7 +39,11 @@ def _get_primary_vehicle(deal_state: DealState, db: DbSession) -> dict | None:
         return None
 
     vehicle = db.query(Vehicle).filter(Vehicle.id == deal.vehicle_id).first()
-    if not vehicle or not vehicle.make:
+    if (
+        not vehicle
+        or vehicle.identity_confirmation_status != IdentityConfirmationStatus.CONFIRMED
+        or not vehicle.make
+    ):
         return None
 
     return {

@@ -31,13 +31,14 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview), ChatInput, VoiceButton, ContextPicker, CopyableBlock
+│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview), ChatInput, VoiceButton, ContextPicker, CopyableBlock, VinAssistCard, VinInterceptModal
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
 │   │   │   ├── insights-panel/   # AI-driven InsightsPanel with card-based layout:
 │   │   │   │                    # AiCard (base renderer + reply button), CardReplyInput,
 │   │   │   │                    # CardTitle (shared label component), SituationBar
 │   │   │   │                    # (negotiation context), BriefingCard, NumbersCard,
-│   │   │   │                    # AiVehicleCard (RN primitives), WarningCard, TipCard,
+│   │   │   │                    # AiVehicleCard (expandable, Specs/Title Check/Market Value),
+│   │   │   │                    # VehicleIntelligencePanel, WarningCard, TipCard,
 │   │   │   │                    # SuccessCard, AiChecklistCard (read-only + progress bar),
 │   │   │   │                    # AiComparisonCard, CompactPhaseIndicator,
 │   │   │   │                    # PanelMarkdown, QuickActions
@@ -72,6 +73,7 @@ dealership-ai/
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
+│       │       ├── vehicle_intelligence.py  # NHTSA vPIC VIN decode, VinAudit history/valuation
 │       │       └── simulation.py # Dealer training AI logic
 │       ├── alembic/             # DB migrations
 │       └── tests/               # Including test_seed.py, test_sessions.py
@@ -90,7 +92,13 @@ dealership-ai/
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 
-**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in.
+**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in.
+
+**vehicle_decodes** — (id, vehicle_id, provider [IntelligenceProvider], status [IntelligenceStatus], vin, year, make, model, trim, engine, body_type, drivetrain, transmission, fuel_type, source_summary, raw_payload JSON, requested_at, fetched_at, expires_at). NHTSA vPIC decode results; raw_payload exposed to LLM context.
+
+**vehicle_history_reports** — (id, vehicle_id, provider, status, vin, title_brands JSON, title_brand_count, has_salvage, has_total_loss, has_theft_record, has_odometer_issue, source_summary, coverage_notes, requested_at, fetched_at, expires_at). VinAudit history data.
+
+**vehicle_valuations** — (id, vehicle_id, provider, status, vin, amount, currency, valuation_label, source_summary, requested_at, fetched_at, expires_at). VinAudit market valuation.
 
 **deals** — one row per vehicle-deal combination within a session:
 - Foreign keys: session_id, vehicle_id
@@ -137,6 +145,9 @@ All domain values use Python `StrEnum` for type safety:
 | `NegotiationStance` | `researching`, `preparing`, `engaging`, `negotiating`, `holding`, `walking`, `waiting`, `financing`, `closing`, `post_purchase` |
 | `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
+| `IdentityConfirmationStatus` | `unconfirmed`, `confirmed`, `rejected` |
+| `IntelligenceProvider` | `nhtsa_vpic`, `vinaudit` |
+| `IntelligenceStatus` | `success`, `partial` |
 
 ### Seed Users (Development Only)
 
@@ -166,6 +177,12 @@ DELETE /sessions/{id}                 # Delete
 
 GET    /deal/{session_id}             # Get current deal state
 PATCH  /deal/{session_id}             # User corrections → re-assessment
+POST   /deal/{session_id}/vehicles/upsert-from-vin  # Create/find vehicle by VIN
+GET    /deal/{session_id}/vehicles/{id}/intelligence # Get decode/history/valuation
+POST   /deal/{session_id}/vehicles/{id}/decode-vin   # NHTSA vPIC VIN decode
+POST   /deal/{session_id}/vehicles/{id}/confirm-identity # Confirm/reject decoded identity
+POST   /deal/{session_id}/vehicles/{id}/check-history    # VinAudit history report
+POST   /deal/{session_id}/vehicles/{id}/get-valuation    # VinAudit market valuation
 
 GET    /simulations/scenarios         # List scenario templates
 POST   /simulations                   # Start simulation

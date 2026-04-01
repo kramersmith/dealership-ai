@@ -5,7 +5,7 @@ from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import VehicleRole
+from app.models.enums import IdentityConfirmationStatus, VehicleRole
 
 
 class Vehicle(Base):
@@ -29,6 +29,13 @@ class Vehicle(Base):
     mileage: Mapped[int | None] = mapped_column(Integer, nullable=True)
     color: Mapped[str | None] = mapped_column(String, nullable=True)
     engine: Mapped[str | None] = mapped_column(String, nullable=True)
+    identity_confirmation_status: Mapped[str] = mapped_column(
+        String, nullable=False, default=IdentityConfirmationStatus.UNCONFIRMED
+    )
+    identity_confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    identity_confirmation_source: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)

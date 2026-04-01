@@ -2,7 +2,94 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models.enums import IdentityConfirmationStatus
+
 # ─── Vehicle schemas ───
+
+
+class VehicleDecodeResponse(BaseModel):
+    id: str
+    provider: str
+    status: str
+    vin: str
+    year: int | None = None
+    make: str | None = None
+    model: str | None = None
+    trim: str | None = None
+    engine: str | None = None
+    body_type: str | None = None
+    drivetrain: str | None = None
+    transmission: str | None = None
+    fuel_type: str | None = None
+    source_summary: str | None = None
+    raw_payload: dict | None = None
+    requested_at: datetime
+    fetched_at: datetime | None = None
+    expires_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class VehicleHistoryReportResponse(BaseModel):
+    id: str
+    provider: str
+    status: str
+    vin: str
+    title_brands: list[str] = []
+    title_brand_count: int = 0
+    has_salvage: bool = False
+    has_total_loss: bool = False
+    has_theft_record: bool = False
+    has_odometer_issue: bool = False
+    source_summary: str | None = None
+    coverage_notes: str | None = None
+    requested_at: datetime
+    fetched_at: datetime | None = None
+    expires_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class VehicleValuationResponse(BaseModel):
+    id: str
+    provider: str
+    status: str
+    vin: str
+    amount: float | None = None
+    currency: str = "USD"
+    valuation_label: str = "Market Asking Price Estimate"
+    source_summary: str | None = None
+    requested_at: datetime
+    fetched_at: datetime | None = None
+    expires_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class VehicleIntelligenceResponse(BaseModel):
+    decode: VehicleDecodeResponse | None = None
+    history_report: VehicleHistoryReportResponse | None = None
+    valuation: VehicleValuationResponse | None = None
+
+
+class VehicleIntelligenceRequest(BaseModel):
+    vin: str | None = Field(None, max_length=17, pattern=r"^[A-HJ-NPR-Z0-9]{17}$")
+
+
+class VehicleUpsertFromVinRequest(BaseModel):
+    vin: str = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        pattern=r"^[A-HJ-NPR-Za-hj-npr-z0-9\s\-]{1,20}$",
+    )
+
+
+class VehicleIdentityConfirmationRequest(BaseModel):
+    status: str = Field(..., pattern="^(confirmed|rejected)$")
 
 
 class VehicleResponse(BaseModel):
@@ -16,6 +103,10 @@ class VehicleResponse(BaseModel):
     mileage: int | None = None
     color: str | None = None
     engine: str | None = None
+    identity_confirmation_status: str = IdentityConfirmationStatus.UNCONFIRMED
+    identity_confirmed_at: datetime | None = None
+    identity_confirmation_source: str | None = None
+    intelligence: VehicleIntelligenceResponse | None = None
 
     class Config:
         from_attributes = True

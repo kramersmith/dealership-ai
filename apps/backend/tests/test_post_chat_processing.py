@@ -146,6 +146,7 @@ async def test_title_updated_from_vehicle_tool_call(db):
         make="Honda",
         model="Civic",
         trim="EX",
+        identity_confirmation_status="confirmed",
     )
     deal = _create_deal(db, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
@@ -286,7 +287,14 @@ async def test_title_from_vehicle_without_trim(db):
     """Vehicle title without trim omits it (e.g., '2024 Honda Civic')."""
     user = _create_user(db)
     session, deal_state = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, year=2024, make="Honda", model="Civic")
+    vehicle = _create_vehicle(
+        db,
+        session.id,
+        year=2024,
+        make="Honda",
+        model="Civic",
+        identity_confirmation_status="confirmed",
+    )
     deal = _create_deal(db, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
     db.commit()

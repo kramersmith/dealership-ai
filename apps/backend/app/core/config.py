@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     CLAUDE_MAX_TOKENS: int = 4096
     CLAUDE_MAX_HISTORY: int = 20  # messages to include in context
 
+    # Vehicle intelligence providers
+    NHTSA_VPIC_BASE_URL: str = "https://vpic.nhtsa.dot.gov/api/vehicles"
+    VINAUDIT_API_KEY: str = ""
+    VINAUDIT_HISTORY_URL: str = (
+        "https://marketvalue.vinaudit.com/getvehiclehistoryreport.php"
+    )
+    VINAUDIT_VALUATION_URL: str = "https://marketvalue.vinaudit.com/getmarketvalue.php"
+
     model_config = SettingsConfigDict(env_file=".env")
 
 

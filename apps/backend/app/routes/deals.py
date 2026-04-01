@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -7,7 +8,13 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user, get_db
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import HealthStatus
+from app.models.enums import (
+    HealthStatus,
+    IdentityConfirmationStatus,
+    MessageRole,
+    VehicleRole,
+)
+from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -16,13 +23,29 @@ from app.schemas.deal import (
     DealCorrectionResponse,
     DealResponse,
     DealStateResponse,
+    VehicleIdentityConfirmationRequest,
+    VehicleIntelligenceRequest,
+    VehicleIntelligenceResponse,
     VehicleResponse,
+    VehicleUpsertFromVinRequest,
 )
-from app.services.claude import analyze_deal
+from app.services.claude import analyze_deal, generate_ai_panel_cards
 from app.services.deal_state import (
     DEAL_NUMBER_FIELDS,
     VEHICLE_FIELDS,
     build_deal_assessment_dict,
+    deal_state_to_dict,
+)
+from app.services.post_chat_processing import _get_primary_vehicle
+from app.services.title_generator import build_vehicle_title
+from app.services.vehicle_intelligence import (
+    ProviderConfigurationError,
+    VehicleIntelligenceError,
+    build_vehicle_intelligence_response,
+    check_history,
+    decode_vin,
+    get_valuation,
+    normalize_vin,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +55,23 @@ router = APIRouter()
 # Fields that can be corrected via the PATCH endpoint
 VEHICLE_CORRECTION_FIELDS = set(VEHICLE_FIELDS)
 DEAL_CORRECTION_FIELDS = set(DEAL_NUMBER_FIELDS) | {"dealer_name"}
+
+
+def _get_vehicle_or_404(session_id: str, vehicle_id: str, db: Session) -> Vehicle:
+    vehicle = (
+        db.query(Vehicle)
+        .filter(Vehicle.id == vehicle_id, Vehicle.session_id == session_id)
+        .first()
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found in this session")
+    return vehicle
+
+
+def _serialize_vehicle(vehicle: Vehicle, db: Session) -> VehicleResponse:
+    base = VehicleResponse.model_validate(vehicle)
+    base.intelligence = build_vehicle_intelligence_response(vehicle.id, db)
+    return base
 
 
 def _get_deal_state_or_404(
@@ -51,6 +91,39 @@ def _get_deal_state_or_404(
         raise HTTPException(status_code=404, detail="Deal state not found")
 
     return session, deal_state
+
+
+async def _refresh_after_identity_resolution(
+    session: ChatSession, deal_state: DealState, db: Session
+) -> None:
+    updated_state = deal_state_to_dict(deal_state, db)
+    history = (
+        db.query(Message)
+        .filter(Message.session_id == session.id)
+        .order_by(Message.created_at)
+        .all()
+    )
+    latest_assistant = next(
+        (m for m in reversed(history) if m.role == MessageRole.ASSISTANT), None
+    )
+    if latest_assistant:
+        messages = [{"role": m.role, "content": m.content} for m in history]
+        try:
+            deal_state.ai_panel_cards = await generate_ai_panel_cards(
+                updated_state, latest_assistant.content, messages
+            )
+        except Exception:
+            logger.exception(
+                "Panel card refresh failed after identity resolution: session_id=%s",
+                session.id,
+            )
+
+    vehicle_dict = _get_primary_vehicle(deal_state, db)
+    if vehicle_dict:
+        title = build_vehicle_title(vehicle_dict)
+        if title:
+            session.title = title
+    session.updated_at = datetime.now(timezone.utc)
 
 
 @router.get("/{session_id}", response_model=DealStateResponse)
@@ -79,7 +152,7 @@ def get_deal_state(
         session_id=deal_state.session_id,
         buyer_context=deal_state.buyer_context,
         active_deal_id=deal_state.active_deal_id,
-        vehicles=[VehicleResponse.model_validate(v) for v in vehicles],
+        vehicles=[_serialize_vehicle(v, db) for v in vehicles],
         deals=[DealResponse.model_validate(d) for d in deals],
         red_flags=deal_state.red_flags or [],
         information_gaps=deal_state.information_gaps or [],
@@ -269,4 +342,228 @@ async def correct_deal_state(
         health_summary=None,
         recommendation=None,
         red_flags=[],
+    )
+
+
+@router.get(
+    "/{session_id}/vehicles/{vehicle_id}/intelligence",
+    response_model=VehicleIntelligenceResponse,
+)
+def get_vehicle_intelligence(
+    session_id: str,
+    vehicle_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_deal_state_or_404(session_id, user, db)
+    _get_vehicle_or_404(session_id, vehicle_id, db)
+    return build_vehicle_intelligence_response(vehicle_id, db)
+
+
+@router.post("/{session_id}/vehicles/upsert-from-vin", response_model=VehicleResponse)
+def upsert_vehicle_from_vin(
+    session_id: str,
+    body: VehicleUpsertFromVinRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session, deal_state = _get_deal_state_or_404(session_id, user, db)
+    try:
+        normalized_vin = normalize_vin(body.vin)
+    except VehicleIntelligenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if deal_state.active_deal_id:
+        active_deal = (
+            db.query(Deal).filter(Deal.id == deal_state.active_deal_id).first()
+        )
+        if active_deal:
+            active_vehicle = _get_vehicle_or_404(session_id, active_deal.vehicle_id, db)
+            if active_vehicle.vin == normalized_vin:
+                return _serialize_vehicle(active_vehicle, db)
+
+    existing_vehicle = (
+        db.query(Vehicle)
+        .filter(
+            Vehicle.session_id == session_id,
+            Vehicle.role == VehicleRole.PRIMARY,
+            Vehicle.vin == normalized_vin,
+        )
+        .order_by(Vehicle.created_at.desc())
+        .first()
+    )
+    if existing_vehicle:
+        existing_deal = (
+            db.query(Deal)
+            .filter(
+                Deal.session_id == session_id, Deal.vehicle_id == existing_vehicle.id
+            )
+            .order_by(Deal.created_at.desc())
+            .first()
+        )
+        if existing_deal:
+            deal_state.active_deal_id = existing_deal.id
+        session.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(existing_vehicle)
+        return _serialize_vehicle(existing_vehicle, db)
+
+    vehicle = Vehicle(
+        session_id=session_id, role=VehicleRole.PRIMARY, vin=normalized_vin
+    )
+    db.add(vehicle)
+    db.flush()
+
+    deal = Deal(session_id=session_id, vehicle_id=vehicle.id)
+    db.add(deal)
+    db.flush()
+    deal_state.active_deal_id = deal.id
+
+    session.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(vehicle)
+    return _serialize_vehicle(vehicle, db)
+
+
+async def _run_intelligence_action(
+    action_fn,
+    vehicle: Vehicle,
+    db: Session,
+    session_id: str,
+    vehicle_id: str,
+    action_name: str,
+    failure_detail: str,
+    vin: str | None = None,
+) -> VehicleIntelligenceResponse:
+    """Shared try/except/rollback wrapper for vehicle intelligence route handlers."""
+    logger.info(
+        "vehicle_intelligence.%s.started session_id=%s vehicle_id=%s",
+        action_name,
+        session_id,
+        vehicle_id,
+    )
+    try:
+        await action_fn(vehicle, db, vin=vin)
+        db.commit()
+    except ProviderConfigurationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except VehicleIntelligenceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "vehicle_intelligence.%s.failed session_id=%s vehicle_id=%s",
+            action_name,
+            session_id,
+            vehicle_id,
+        )
+        raise HTTPException(status_code=502, detail=failure_detail)
+
+    db.refresh(vehicle)
+    return build_vehicle_intelligence_response(vehicle_id, db)
+
+
+@router.post(
+    "/{session_id}/vehicles/{vehicle_id}/decode-vin",
+    response_model=VehicleIntelligenceResponse,
+)
+async def decode_vehicle_vin(
+    session_id: str,
+    vehicle_id: str,
+    body: VehicleIntelligenceRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_deal_state_or_404(session_id, user, db)
+    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    return await _run_intelligence_action(
+        decode_vin,
+        vehicle,
+        db,
+        session_id,
+        vehicle_id,
+        action_name="decode",
+        failure_detail="VIN decode failed",
+        vin=body.vin,
+    )
+
+
+@router.post(
+    "/{session_id}/vehicles/{vehicle_id}/confirm-identity",
+    response_model=VehicleResponse,
+)
+async def confirm_vehicle_identity(
+    session_id: str,
+    vehicle_id: str,
+    body: VehicleIdentityConfirmationRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session, deal_state = _get_deal_state_or_404(session_id, user, db)
+    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+
+    if body.status == IdentityConfirmationStatus.CONFIRMED:
+        vehicle.identity_confirmation_status = IdentityConfirmationStatus.CONFIRMED
+        vehicle.identity_confirmed_at = datetime.now(timezone.utc)
+        vehicle.identity_confirmation_source = "user_confirmed_decode"
+    else:
+        vehicle.identity_confirmation_status = IdentityConfirmationStatus.REJECTED
+        vehicle.identity_confirmed_at = None
+        vehicle.identity_confirmation_source = None
+
+    await _refresh_after_identity_resolution(session, deal_state, db)
+    db.commit()
+    db.refresh(vehicle)
+    return _serialize_vehicle(vehicle, db)
+
+
+@router.post(
+    "/{session_id}/vehicles/{vehicle_id}/check-history",
+    response_model=VehicleIntelligenceResponse,
+)
+async def check_vehicle_history(
+    session_id: str,
+    vehicle_id: str,
+    body: VehicleIntelligenceRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_deal_state_or_404(session_id, user, db)
+    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    return await _run_intelligence_action(
+        check_history,
+        vehicle,
+        db,
+        session_id,
+        vehicle_id,
+        action_name="history",
+        failure_detail="Vehicle history lookup failed",
+        vin=body.vin,
+    )
+
+
+@router.post(
+    "/{session_id}/vehicles/{vehicle_id}/get-valuation",
+    response_model=VehicleIntelligenceResponse,
+)
+async def get_vehicle_valuation(
+    session_id: str,
+    vehicle_id: str,
+    body: VehicleIntelligenceRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_deal_state_or_404(session_id, user, db)
+    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    return await _run_intelligence_action(
+        get_valuation,
+        vehicle,
+        db,
+        session_id,
+        vehicle_id,
+        action_name="valuation",
+        failure_detail="Vehicle valuation lookup failed",
+        vin=body.vin,
     )
