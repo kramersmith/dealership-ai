@@ -14,15 +14,15 @@ from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.chat import ChatMessageRequest, MessageResponse
 from app.services.claude import (
+    CHAT_TOOLS,
+    ChatLoopResult,
     build_context_message,
     build_messages,
     build_system_prompt,
     generate_ai_panel_cards,
-    merge_extraction_results,
-    process_post_chat,
-    stream_chat,
+    stream_chat_loop,
 )
-from app.services.deal_state import apply_extraction, deal_state_to_dict
+from app.services.deal_state import deal_state_to_dict
 from app.services.post_chat_processing import update_session_metadata
 
 logger = logging.getLogger(__name__)
@@ -91,114 +91,33 @@ async def send_message(
     )
 
     async def generate():
-        full_text = ""
-        all_tool_calls = []
+        result = ChatLoopResult()
 
-        # ── Stage 1: Stream text (no tools) ──
-        logger.debug("Stage 1: Streaming text response, session_id=%s", session_id)
-        try:
-            async for sse_event in stream_chat(system_prompt, messages):
-                yield sse_event
-
-                # Parse the done event to capture the full text
-                if sse_event.startswith("event: done"):
-                    try:
-                        data_line = sse_event.split("data: ", 1)[1].split("\n")[0]
-                        done_data = json.loads(data_line)
-                        full_text = done_data.get("text", "")
-                    except (IndexError, json.JSONDecodeError):
-                        logger.exception(
-                            "Failed to parse done event: session_id=%s",
-                            session_id,
-                        )
-        except Exception:
-            logger.exception("Stage 1 streaming failed: session_id=%s", session_id)
-            yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
-            return
+        # ── Turn loop: stream text + execute tools until done ──
+        async for sse_event in stream_chat_loop(
+            system_prompt, messages, CHAT_TOOLS, deal_state, db, result
+        ):
+            yield sse_event
 
         logger.debug(
-            "Stage 1 complete: text_length=%d, session_id=%s",
-            len(full_text),
+            "Turn loop complete: text_length=%d, tool_calls=%d, session_id=%s",
+            len(result.full_text),
+            len(result.tool_calls),
             session_id,
         )
 
-        # Build full message list for extraction and panel generation
+        # Build full message list for panel generation and metadata
         all_messages = [*history_dicts, {"role": "user", "content": body.content}]
-        if full_text:
-            all_messages.append({"role": "assistant", "content": full_text})
+        if result.full_text:
+            all_messages.append({"role": "assistant", "content": result.full_text})
 
-        # ── Stage 2: Post-chat extraction + analysis (single streamed Sonnet call) ──
-        if deal_state_dict:
-            logger.debug(
-                "Stage 2: Running post-chat processing, session_id=%s",
-                session_id,
-            )
-
-            facts: dict = {}
-            analysis: dict = {}
-            situation: dict = {}
-
-            async for tool_name, tool_input in process_post_chat(
-                deal_state_dict, all_messages, full_text
-            ):
-                if tool_name == "extract_deal_facts":
-                    facts = tool_input
-                elif tool_name == "analyze_deal":
-                    analysis = tool_input
-                elif tool_name == "assess_situation":
-                    situation = tool_input
-
-            # Merge results and apply to DB
-            extraction = merge_extraction_results(facts, analysis)
-            if extraction:
-                try:
-                    applied_tools = apply_extraction(deal_state, extraction, db)
-                    all_tool_calls.extend(applied_tools)
-                    for tool_call in applied_tools:
-                        yield f"event: tool_result\ndata: {json.dumps({'tool': tool_call['name'], 'data': tool_call['args']})}\n\n"
-                    logger.info(
-                        "Stage 2 complete: applied %d tool calls (facts=%d, analysis=%d), session_id=%s",
-                        len(applied_tools),
-                        len(facts),
-                        len(analysis),
-                        session_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Stage 2 extraction apply failed: session_id=%s",
-                        session_id,
-                    )
-            else:
-                logger.debug(
-                    "Stage 2: No extraction data returned, session_id=%s",
-                    session_id,
-                )
-
-            # Apply situation context (separate from extraction pipeline)
-            if situation:
-                deal_state.negotiation_context = situation
-                situation_tool_call = {
-                    "name": "update_negotiation_context",
-                    "args": situation,
-                }
-                all_tool_calls.append(situation_tool_call)
-                yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_negotiation_context', 'data': situation})}\n\n"
-                logger.info(
-                    "Situation context updated: stance=%s, session_id=%s",
-                    situation.get("stance"),
-                    session_id,
-                )
-
-        # ── Stage 3: Generate panel cards using updated deal state ──
+        # ── Panel generation: generate AI insight cards ──
         if deal_state:
-            logger.debug(
-                "Stage 3: Generating AI panel cards, session_id=%s", session_id
-            )
+            logger.debug("Generating AI panel cards, session_id=%s", session_id)
             try:
-                # Rebuild deal state dict after extraction so panel sees updated data
                 updated_state_dict = deal_state_to_dict(deal_state, db)
                 ai_cards = await generate_ai_panel_cards(
-                    updated_state_dict, full_text, all_messages
+                    updated_state_dict, result.full_text, all_messages
                 )
                 if ai_cards:
                     deal_state.ai_panel_cards = ai_cards
@@ -206,31 +125,24 @@ async def send_message(
                         "name": "update_insights_panel",
                         "args": {"cards": ai_cards},
                     }
-                    all_tool_calls.append(panel_tool_call)
+                    result.tool_calls.append(panel_tool_call)
                     yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_insights_panel', 'data': {'cards': ai_cards}})}\n\n"
                     logger.info(
-                        "Stage 3 complete: generated %d AI panel cards, session_id=%s",
+                        "Generated %d AI panel cards, session_id=%s",
                         len(ai_cards),
-                        session_id,
-                    )
-                else:
-                    logger.debug(
-                        "Stage 3: No AI panel cards generated, session_id=%s",
                         session_id,
                     )
             except Exception:
                 logger.exception(
-                    "Stage 3 AI panel generation failed: session_id=%s", session_id
+                    "AI panel generation failed: session_id=%s", session_id
                 )
-        else:
-            logger.debug("Stage 3 skipped: no deal state, session_id=%s", session_id)
 
         # Persist assistant message
         assistant_msg = Message(
             session_id=session_id,
             role=MessageRole.ASSISTANT,
-            content=full_text,
-            tool_calls=all_tool_calls if all_tool_calls else None,
+            content=result.full_text,
+            tool_calls=result.tool_calls if result.tool_calls else None,
         )
         db.add(assistant_msg)
 
@@ -240,8 +152,8 @@ async def send_message(
                 session=session,
                 deal_state=deal_state,
                 messages=all_messages,
-                tool_calls=all_tool_calls,
-                response_text=full_text,
+                tool_calls=result.tool_calls,
+                response_text=result.full_text,
                 user_message=body.content,
                 db=db,
             )
@@ -264,8 +176,8 @@ async def send_message(
         logger.info(
             "Chat response complete: session_id=%s, text_length=%d, tool_calls=%d",
             session_id,
-            len(full_text),
-            len(all_tool_calls),
+            len(result.full_text),
+            len(result.tool_calls),
         )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

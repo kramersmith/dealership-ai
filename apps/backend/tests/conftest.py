@@ -1,7 +1,10 @@
 import pytest
 from app.core.deps import get_db
+from app.core.security import hash_password
 from app.db.base import Base
 from app.main import app
+from app.models.enums import UserRole
+from app.models.user import User
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,6 +28,20 @@ def db():
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture
+def buyer_user(db):
+    user = User(
+        email="buyer@test.com",
+        hashed_password=hash_password("password"),
+        role=UserRole.BUYER,
+        display_name="Test Buyer",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @pytest.fixture

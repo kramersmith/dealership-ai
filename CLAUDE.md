@@ -55,16 +55,15 @@ FastAPI app with layered architecture:
 
 - **Routes** (`app/routes/`) — Endpoint definitions: auth, sessions, chat (SSE streaming), deals, simulations
 - **Schemas** (`app/schemas/`) — Pydantic models for request/response validation
-- **Services** (`app/services/`) — Business logic: Claude API integration with two-pass extraction (factual extractor + analyst + situation assessor subagents in parallel), SSE streaming, deal state logic (`deal_state.py`: apply_extraction, deal_state_to_dict, build_deal_assessment_dict), post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback), vehicle intelligence (`vehicle_intelligence.py`: NHTSA vPIC VIN decode, VinAudit history/valuation integration)
+- **Services** (`app/services/`) — Business logic: Claude API integration with turn loop (17 operational tools, max 5 iterations), SSE streaming, deal state logic (`deal_state.py`: apply_extraction, execute_tool, deal_state_to_dict, build_deal_assessment_dict), post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback), vehicle intelligence (`vehicle_intelligence.py`: NHTSA vPIC VIN decode, VinAudit history/valuation integration)
 - **Models** (`app/models/`) — SQLAlchemy ORM: User, ChatSession, Message, DealState, Vehicle (with cascade delete-orphan relationships to VehicleDecode, VehicleHistoryReport, VehicleValuation), Deal, Simulation
 - **Core** (`app/core/`) — Config (Pydantic Settings), security (JWT + bcrypt), deps (FastAPI DI)
 
 Key patterns:
-- Claude integration uses two models: `claude-sonnet-4-6` (`CLAUDE_MODEL`) for primary chat with 10 tool definitions, and `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) for lightweight tasks like quick action generation, session title generation, and deal assessment safety net
-- Two-pass response architecture: if the primary Claude response contains only tool calls and no text, a follow-up text-only call generates the conversational response
-- Server-side quick actions: if Claude doesn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
-- Assessment safety net: if Claude updates numbers but doesn't call `update_deal_health` or `update_red_flags`, the backend runs a Haiku assessment (`assess_deal_state`) to fill in health status, red flags, and recommendation
-- Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (text from two-pass follow-up), `done`
+- Claude integration uses two models: `claude-sonnet-4-6` (`CLAUDE_MODEL`) for primary chat with 17 operational tools and AI panel generation, and `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) for lightweight tasks like session title generation
+- Turn loop architecture: call Claude with tools → stream text + accumulate tool_use blocks → execute tools (apply to DB, emit SSE events) → append tool results as messages → call Claude again → repeat until text-only response or max 5 turns. Implemented in `stream_chat_loop()` in claude.py.
+- After the turn loop, a separate panel generation call (`generate_ai_panel_cards()`) produces AI insight cards using the updated deal state
+- Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (deal state updates from tool execution + panel cards), `done`
 - Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, NegotiationStance, AiCardType, AiCardPriority, IdentityConfirmationStatus, IntelligenceProvider, IntelligenceStatus (all `StrEnum`)
 - Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
 - Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)

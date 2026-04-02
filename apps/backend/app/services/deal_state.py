@@ -109,6 +109,71 @@ def get_active_deal(deal_state: DealState, db: Session) -> Deal | None:
     return db.query(Deal).filter(Deal.id == deal_state.active_deal_id).first()
 
 
+# Maps tool names from CHAT_TOOLS to the extraction keys that apply_extraction() expects.
+_TOOL_TO_EXTRACTION_KEY: dict[str, str] = {
+    "set_vehicle": "vehicle",
+    "create_deal": "deal",
+    "update_deal_numbers": "numbers",
+    "update_scorecard": "scorecard",
+    "update_deal_health": "health",
+    "update_deal_red_flags": "deal_red_flags",
+    "update_session_red_flags": "session_red_flags",
+    "update_deal_information_gaps": "deal_information_gaps",
+    "update_session_information_gaps": "session_information_gaps",
+    "update_deal_comparison": "deal_comparison",
+    "update_checklist": "checklist",
+    "update_quick_actions": "quick_actions",
+}
+
+# Tools where the tool_input value itself is the extraction value (not a sub-dict)
+_SCALAR_TOOLS: dict[str, str] = {
+    "update_deal_phase": "phase",
+    "update_buyer_context": "buyer_context",
+    "switch_active_deal": "switch_active_deal_id",
+    "remove_vehicle": "remove_vehicle_id",
+}
+
+
+def execute_tool(
+    tool_name: str,
+    tool_input: dict,
+    deal_state: DealState,
+    db: Session,
+) -> list[dict]:
+    """Execute a single chat tool call by routing to apply_extraction().
+
+    Returns the list of applied tool calls (for SSE emission and persistence).
+    Handles update_negotiation_context directly since it's not in apply_extraction.
+    """
+    # Negotiation context is applied directly to deal_state, not through extraction
+    if tool_name == "update_negotiation_context":
+        deal_state.negotiation_context = tool_input
+        return [{"name": "update_negotiation_context", "args": tool_input}]
+
+    # Scalar tools: extract a single value from tool_input
+    if tool_name in _SCALAR_TOOLS:
+        extraction_key = _SCALAR_TOOLS[tool_name]
+        if tool_name == "switch_active_deal":
+            value = tool_input["deal_id"]
+        elif tool_name == "remove_vehicle":
+            value = tool_input["vehicle_id"]
+        elif tool_name == "update_deal_phase":
+            value = tool_input["phase"]
+        elif tool_name == "update_buyer_context":
+            value = tool_input["buyer_context"]
+        else:
+            value = tool_input
+        return apply_extraction(deal_state, {extraction_key: value}, db)
+
+    # Standard tools: tool_input is the extraction sub-dict
+    std_key = _TOOL_TO_EXTRACTION_KEY.get(tool_name)
+    if std_key:
+        return apply_extraction(deal_state, {std_key: tool_input}, db)
+
+    logger.warning("execute_tool: unknown tool %s", tool_name)
+    return []
+
+
 def apply_extraction(
     deal_state: DealState, extraction: dict, db: Session
 ) -> list[dict]:
