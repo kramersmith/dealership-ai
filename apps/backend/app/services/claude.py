@@ -78,9 +78,20 @@ TOOL USAGE:
 - Extract facts only from USER messages. Never persist data from your own suggestions or assistant responses.
 - Only call tools when data has actually changed or is newly mentioned. Omit unchanged fields.
 - You may call multiple tools in a single response. Do NOT narrate tool usage to the user — just respond naturally.
-- For analytical tools (update_deal_health, update_scorecard, update_deal_red_flags, update_deal_information_gaps): update when your assessment changes based on new data. Health summary must reference the buyer's actual data. Recommendation must be specific ("Counter at $31,500") not generic ("Try negotiating").
 - For update_negotiation_context: update when the buyer's situation meaningfully changes (new offer, arrived at dealership, walked out, etc.). Preserve information from the previous context that is still relevant.
-- Always call update_quick_actions with 2-3 contextually relevant suggestions after responding.
+
+ASSESSMENT TOOLS — WHEN TO CALL:
+Assessment tools (update_deal_health, update_scorecard, update_deal_red_flags, update_deal_information_gaps) keep the buyer's dashboard accurate. Call them whenever your assessment changes — do not wait for a "perfect" moment.
+- After extracting or updating deal numbers (price, APR, fees, trade-in) → update_deal_health + update_scorecard
+- When you identify a problem in the deal → update_deal_red_flags (and remove flags that no longer apply)
+- When new data fills a gap or reveals a new one → update_deal_information_gaps
+- When any of the above change meaningfully → update_deal_health to keep the summary current
+- Health summary must reference the buyer's actual data. Recommendation must be specific ("Counter at $31,500") not generic ("Try negotiating").
+- If a tool call fails, read the error and adjust your input — do not retry with the same arguments.
+
+QUICK ACTIONS:
+- Always call update_quick_actions with 2-3 contextually relevant suggestions at the end of every response.
+- Quick actions should reflect the natural next step in the conversation, not repeat what was just discussed.
 
 CRITICAL RULES FOR FINANCIAL NUMBERS:
 - listing_price = the advertised/sticker price BEFORE taxes, fees, or financing
@@ -650,6 +661,7 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
         current_tool_id: str | None = None
         current_tool_name: str | None = None
         current_tool_input_json = ""
+        json_error_blocks: list[dict] = []  # tool_use blocks with malformed JSON
 
         try:
             async with client.messages.stream(
@@ -705,6 +717,9 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                                     turn,
                                     current_tool_name,
                                 )
+                                json_error_blocks.append(
+                                    {"id": current_tool_id, "name": current_tool_name}
+                                )
                             current_tool_id = None
                             current_tool_name = None
                             current_tool_input_json = ""
@@ -750,6 +765,29 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
         # Execute tool calls and emit SSE events
         tool_result_content: list[dict] = []
 
+        # Send error tool_results for any tool_use blocks with malformed JSON
+        for err_block in json_error_blocks:
+            error_msg = f"Tool '{err_block['name']}' received malformed JSON input"
+            tool_result_content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": err_block["id"],
+                    "is_error": True,
+                    "content": error_msg,
+                }
+            )
+            # Include the broken tool_use in assistant content so the message
+            # history stays valid (every tool_result needs a matching tool_use)
+            assistant_content_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": err_block["id"],
+                    "name": err_block["name"],
+                    "input": {},
+                }
+            )
+            yield f"event: tool_error\ndata: {json.dumps({'tool': err_block['name'], 'error': 'Malformed tool input'})}\n\n"
+
         for tool_block in tool_use_blocks:
             tool_name = tool_block["name"]
             tool_input = tool_block["input"]
@@ -769,24 +807,37 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                     result.tool_calls.extend(applied)
                     for tool_call in applied:
                         yield f"event: tool_result\ndata: {json.dumps({'tool': tool_call['name'], 'data': tool_call['args']})}\n\n"
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         "Turn %d: tool [%s] execution failed", turn, tool_name
                     )
-                    # Send error result back to Claude so it can adapt
+                    # Send detailed error back to Claude so it can adapt
+                    error_msg = f"Tool '{tool_name}' failed: {exc}"
                     tool_result_content.append(
                         {
                             "type": "tool_result",
                             "tool_use_id": tool_id,
                             "is_error": True,
-                            "content": f"Tool execution failed: {tool_name}",
+                            "content": error_msg,
                         }
                     )
+                    yield f"event: tool_error\ndata: {json.dumps({'tool': tool_name, 'error': str(exc)})}\n\n"
                     continue
             else:
+                error_msg = f"Tool '{tool_name}' cannot execute: no deal state exists for this session"
                 logger.warning(
                     "Turn %d: tool [%s] called but no deal_state", turn, tool_name
                 )
+                tool_result_content.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "is_error": True,
+                        "content": error_msg,
+                    }
+                )
+                yield f"event: tool_error\ndata: {json.dumps({'tool': tool_name, 'error': 'No deal state available'})}\n\n"
+                continue
 
             # Build success tool_result for Claude
             tool_result_content.append(

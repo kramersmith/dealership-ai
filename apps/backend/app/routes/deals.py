@@ -269,7 +269,7 @@ async def correct_deal_state(
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save corrections")
 
-    # Re-assess the first corrected deal via Haiku
+    # Re-assess the first corrected deal via Sonnet
     first_deal_id: str | None = None
     assessment_deal: Deal | None = None
 

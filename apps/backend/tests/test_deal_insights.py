@@ -1,4 +1,4 @@
-"""Tests for multi-vehicle/multi-deal extraction, deal corrections, and assessment safety net."""
+"""Tests for multi-vehicle/multi-deal extraction, deal corrections, and deal re-assessment."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -1295,7 +1295,7 @@ def test_patch_deal_other_user_returns_404(mock_extract, client, db):
 
 @patch("app.routes.deals.analyze_deal", new_callable=AsyncMock)
 def test_patch_deal_applies_assessment_health(mock_extract, client, db):
-    """PATCH applies the Haiku assessment health to the Deal."""
+    """PATCH applies the Sonnet assessment health to the Deal."""
     mock_extract.return_value = {
         "health": {"status": "concerning", "summary": "APR is very high"},
         "deal_red_flags": [
@@ -1333,7 +1333,7 @@ def test_patch_deal_applies_assessment_health(mock_extract, client, db):
 
 @patch("app.routes.deals.analyze_deal", new_callable=AsyncMock)
 def test_patch_deal_applies_assessment_recommendation(mock_extract, client, db):
-    """PATCH applies the recommendation from Haiku assessment to the Deal."""
+    """PATCH applies the recommendation from Sonnet assessment to the Deal."""
     mock_extract.return_value = {
         "health": {
             "status": "fair",
