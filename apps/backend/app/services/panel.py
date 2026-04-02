@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import logging
 
-import anthropic
-
 from app.core.config import settings
 from app.models.enums import AiCardPriority, AiCardType
+from app.services.claude import create_anthropic_client
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +188,7 @@ async def generate_ai_panel_cards(
     Uses Sonnet with prompt caching — the large static panel prompt (~2,500 tokens)
     is cached across calls, making subsequent calls fast and cheap.
     """
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = create_anthropic_client()
 
     state_json = json.dumps(deal_state_dict, indent=2, default=str)
     conversation_context = _build_conversation_context(

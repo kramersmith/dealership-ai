@@ -88,10 +88,33 @@ function TypingIndicator() {
   )
 }
 
+function RetryingIndicator() {
+  const fadeIn = useFadeIn(200)
+
+  return (
+    <Animated.View style={{ opacity: fadeIn }}>
+      <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
+        <XStack
+          backgroundColor="$backgroundStrong"
+          borderRadius={16}
+          paddingHorizontal="$3"
+          paddingVertical="$2.5"
+          alignItems="center"
+        >
+          <Text fontSize={13} color="$placeholderColor">
+            Retrying...
+          </Text>
+        </XStack>
+      </YStack>
+    </Animated.View>
+  )
+}
+
 interface ChatMessageListProps {
   messages: Message[]
   vinAssistItems?: VinAssistItem[]
   isSending: boolean
+  isRetrying?: boolean
   streamingText?: string
   topPadding?: number
   bottomPadding?: number
@@ -154,6 +177,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   messages,
   vinAssistItems = [],
   isSending,
+  isRetrying = false,
   streamingText = '',
   topPadding = 8,
   bottomPadding = 8,
@@ -211,6 +235,8 @@ export const ChatMessageList = memo(function ChatMessageList({
       {isSending ? (
         streamingText ? (
           <StreamingBubble text={streamingText} />
+        ) : isRetrying ? (
+          <RetryingIndicator />
         ) : (
           <TypingIndicator />
         )

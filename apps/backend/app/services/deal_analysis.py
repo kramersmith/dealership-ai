@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import logging
 
-import anthropic
-
 from app.core.config import settings
 from app.models.enums import (
     GapPriority,
@@ -12,6 +10,7 @@ from app.models.enums import (
     RedFlagSeverity,
     ScoreStatus,
 )
+from app.services.claude import create_anthropic_client
 from app.services.panel import _build_conversation_context
 
 logger = logging.getLogger(__name__)
@@ -191,7 +190,7 @@ async def analyze_deal(
 
     Used by the deals PATCH endpoint. Uses Sonnet with cached tool definition.
     """
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = create_anthropic_client()
     state_json = json.dumps(deal_state_dict, indent=2, default=str)
     conversation_context = _build_conversation_context(messages, assistant_text)
 

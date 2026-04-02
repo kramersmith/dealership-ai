@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     CLAUDE_MAX_TOKENS: int = 4096
     CLAUDE_MAX_HISTORY: int = 20  # messages to include in context
 
+    # Streaming resilience
+    CLAUDE_STREAM_IDLE_TIMEOUT: int = 30  # seconds before stream considered stalled
+    CLAUDE_STREAM_MAX_RETRIES: int = 2  # stream-level retries (not SDK retries)
+    CLAUDE_API_TIMEOUT: int = 120  # overall API request timeout (seconds)
+    CLAUDE_SDK_MAX_RETRIES: int = 3  # SDK-level retries for 429/529
+
     # Vehicle intelligence providers
     NHTSA_VPIC_BASE_URL: str = "https://vpic.nhtsa.dot.gov/api/vehicles"
     VINAUDIT_API_KEY: str = ""

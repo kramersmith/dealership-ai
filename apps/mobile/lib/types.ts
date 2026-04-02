@@ -412,7 +412,8 @@ export interface ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string) => void
+    onTextDone?: (finalText: string) => void,
+    onRetry?: (data: { attempt: number; reason: string }) => void
   ): Promise<Message>
 
   // Deal state

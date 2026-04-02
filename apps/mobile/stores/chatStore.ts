@@ -67,6 +67,8 @@ interface ChatState {
   quickActionsUpdatedAtResponse: number
   /** The accumulated text of the assistant response currently being streamed. */
   streamingText: string
+  /** True when the backend is retrying a stalled/failed stream. */
+  isRetrying: boolean
   vinAssistItems: VinAssistItem[]
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
@@ -116,6 +118,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   aiResponseCount: 0,
   quickActionsUpdatedAtResponse: 0,
   streamingText: '',
+  isRetrying: false,
   vinAssistItems: [],
   _sessionJustCreated: false,
   _pendingSend: null,
@@ -338,10 +341,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             messages: [...state.messages, msg],
             isSending: false,
             streamingText: '',
+            isRetrying: false,
             aiResponseCount: newResponseCount,
           }))
         } else {
-          set({ isSending: false, streamingText: '', aiResponseCount: newResponseCount })
+          set({
+            isSending: false,
+            streamingText: '',
+            isRetrying: false,
+            aiResponseCount: newResponseCount,
+          })
         }
       }
 
@@ -368,9 +377,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId,
         apiContent,
         imageUri,
-        (text) => set({ streamingText: text }),
+        (text) => set({ streamingText: text, isRetrying: false }),
         handleToolResult,
-        handleTextDone
+        handleTextDone,
+        () => set({ isRetrying: true })
       )
 
       // If no tool results arrived (rare), finalize from onload
@@ -401,6 +411,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : state.messages,
         isSending: false,
         streamingText: '',
+        isRetrying: false,
         sendError: message,
       }))
     }

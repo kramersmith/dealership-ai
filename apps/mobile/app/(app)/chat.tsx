@@ -182,6 +182,7 @@ export default function ChatScreen() {
   const { messages, isSending, isLoading, streamingText, send, handleQuickAction } =
     useChat(activeSessionId)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
+  const isRetrying = useChatStore((state) => state.isRetrying)
 
   // Mobile entrance animation — fade + slide up when the chat screen mounts
   const mobileEntrance = useSlideIn(isDesktop ? 0 : 260, 40)
@@ -513,6 +514,7 @@ export default function ChatScreen() {
             messages={messages}
             vinAssistItems={vinAssistItems}
             isSending={isSending}
+            isRetrying={isRetrying}
             streamingText={streamingText}
             topPadding={mobileChatTopInset}
             bottomPadding={12}

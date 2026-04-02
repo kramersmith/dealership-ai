@@ -2,9 +2,8 @@
 
 import logging
 
-import anthropic
-
 from app.core.config import settings
+from app.services.claude import create_anthropic_client
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,7 @@ async def generate_session_title(messages: list[dict]) -> str | None:
         api_messages = [*merged, {"role": "user", "content": title_prompt}]
 
     try:
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        client = create_anthropic_client()
         response = await client.messages.create(
             model=settings.CLAUDE_FAST_MODEL,
             max_tokens=30,

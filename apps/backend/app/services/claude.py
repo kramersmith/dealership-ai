@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 
@@ -24,6 +25,16 @@ from app.models.enums import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def create_anthropic_client() -> anthropic.AsyncAnthropic:
+    """Create an Anthropic client with consistent resilience settings."""
+    return anthropic.AsyncAnthropic(
+        api_key=settings.ANTHROPIC_API_KEY,
+        max_retries=settings.CLAUDE_SDK_MAX_RETRIES,
+        timeout=settings.CLAUDE_API_TIMEOUT,
+    )
+
 
 # ─── Context message configuration ───
 
@@ -591,6 +602,147 @@ class ChatLoopResult:
 CHAT_LOOP_MAX_TURNS = 5
 
 
+async def _stream_turn_with_retry(  # noqa: C901
+    client: anthropic.AsyncAnthropic,
+    *,
+    model: str,
+    max_tokens: int,
+    system: list[dict],
+    messages: list[dict],
+    tools: list[dict],
+    tool_choice: dict,
+    idle_timeout: int = settings.CLAUDE_STREAM_IDLE_TIMEOUT,
+    max_retries: int = settings.CLAUDE_STREAM_MAX_RETRIES,
+) -> AsyncGenerator[tuple[str, Any], None]:
+    """Stream a single turn with idle-timeout watchdog and retry.
+
+    Yields (event_type, event_data) tuples from the Anthropic stream.
+    On stream stall or connection error: retries up to max_retries times.
+    On exhausted retries: falls back to a non-streaming API call.
+
+    Event types yielded:
+    - ("stream_event", event) — raw Anthropic stream event
+    - ("final_message", message) — the final Message object (usage, stop_reason)
+    - ("retry", {"attempt": N, "reason": str}) — retry notification for SSE
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(1 + max_retries):
+        try:
+            async with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,  # type: ignore[arg-type]
+                messages=messages,  # type: ignore[arg-type]
+                tools=tools,  # type: ignore[arg-type]
+                tool_choice=tool_choice,  # type: ignore[arg-type]
+            ) as stream:
+                stream_iter = stream.__aiter__()
+                while True:
+                    try:
+                        event = await asyncio.wait_for(
+                            stream_iter.__anext__(), timeout=idle_timeout
+                        )
+                        yield ("stream_event", event)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Stream stalled (no events for %ds), attempt %d/%d",
+                            idle_timeout,
+                            attempt + 1,
+                            1 + max_retries,
+                        )
+                        raise  # break out of stream context to retry
+
+                # Stream completed successfully — get final message
+                final_message = await stream.get_final_message()
+                yield ("final_message", final_message)
+                return
+
+        except asyncio.TimeoutError:
+            last_error = asyncio.TimeoutError(f"Stream idle for {idle_timeout}s")
+            reason = "stream_stall"
+        except anthropic.APIConnectionError as exc:
+            last_error = exc
+            reason = "connection_error"
+            logger.warning(
+                "Stream connection error, attempt %d/%d: %s",
+                attempt + 1,
+                1 + max_retries,
+                exc,
+            )
+        except anthropic.APIStatusError:
+            # SDK already retries 429/529 internally — if we get here, it's
+            # exhausted its retries or it's a non-retryable status. Don't retry.
+            raise
+
+        # Emit retry event (unless this was the last attempt)
+        if attempt < max_retries:
+            yield ("retry", {"attempt": attempt + 1, "reason": reason})
+            backoff = (attempt + 1) * 1.0  # 1s, 2s
+            await asyncio.sleep(backoff)
+
+    # All stream retries exhausted — fall back to non-streaming
+    logger.warning("Stream retries exhausted, falling back to non-streaming API call")
+    try:
+        response = await client.messages.create(  # type: ignore[call-overload]
+            model=model,
+            max_tokens=max_tokens,
+            system=system,  # type: ignore[arg-type]
+            messages=messages,  # type: ignore[arg-type]
+            tools=tools,  # type: ignore[arg-type]
+            tool_choice=tool_choice,
+        )
+        # Convert non-streaming response to the same event shape
+        for block in response.content:
+            if block.type == "text":
+                yield ("stream_event", _SyntheticTextEvent(block.text))
+            elif block.type == "tool_use":
+                yield ("stream_event", _SyntheticToolStartEvent(block.id, block.name))
+                yield ("stream_event", _SyntheticToolJsonEvent(json.dumps(block.input)))
+                yield ("stream_event", _SyntheticBlockStopEvent())
+        yield ("final_message", response)
+
+    except Exception:
+        # Non-streaming fallback also failed — re-raise
+        logger.exception("Non-streaming fallback failed")
+        raise last_error or Exception("All retry attempts failed")  # noqa: B904
+
+
+# Synthetic event wrappers for non-streaming fallback — minimal duck-typed objects
+# that match the attributes accessed in stream_chat_loop's event processing.
+
+
+class _SyntheticTextEvent:
+    type = "content_block_delta"
+
+    def __init__(self, text: str) -> None:
+        self.delta = type("Delta", (), {"type": "text_delta", "text": text})()
+
+
+class _SyntheticToolStartEvent:
+    type = "content_block_start"
+
+    def __init__(self, tool_id: str, name: str) -> None:
+        self.content_block = type(
+            "CB", (), {"type": "tool_use", "id": tool_id, "name": name}
+        )()
+
+
+class _SyntheticToolJsonEvent:
+    type = "content_block_delta"
+
+    def __init__(self, json_str: str) -> None:
+        self.delta = type(
+            "Delta", (), {"type": "input_json_delta", "partial_json": json_str}
+        )()
+
+
+class _SyntheticBlockStopEvent:
+    type = "content_block_stop"
+
+
 async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
     system_prompt: list[dict],
     messages: list[dict],
@@ -611,7 +763,7 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
     """
     from app.services.deal_state import execute_tool
 
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = create_anthropic_client()
 
     # Add cache_control to the last tool so the entire tool list is cached
     cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
@@ -628,84 +780,97 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
         json_error_blocks: list[dict] = []  # tool_use blocks with malformed JSON
 
         try:
-            async with client.messages.stream(
+            stop_reason = None
+            async for event_type, event_data in _stream_turn_with_retry(
+                client,
                 model=settings.CLAUDE_MODEL,
                 max_tokens=settings.CLAUDE_MAX_TOKENS,
-                system=system_prompt,  # type: ignore[arg-type]
-                messages=messages,  # type: ignore[arg-type]
-                tools=cached_tools,  # type: ignore[arg-type]
+                system=system_prompt,
+                messages=messages,
+                tools=cached_tools,
                 tool_choice={"type": "auto"},
-            ) as stream:
-                async for event in stream:
-                    if event.type == "content_block_start":
-                        if hasattr(event.content_block, "type"):
-                            if event.content_block.type == "text":
-                                pass  # text accumulates via deltas
-                            elif event.content_block.type == "tool_use":
-                                current_tool_id = event.content_block.id
-                                current_tool_name = event.content_block.name
-                                current_tool_input_json = ""
+            ):
+                if event_type == "retry":
+                    yield f"event: retry\ndata: {json.dumps(event_data)}\n\n"
+                    # Reset turn accumulators — partial data from stalled stream is unreliable
+                    turn_text = ""
+                    tool_use_blocks = []
+                    assistant_content_blocks = []
+                    current_tool_id = None
+                    current_tool_name = None
+                    current_tool_input_json = ""
+                    json_error_blocks = []
+                    continue
 
-                    elif event.type == "content_block_delta":
-                        if hasattr(event.delta, "type"):
-                            if event.delta.type == "text_delta":
-                                chunk = event.delta.text
-                                turn_text += chunk
-                                yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
-                            elif event.delta.type == "input_json_delta":
-                                current_tool_input_json += event.delta.partial_json
+                if event_type == "final_message":
+                    usage = event_data.usage
+                    stop_reason = event_data.stop_reason
+                    logger.info(
+                        "Cache [chat_loop turn=%d]: creation=%d read=%d uncached=%d stop=%s",
+                        turn,
+                        getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                        getattr(usage, "cache_read_input_tokens", 0) or 0,
+                        usage.input_tokens,
+                        stop_reason,
+                    )
+                    continue
 
-                    elif event.type == "content_block_stop":
-                        if current_tool_name and current_tool_input_json:
-                            try:
-                                tool_input = json.loads(current_tool_input_json)
-                                if isinstance(tool_input, dict):
-                                    tool_use_blocks.append(
-                                        {
-                                            "id": current_tool_id,
-                                            "name": current_tool_name,
-                                            "input": tool_input,
-                                        }
-                                    )
-                                    assistant_content_blocks.append(
-                                        {
-                                            "type": "tool_use",
-                                            "id": current_tool_id,
-                                            "name": current_tool_name,
-                                            "input": tool_input,
-                                        }
-                                    )
-                            except json.JSONDecodeError:
-                                logger.warning(
-                                    "Turn %d: tool [%s] returned invalid JSON",
-                                    turn,
-                                    current_tool_name,
-                                )
-                                json_error_blocks.append(
-                                    {"id": current_tool_id, "name": current_tool_name}
-                                )
-                            current_tool_id = None
-                            current_tool_name = None
+                # event_type == "stream_event"
+                event = event_data
+                if event.type == "content_block_start":
+                    if hasattr(event.content_block, "type"):
+                        if event.content_block.type == "text":
+                            pass  # text accumulates via deltas
+                        elif event.content_block.type == "tool_use":
+                            current_tool_id = event.content_block.id
+                            current_tool_name = event.content_block.name
                             current_tool_input_json = ""
 
-                # Capture text as a content block if present
-                if turn_text:
-                    assistant_content_blocks.insert(
-                        0, {"type": "text", "text": turn_text}
-                    )
+                elif event.type == "content_block_delta":
+                    if hasattr(event.delta, "type"):
+                        if event.delta.type == "text_delta":
+                            chunk = event.delta.text
+                            turn_text += chunk
+                            yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
+                        elif event.delta.type == "input_json_delta":
+                            current_tool_input_json += event.delta.partial_json
 
-                # Log cache usage
-                final_message = await stream.get_final_message()
-                usage = final_message.usage
-                stop_reason = final_message.stop_reason
-                logger.info(
-                    "Cache [chat_loop turn=%d]: creation=%d read=%d uncached=%d stop=%s",
-                    turn,
-                    getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                    getattr(usage, "cache_read_input_tokens", 0) or 0,
-                    usage.input_tokens,
-                    stop_reason,
-                )
+                elif event.type == "content_block_stop":
+                    if current_tool_name and current_tool_input_json:
+                        try:
+                            tool_input = json.loads(current_tool_input_json)
+                            if isinstance(tool_input, dict):
+                                tool_use_blocks.append(
+                                    {
+                                        "id": current_tool_id,
+                                        "name": current_tool_name,
+                                        "input": tool_input,
+                                    }
+                                )
+                                assistant_content_blocks.append(
+                                    {
+                                        "type": "tool_use",
+                                        "id": current_tool_id,
+                                        "name": current_tool_name,
+                                        "input": tool_input,
+                                    }
+                                )
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "Turn %d: tool [%s] returned invalid JSON",
+                                turn,
+                                current_tool_name,
+                            )
+                            json_error_blocks.append(
+                                {"id": current_tool_id, "name": current_tool_name}
+                            )
+                        current_tool_id = None
+                        current_tool_name = None
+                        current_tool_input_json = ""
+
+            # Capture text as a content block if present
+            if turn_text:
+                assistant_content_blocks.insert(0, {"type": "text", "text": turn_text})
 
         except Exception:
             logger.exception("Chat loop turn %d failed", turn)

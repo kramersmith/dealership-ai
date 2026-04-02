@@ -372,7 +372,8 @@ class ApiClient implements ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string) => void
+    onTextDone?: (finalText: string) => void,
+    onRetry?: (data: { attempt: number; reason: string }) => void
   ): Promise<Message> {
     // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
     // is buffered by React Native's polyfill and doesn't deliver chunks live.
@@ -381,6 +382,8 @@ class ApiClient implements ApiService {
       xhr.open('POST', `${API_BASE}/chat/${sessionId}/message`)
       xhr.setRequestHeader('Content-Type', 'application/json')
       if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`)
+
+      xhr.timeout = 150000 // 150s — slightly above backend's 120s API timeout
 
       let fullText = ''
       const toolCalls: ToolCall[] = []
@@ -426,6 +429,8 @@ class ApiClient implements ApiService {
             } else if (eventType === 'error') {
               console.error('[apiClient] SSE error event:', data.message ?? data)
               sseError = data.message ?? 'An error occurred'
+            } else if (eventType === 'retry') {
+              onRetry?.(data)
             } else if (eventType === 'tool_result' && data.tool) {
               const toolCall: ToolCall = { name: data.tool as ToolCall['name'], args: data.data }
               toolCalls.push(toolCall)
@@ -460,6 +465,7 @@ class ApiClient implements ApiService {
       }
 
       xhr.onerror = () => reject(new Error('Network error'))
+      xhr.ontimeout = () => reject(new Error('Request timed out'))
       xhr.send(JSON.stringify({ content, image_url: imageUri }))
     })
   }

@@ -83,7 +83,7 @@ async def test_generate_session_title_returns_title():
     mock_client.messages.create = AsyncMock(return_value=mock_response)
 
     with patch(
-        "app.services.title_generator.anthropic.AsyncAnthropic",
+        "app.services.title_generator.create_anthropic_client",
         return_value=mock_client,
     ):
         result = await generate_session_title(
@@ -130,7 +130,7 @@ async def test_generate_session_title_strips_quotes():
     mock_client.messages.create = AsyncMock(return_value=mock_response)
 
     with patch(
-        "app.services.title_generator.anthropic.AsyncAnthropic",
+        "app.services.title_generator.create_anthropic_client",
         return_value=mock_client,
     ):
         result = await generate_session_title(
@@ -154,7 +154,7 @@ async def test_generate_session_title_truncates_long_output():
     mock_client.messages.create = AsyncMock(return_value=mock_response)
 
     with patch(
-        "app.services.title_generator.anthropic.AsyncAnthropic",
+        "app.services.title_generator.create_anthropic_client",
         return_value=mock_client,
     ):
         result = await generate_session_title(
@@ -174,7 +174,7 @@ async def test_generate_session_title_returns_none_on_api_error():
     mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
 
     with patch(
-        "app.services.title_generator.anthropic.AsyncAnthropic",
+        "app.services.title_generator.create_anthropic_client",
         return_value=mock_client,
     ):
         result = await generate_session_title(
@@ -206,7 +206,7 @@ async def test_generate_session_title_uses_last_three_messages():
     ]
 
     with patch(
-        "app.services.title_generator.anthropic.AsyncAnthropic",
+        "app.services.title_generator.create_anthropic_client",
         return_value=mock_client,
     ):
         result = await generate_session_title(messages)

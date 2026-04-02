@@ -167,8 +167,8 @@ def test_execute_tool_unknown_tool(db, buyer_user):
 
 
 @pytest.mark.asyncio
-@patch("app.services.deal_analysis.anthropic.AsyncAnthropic")
-async def test_analyze_deal_returns_tool_input(mock_anthropic_class):
+@patch("app.services.deal_analysis.create_anthropic_client")
+async def test_analyze_deal_returns_tool_input(mock_create_client):
     """analyze_deal returns the tool input from the API response."""
     from app.services.deal_analysis import analyze_deal
 
@@ -193,7 +193,7 @@ async def test_analyze_deal_returns_tool_input(mock_anthropic_class):
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=mock_response)
-    mock_anthropic_class.return_value = mock_client
+    mock_create_client.return_value = mock_client
 
     result = await analyze_deal(
         {"buyer_context": "at_dealership", "vehicles": [], "deals": []},
@@ -204,8 +204,8 @@ async def test_analyze_deal_returns_tool_input(mock_anthropic_class):
 
 
 @pytest.mark.asyncio
-@patch("app.services.deal_analysis.anthropic.AsyncAnthropic")
-async def test_analyze_deal_no_tool_call(mock_anthropic_class):
+@patch("app.services.deal_analysis.create_anthropic_client")
+async def test_analyze_deal_no_tool_call(mock_create_client):
     """analyze_deal returns empty dict if model doesn't call tool."""
     from app.services.deal_analysis import analyze_deal
 
@@ -223,7 +223,7 @@ async def test_analyze_deal_no_tool_call(mock_anthropic_class):
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=mock_response)
-    mock_anthropic_class.return_value = mock_client
+    mock_create_client.return_value = mock_client
 
     result = await analyze_deal(
         {"buyer_context": "researching", "vehicles": [], "deals": []},
@@ -234,14 +234,14 @@ async def test_analyze_deal_no_tool_call(mock_anthropic_class):
 
 
 @pytest.mark.asyncio
-@patch("app.services.deal_analysis.anthropic.AsyncAnthropic")
-async def test_analyze_deal_handles_api_error(mock_anthropic_class):
+@patch("app.services.deal_analysis.create_anthropic_client")
+async def test_analyze_deal_handles_api_error(mock_create_client):
     """analyze_deal returns empty dict on API exception."""
     from app.services.deal_analysis import analyze_deal
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
-    mock_anthropic_class.return_value = mock_client
+    mock_create_client.return_value = mock_client
 
     result = await analyze_deal(
         {"buyer_context": "researching", "vehicles": [], "deals": []},
