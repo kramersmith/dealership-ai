@@ -18,8 +18,8 @@ from app.models.vehicle import Vehicle
 from app.models.vehicle_decode import VehicleDecode
 from app.models.vehicle_history_report import VehicleHistoryReport
 from app.models.vehicle_valuation import VehicleValuation
-from app.services.claude import _build_conversation_context
 from app.services.deal_state import apply_extraction, deal_state_to_dict
+from app.services.panel import _build_conversation_context
 
 # ─── Helpers ───
 
@@ -974,7 +974,8 @@ def test_apply_extraction_quick_actions(db):
         },
         {"label": "Check APR", "message": "Is my APR competitive?"},
     ]
-    applied = apply_extraction(deal_state, {"quick_actions": actions}, db)
+    # execute_tool passes the full tool_input dict as the extraction value
+    applied = apply_extraction(deal_state, {"quick_actions": {"actions": actions}}, db)
 
     tool_call = _find_tool(applied, "update_quick_actions")
     assert tool_call is not None

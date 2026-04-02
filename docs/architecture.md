@@ -72,7 +72,9 @@ dealership-ai/
 │       │   ├── schemas/         # Pydantic request/response
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
-│       │       ├── claude.py    # Claude API + two-pass extraction (factual extractor + analyst + situation assessor subagents) + SSE streaming
+│       │       ├── claude.py    # Chat turn loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult
+│       │       ├── panel.py     # AI panel card generation (generate_ai_panel_cards), conversation context, panel prompt, card validation
+│       │       ├── deal_analysis.py # Standalone deal analysis (analyze_deal), analyst tool definition
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback

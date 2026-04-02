@@ -19,10 +19,10 @@ from app.services.claude import (
     build_context_message,
     build_messages,
     build_system_prompt,
-    generate_ai_panel_cards,
     stream_chat_loop,
 )
 from app.services.deal_state import deal_state_to_dict
+from app.services.panel import generate_ai_panel_cards
 from app.services.post_chat_processing import update_session_metadata
 
 logger = logging.getLogger(__name__)

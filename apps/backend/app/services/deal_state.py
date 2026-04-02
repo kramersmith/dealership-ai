@@ -692,16 +692,18 @@ def apply_extraction(
         else:
             logger.warning("update_phase: no active deal found")
 
-    # Quick actions
+    # Quick actions — extraction["quick_actions"] is already {"actions": [...]}
     if "quick_actions" in extraction:
+        qa_data = extraction["quick_actions"]
         applied_tools.append(
             {
                 "name": "update_quick_actions",
-                "args": {"actions": extraction["quick_actions"]},
+                "args": qa_data,
             }
         )
         logger.debug(
-            "Updated quick actions: count=%d", len(extraction["quick_actions"])
+            "Updated quick actions: count=%d",
+            len(qa_data.get("actions", [])) if isinstance(qa_data, dict) else 0,
         )
 
     # Deal comparison (merge maps analyst "comparison" -> "deal_comparison")

@@ -345,29 +345,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
-      // Process tool results incrementally as they arrive from SSE
+      // Process tool results incrementally as they arrive from SSE.
+      // Do NOT finalize the message here — tool_result events arrive between
+      // turns in a multi-turn loop, before the full text is accumulated.
+      // The done event (handleTextDone) or onload fallback handles finalization.
       const handleToolResult = (toolCall: ToolCall) => {
-        // Fallback finalization in case done event didn't fire
-        if (!messageFinalized) {
-          messageFinalized = true
-          const currentStreamingText = get().streamingText
-          if (currentStreamingText.trim()) {
-            const msg: Message = {
-              id: Math.random().toString(36).substring(2),
-              sessionId: activeSessionId,
-              role: 'assistant',
-              content: currentStreamingText,
-              createdAt: new Date().toISOString(),
-            }
-            set((state) => ({
-              messages: [...state.messages, msg],
-              isSending: false,
-              streamingText: '',
-              aiResponseCount: newResponseCount,
-            }))
-          }
-        }
-
         // Route tool call
         if (toolCall.name === 'update_quick_actions') {
           const actions = (toolCall.args.actions as QuickAction[]) ?? []

@@ -29,13 +29,14 @@ from app.schemas.deal import (
     VehicleResponse,
     VehicleUpsertFromVinRequest,
 )
-from app.services.claude import analyze_deal, generate_ai_panel_cards
+from app.services.deal_analysis import analyze_deal
 from app.services.deal_state import (
     DEAL_NUMBER_FIELDS,
     VEHICLE_FIELDS,
     build_deal_assessment_dict,
     deal_state_to_dict,
 )
+from app.services.panel import generate_ai_panel_cards
 from app.services.post_chat_processing import _get_primary_vehicle
 from app.services.title_generator import build_vehicle_title
 from app.services.vehicle_intelligence import (

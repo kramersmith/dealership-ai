@@ -167,10 +167,10 @@ def test_execute_tool_unknown_tool(db, buyer_user):
 
 
 @pytest.mark.asyncio
-@patch("app.services.claude.anthropic.AsyncAnthropic")
+@patch("app.services.deal_analysis.anthropic.AsyncAnthropic")
 async def test_analyze_deal_returns_tool_input(mock_anthropic_class):
     """analyze_deal returns the tool input from the API response."""
-    from app.services.claude import analyze_deal
+    from app.services.deal_analysis import analyze_deal
 
     tool_result = {
         "health": {"status": "concerning", "summary": "Test", "recommendation": "Act"},
@@ -204,10 +204,10 @@ async def test_analyze_deal_returns_tool_input(mock_anthropic_class):
 
 
 @pytest.mark.asyncio
-@patch("app.services.claude.anthropic.AsyncAnthropic")
+@patch("app.services.deal_analysis.anthropic.AsyncAnthropic")
 async def test_analyze_deal_no_tool_call(mock_anthropic_class):
     """analyze_deal returns empty dict if model doesn't call tool."""
-    from app.services.claude import analyze_deal
+    from app.services.deal_analysis import analyze_deal
 
     mock_text_block = MagicMock()
     mock_text_block.type = "text"
@@ -234,10 +234,10 @@ async def test_analyze_deal_no_tool_call(mock_anthropic_class):
 
 
 @pytest.mark.asyncio
-@patch("app.services.claude.anthropic.AsyncAnthropic")
+@patch("app.services.deal_analysis.anthropic.AsyncAnthropic")
 async def test_analyze_deal_handles_api_error(mock_anthropic_class):
     """analyze_deal returns empty dict on API exception."""
-    from app.services.claude import analyze_deal
+    from app.services.deal_analysis import analyze_deal
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
