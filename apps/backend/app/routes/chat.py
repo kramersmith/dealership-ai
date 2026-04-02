@@ -93,14 +93,14 @@ async def send_message(
     async def generate():
         result = ChatLoopResult()
 
-        # ── Turn loop: stream text + execute tools until done ──
+        # ── Step loop: stream text + execute tools until done ──
         async for sse_event in stream_chat_loop(
             system_prompt, messages, CHAT_TOOLS, deal_state, db, result
         ):
             yield sse_event
 
         logger.debug(
-            "Turn loop complete: text_length=%d, tool_calls=%d, session_id=%s",
+            "Step loop complete: text_length=%d, tool_calls=%d, session_id=%s",
             len(result.full_text),
             len(result.tool_calls),
             session_id,

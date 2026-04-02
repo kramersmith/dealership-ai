@@ -144,7 +144,7 @@ RESPONSE FORMAT (critical — buyers scan, they don't read essays):
 - End with ONE clear next step, not multiple options."""
 
 
-# ─── Operational tool schemas for the chat turn loop ───
+# ─── Operational tool schemas for the chat step loop ───
 # Each tool maps 1:1 to what apply_extraction() handles in deal_state.py
 # and what the frontend processes via dealStore.applyToolCall().
 
@@ -587,7 +587,7 @@ CHAT_TOOLS: list[dict] = [
 
 
 class ChatLoopResult:
-    """Mutable container for collecting turn loop results.
+    """Mutable container for collecting step loop results.
 
     Populated by stream_chat_loop() so the caller can access
     full_text and tool_calls after iteration completes.
@@ -598,11 +598,11 @@ class ChatLoopResult:
         self.tool_calls: list[dict] = []
 
 
-# Maximum turns in the chat loop to prevent runaway tool chains
-CHAT_LOOP_MAX_TURNS = 5
+# Maximum steps (LLM call → tool execution cycles) per turn
+CHAT_LOOP_MAX_STEPS = 5
 
 
-async def _stream_turn_with_retry(  # noqa: C901
+async def _stream_step_with_retry(  # noqa: C901
     client: anthropic.AsyncAnthropic,
     *,
     model: str,
@@ -614,7 +614,7 @@ async def _stream_turn_with_retry(  # noqa: C901
     idle_timeout: int = settings.CLAUDE_STREAM_IDLE_TIMEOUT,
     max_retries: int = settings.CLAUDE_STREAM_MAX_RETRIES,
 ) -> AsyncGenerator[tuple[str, Any], None]:
-    """Stream a single turn with idle-timeout watchdog and retry.
+    """Stream a single step with idle-timeout watchdog and retry.
 
     Yields (event_type, event_data) tuples from the Anthropic stream.
     On stream stall or connection error: retries up to max_retries times.
@@ -743,16 +743,16 @@ class _SyntheticBlockStopEvent:
     type = "content_block_stop"
 
 
-async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
+async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     system_prompt: list[dict],
     messages: list[dict],
     tools: list[dict],
     deal_state: DealState | None,
     db: Session,
     result: ChatLoopResult,
-    max_turns: int = CHAT_LOOP_MAX_TURNS,
+    max_steps: int = CHAT_LOOP_MAX_STEPS,
 ) -> AsyncGenerator[str, None]:
-    """Turn loop: call Claude with tools, execute tool calls, repeat until text response.
+    """Step loop: call Claude with tools, execute tool calls, repeat until text response.
 
     Streams SSE events as they arrive:
     - event: text — conversation text chunks (streamed live)
@@ -768,8 +768,8 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
     # Add cache_control to the last tool so the entire tool list is cached
     cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
 
-    for turn in range(max_turns):
-        turn_text = ""
+    for step in range(max_steps):
+        step_text = ""
         tool_use_blocks: list[dict] = []  # {id, name, input}
         assistant_content_blocks: list[dict] = []  # raw content blocks for messages
 
@@ -781,7 +781,7 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
 
         try:
             stop_reason = None
-            async for event_type, event_data in _stream_turn_with_retry(
+            async for event_type, event_data in _stream_step_with_retry(
                 client,
                 model=settings.CLAUDE_MODEL,
                 max_tokens=settings.CLAUDE_MAX_TOKENS,
@@ -792,8 +792,8 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
             ):
                 if event_type == "retry":
                     yield f"event: retry\ndata: {json.dumps(event_data)}\n\n"
-                    # Reset turn accumulators — partial data from stalled stream is unreliable
-                    turn_text = ""
+                    # Reset step accumulators — partial data from stalled stream is unreliable
+                    step_text = ""
                     tool_use_blocks = []
                     assistant_content_blocks = []
                     current_tool_id = None
@@ -806,8 +806,8 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                     usage = event_data.usage
                     stop_reason = event_data.stop_reason
                     logger.info(
-                        "Cache [chat_loop turn=%d]: creation=%d read=%d uncached=%d stop=%s",
-                        turn,
+                        "Cache [chat_loop step=%d]: creation=%d read=%d uncached=%d stop=%s",
+                        step,
                         getattr(usage, "cache_creation_input_tokens", 0) or 0,
                         getattr(usage, "cache_read_input_tokens", 0) or 0,
                         usage.input_tokens,
@@ -830,7 +830,7 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                     if hasattr(event.delta, "type"):
                         if event.delta.type == "text_delta":
                             chunk = event.delta.text
-                            turn_text += chunk
+                            step_text += chunk
                             yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
                         elif event.delta.type == "input_json_delta":
                             current_tool_input_json += event.delta.partial_json
@@ -857,8 +857,8 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                                 )
                         except json.JSONDecodeError:
                             logger.warning(
-                                "Turn %d: tool [%s] returned invalid JSON",
-                                turn,
+                                "Step %d: tool [%s] returned invalid JSON",
+                                step,
                                 current_tool_name,
                             )
                             json_error_blocks.append(
@@ -869,23 +869,23 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                         current_tool_input_json = ""
 
             # Capture text as a content block if present
-            if turn_text:
-                assistant_content_blocks.insert(0, {"type": "text", "text": turn_text})
+            if step_text:
+                assistant_content_blocks.insert(0, {"type": "text", "text": step_text})
 
         except Exception:
-            logger.exception("Chat loop turn %d failed", turn)
+            logger.exception("Chat loop step %d failed", step)
             yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
             return
 
-        # Accumulate text across turns
-        result.full_text += turn_text
+        # Accumulate text across steps
+        result.full_text += step_text
 
         # If no tool calls, we're done — emit done event
         if stop_reason == "end_turn" or not tool_use_blocks:
             yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
             logger.info(
-                "Chat loop complete: turns=%d, text_length=%d, tool_calls=%d",
-                turn + 1,
+                "Chat loop complete: steps=%d, text_length=%d, tool_calls=%d",
+                step + 1,
                 len(result.full_text),
                 len(result.tool_calls),
             )
@@ -923,8 +923,8 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
             tool_id = tool_block["id"]
 
             logger.debug(
-                "Turn %d: executing tool [%s] keys=%s",
-                turn,
+                "Step %d: executing tool [%s] keys=%s",
+                step,
                 tool_name,
                 list(tool_input.keys()),
             )
@@ -938,7 +938,7 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
                         yield f"event: tool_result\ndata: {json.dumps({'tool': tool_call['name'], 'data': tool_call['args']})}\n\n"
                 except Exception as exc:
                     logger.exception(
-                        "Turn %d: tool [%s] execution failed", turn, tool_name
+                        "Step %d: tool [%s] execution failed", step, tool_name
                     )
                     # Send detailed error back to Claude so it can adapt
                     error_msg = f"Tool '{tool_name}' failed: {exc}"
@@ -955,7 +955,7 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
             else:
                 error_msg = f"Tool '{tool_name}' cannot execute: no deal state exists for this session"
                 logger.warning(
-                    "Turn %d: tool [%s] called but no deal_state", turn, tool_name
+                    "Step %d: tool [%s] called but no deal_state", step, tool_name
                 )
                 tool_result_content.append(
                     {
@@ -982,8 +982,8 @@ async def stream_chat_loop(  # noqa: C901 — turn loop has inherent complexity
         if tool_result_content:
             messages.append({"role": "user", "content": tool_result_content})
 
-    # Max turns exceeded — emit whatever we have
-    logger.warning("Chat loop hit max turns (%d), emitting partial response", max_turns)
+    # Max steps exceeded — emit whatever we have
+    logger.warning("Chat loop hit max steps (%d), emitting partial response", max_steps)
     yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
 
 
@@ -992,8 +992,8 @@ def build_system_prompt() -> list[dict]:
 
     The system prompt is entirely static — no per-session or per-turn content.
     Dynamic context (deal state, negotiation context, buyer situation) is
-    injected as a context message via build_context_message() to preserve
-    cache hits across turns.
+    injected as a context message via build_context_message() so the system
+    prompt stays cacheable across turns.
     """
     return [
         {
@@ -1007,7 +1007,7 @@ def build_system_prompt() -> list[dict]:
 def build_context_message(
     deal_state_dict: dict | None, linked_messages: list[dict] | None = None
 ) -> dict | None:
-    """Build a synthetic context message with dynamic per-turn state.
+    """Build a synthetic context message with dynamic state for the current turn.
 
     This is prepended to the messages array (not the system prompt) so the
     system prompt stays stable and cacheable across turns. Uses
@@ -1124,11 +1124,11 @@ def build_messages(
 
     Conversation history comes first (stable, cacheable prefix) with a cache
     breakpoint on the last history message. Dynamic context and the new user
-    message come after the breakpoint (uncached, change every turn).
+    message come after the breakpoint (uncached, change every turn/request).
     """
     messages: list[dict] = []
 
-    # History FIRST — stable prefix, cacheable across turns
+    # History FIRST — stable prefix, cacheable across turns/requests
     max_history = settings.CLAUDE_MAX_HISTORY
     history_slice = history[-max_history:]
     for i, msg in enumerate(history_slice):
@@ -1151,7 +1151,7 @@ def build_messages(
                 entry["content"] = [*entry["content"][:-1], last_block]
         messages.append(entry)
 
-    # Dynamic context AFTER history — changes every turn, not cached
+    # Dynamic context AFTER history — changes every turn/request, not cached
     if context_message:
         messages.append(context_message)
         # Claude requires alternating user/assistant
@@ -1159,7 +1159,7 @@ def build_messages(
             {"role": "assistant", "content": "Understood. I have the current context."}
         )
 
-    # New user message (uncached — changes every turn)
+    # New user message (uncached — changes every turn/request)
     if image_url:
         messages.append(
             {
