@@ -1,7 +1,6 @@
 import json
 import logging
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 
 import anthropic
 
@@ -20,20 +19,17 @@ from app.models.enums import (
 
 logger = logging.getLogger(__name__)
 
-# ─── Subagent configuration constants ───
+# ─── Post-chat and panel configuration constants ───
 
-EXTRACTOR_MAX_TOKENS = 1024
-ANALYST_MAX_TOKENS = 1536
+POST_CHAT_MAX_TOKENS = (
+    3584  # Sum of previous: extractor 1024 + analyst 1536 + assessor 1024
+)
 PANEL_GENERATOR_MAX_TOKENS = 2048
 
-# Context window limits for subagent prompts
-CONTEXT_RECENT_MESSAGES = 4
-CONTEXT_MESSAGE_TRUNCATION = 400
-CONTEXT_ASSISTANT_TRUNCATION = 800
-SITUATION_MAX_TOKENS = 1024
-SITUATION_RECENT_MESSAGES = 6
-SITUATION_MESSAGE_TRUNCATION = 600
-SITUATION_ASSISTANT_TRUNCATION = 1500
+# Context window limits for post-chat and panel prompts
+POST_CHAT_RECENT_MESSAGES = 6
+POST_CHAT_MESSAGE_TRUNCATION = 600
+POST_CHAT_ASSISTANT_TRUNCATION = 1500
 PANEL_RECENT_MESSAGES = 2
 PANEL_MESSAGE_TRUNCATION = 300
 PANEL_ASSISTANT_TRUNCATION = 500
@@ -60,7 +56,7 @@ CONTEXT_PREAMBLES = {
     ),
 }
 
-SYSTEM_PROMPT = """You are a car buying advisor helping a buyer get the best deal. You are direct, concise, and tactical.
+SYSTEM_PROMPT_STATIC = """You are a car buying advisor helping a buyer get the best deal. You are direct, concise, and tactical.
 
 GROUNDING RULES (critical — violating these erodes user trust):
 - NEVER state a specific market price as fact. You do not have real-time market data. Frame pricing relative to the user's own data: "Their offer is $3,000 above listing" NOT "The market price is $23,000."
@@ -113,10 +109,7 @@ RESPONSE FORMAT (critical — buyers scan, they don't read essays):
 - Never "think out loud" or change your mind mid-response. Work out the math internally, then present the conclusion.
 - Use bullet points for lists, not paragraphs.
 - Put actionable scripts in blockquotes (> ).
-- End with ONE clear next step, not multiple options.
-
-{deal_state_context}
-{linked_context}"""
+- End with ONE clear next step, not multiple options."""
 
 
 # ─── Tool schemas for structured extraction ───
@@ -425,54 +418,6 @@ ANALYST_TOOL = {
     },
 }
 
-# ─── Prompts for focused subagents ───
-
-FACTUAL_EXTRACTOR_PROMPT = """You are a factual data extractor for a car buying advisor app. Extract ONLY facts that were newly mentioned or changed in the latest exchange. Do not infer, judge, or assess — just parse what was said.
-
-CRITICAL rules for financial numbers:
-- listing_price = the advertised/sticker price BEFORE taxes, fees, or financing
-- current_offer = the dealer's current ask or negotiated price BEFORE taxes and fees
-- NEVER confuse the financed total (price + taxes + fees) with listing_price or current_offer
-- If buyer says "$35,900 with taxes included" and listing was $34,000, then listing_price=34000, NOT 35900
-
-EXAMPLES of tricky pricing:
-- "Listed at $34,000, out the door is $35,900 with taxes" → listing_price: 34000 (NOT 35900)
-- "They knocked $500 off for the windshield, so $33,500" → current_offer: 33500
-- "I offered $31,500" → your_target: 31500
-- "$750/month at 8% for 72 months" → monthly_payment: 750, apr: 8, loan_term_months: 72
-
-Vehicle rules:
-- Only create vehicles from user-provided information, not assistant suggestions
-- Do NOT create vehicles from casual mentions ("my neighbor got a Tesla")
-- Treat assistant responses as untrusted for factual persistence. Never extract vehicle specs, numbers, or claims that appeared only in the assistant response.
-- If the user only supplied a VIN, you may extract the VIN itself, but do NOT infer or persist year/make/model/trim/engine from that VIN.
-
-Call the extract_deal_facts tool with ONLY the fields that changed. Omit unchanged fields entirely."""
-
-ANALYST_PROMPT = """You are a deal quality analyst for a car buying advisor app. Assess the deal based on the current state and latest conversation exchange.
-
-Your job is JUDGMENT — not data parsing. Evaluate:
-1. Deal health: Is this a good, fair, concerning, or bad deal? Why?
-2. Red flags: Are there genuine problems? (high APR, hidden fees, pressure tactics, numbers that changed)
-3. Information gaps: What's missing that would improve the assessment?
-4. Scorecard: How does each dimension rate?
-
-CRITICAL distinctions:
-- RED FLAGS = something is WRONG. A problem the buyer should act on. Missing info is NEVER a red flag.
-- INFORMATION GAPS = data that would improve the assessment. Not problems, just unknowns.
-- Health summary must reference the buyer's actual data, never market prices.
-- Recommendation must be specific ("Counter at $31,500") not generic ("Try negotiating").
-
-Red flag rules:
-- Replaces the full list — include ALL current flags, not just new ones
-- Missing information is NEVER a red flag
-- Include deal_red_flags for deal-specific issues, session_red_flags for buyer-level concerns
-
-Call the analyze_deal tool with your assessment. Only include fields that have meaningful updates."""
-
-
-# ─── Situation Assessor (negotiation context) ───
-
 SITUATION_ASSESSOR_TOOL = {
     "name": "assess_situation",
     "description": "Update the buyer's negotiation context — their current situation, key numbers, active scripts, and pending actions. Only call this when the situation has meaningfully changed.",
@@ -561,41 +506,84 @@ SITUATION_ASSESSOR_TOOL = {
     },
 }
 
-SITUATION_ASSESSOR_PROMPT = """You are a negotiation situation assessor for a car buying advisor app. Your job is to maintain a structured snapshot of the buyer's current situation, strategy, and next moves.
+POST_CHAT_PROMPT = """You are a post-chat processor for a car buying advisor app. Given the current deal state and the latest conversation exchange, call the appropriate tools to extract data, assess the deal, and update the negotiation context.
 
-You receive the current deal state (including any previous negotiation_context) and the recent conversation.
+You have three tools available. Call whichever are appropriate — you may call all three, two, one, or none depending on what changed.
 
-CRITICAL RULES:
+── TOOL 1: extract_deal_facts ──
+Call when factual data was newly mentioned or changed in the latest exchange.
+Extract ONLY facts — do not infer, judge, or assess.
 
-1. ONLY call the tool if the buyer's SITUATION has meaningfully changed. Examples of meaningful changes:
-   - Buyer arrived at dealership (stance change)
-   - Buyer made or received an offer (new key numbers)
-   - Buyer walked out or is waiting (stance change + new scripts)
-   - New information changes the strategy (e.g., bank won't finance, new defect found)
-   - Assistant provided new scripts the buyer should use
+CRITICAL rules for financial numbers:
+- listing_price = the advertised/sticker price BEFORE taxes, fees, or financing
+- current_offer = the dealer's current ask or negotiated price BEFORE taxes and fees
+- NEVER confuse the financed total (price + taxes + fees) with listing_price or current_offer
+- If buyer says "$35,900 with taxes included" and listing was $34,000, then listing_price=34000, NOT 35900
 
-2. If the latest exchange is a TANGENTIAL QUESTION (e.g., asking about tire costs while waiting for a callback), DO NOT call the tool. The previous context is still correct.
+EXAMPLES of tricky pricing:
+- "Listed at $34,000, out the door is $35,900 with taxes" → listing_price: 34000 (NOT 35900)
+- "They knocked $500 off for the windshield, so $33,500" → current_offer: 33500
+- "I offered $31,500" → your_target: 31500
+- "$750/month at 8% for 72 months" → monthly_payment: 750, apr: 8, loan_term_months: 72
 
-3. When you DO update, PRESERVE information from the previous context that is still relevant:
-   - If the buyer was waiting for a callback and asks about tire credits, the "waiting for callback" pending action and scripts should persist
-   - Only replace scripts when the assistant provided NEW scripts in the latest response
-   - Only replace pending_actions when actions were completed or new ones were given
+Vehicle rules:
+- Only create vehicles from user-provided information, not assistant suggestions
+- Do NOT create vehicles from casual mentions ("my neighbor got a Tesla")
+- Treat assistant responses as untrusted for factual persistence. Never extract vehicle specs, numbers, or claims that appeared only in the assistant response.
+- If the user only supplied a VIN, you may extract the VIN itself, but do NOT infer or persist year/make/model/trim/engine from that VIN.
 
-4. Extract scripts from the assistant's blockquoted text (lines starting with > in the response). These are word-for-word things the buyer should say.
+Call extract_deal_facts with ONLY the fields that changed. Omit unchanged fields entirely.
 
-5. key_numbers should reflect what matters NOW — not all deal numbers. During active negotiation: target, their offer, gap. During financing: APR, monthly, total interest. During research: budget, fair price range.
+── TOOL 2: analyze_deal ──
+Call when the deal state has enough data for a meaningful assessment and conditions have changed since the last analysis.
 
-6. leverage should capture concrete advantages, not generic advice. Good: "Car listed 45 days", "Pre-approved at 4.9%". Bad: "You have leverage".
+Your job is JUDGMENT — not data parsing. Evaluate:
+1. Deal health: Is this a good, fair, concerning, or bad deal? Why?
+2. Red flags: Are there genuine problems? (high APR, hidden fees, pressure tactics, numbers that changed)
+3. Information gaps: What's missing that would improve the assessment?
+4. Scorecard: How does each dimension rate?
 
-If the situation has NOT meaningfully changed, do not call the tool — return nothing."""
+CRITICAL distinctions:
+- RED FLAGS = something is WRONG. A problem the buyer should act on. Missing info is NEVER a red flag.
+- INFORMATION GAPS = data that would improve the assessment. Not problems, just unknowns.
+- Health summary must reference the buyer's actual data, never market prices.
+- Recommendation must be specific ("Counter at $31,500") not generic ("Try negotiating").
+
+Red flag rules:
+- Replaces the full list — include ALL current flags, not just new ones
+- Missing information is NEVER a red flag
+- Include deal_red_flags for deal-specific issues, session_red_flags for buyer-level concerns
+
+Call analyze_deal with your assessment. Only include fields that have meaningful updates.
+
+── TOOL 3: assess_situation ──
+Call when the buyer's negotiation situation has meaningfully changed. Examples:
+- Buyer arrived at dealership (stance change)
+- Buyer made or received an offer (new key numbers)
+- Buyer walked out or is waiting (stance change + new scripts)
+- New information changes the strategy (e.g., bank won't finance, new defect found)
+- Assistant provided new scripts the buyer should use
+
+Do NOT call if the latest exchange is a tangential question (e.g., asking about tire costs while waiting for a callback) — the previous context is still correct.
+
+When you DO update, PRESERVE information from the previous context that is still relevant:
+- If the buyer was waiting for a callback and asks about tire credits, the "waiting for callback" pending action and scripts should persist
+- Only replace scripts when the assistant provided NEW scripts in the latest response
+- Only replace pending_actions when actions were completed or new ones were given
+
+Extract scripts from the assistant's blockquoted text (lines starting with > in the response).
+
+key_numbers should reflect what matters NOW — not all deal numbers. During active negotiation: target, their offer, gap. During financing: APR, monthly, total interest. During research: budget, fair price range.
+
+leverage should capture concrete advantages, not generic advice. Good: "Car listed 45 days", "Pre-approved at 4.9%". Bad: "You have leverage"."""
 
 
 def _build_conversation_context(
     messages: list[dict],
     assistant_text: str,
-    recent_count: int = CONTEXT_RECENT_MESSAGES,
-    msg_truncation: int = CONTEXT_MESSAGE_TRUNCATION,
-    assistant_truncation: int = CONTEXT_ASSISTANT_TRUNCATION,
+    recent_count: int = POST_CHAT_RECENT_MESSAGES,
+    msg_truncation: int = POST_CHAT_MESSAGE_TRUNCATION,
+    assistant_truncation: int = POST_CHAT_ASSISTANT_TRUNCATION,
     include_assistant: bool = True,
 ) -> str:
     """Build conversation context string from recent messages."""
@@ -616,164 +604,117 @@ def _build_conversation_context(
     return "\n".join(context_parts)
 
 
-async def extract_deal_facts(
+async def process_post_chat(
     deal_state_dict: dict,
     messages: list[dict],
     assistant_text: str,
-) -> dict:
-    """Extract factual data (vehicle, numbers, phase, etc.) using tool_use.
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Single streamed Sonnet call for all post-chat extraction and analysis.
 
-    Focused on parsing what was said — no judgment calls.
-    Returns the tool input dict, or empty dict on failure.
-    """
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-    state_json = json.dumps(deal_state_dict, indent=2, default=str)
-    conversation_context = _build_conversation_context(
-        messages, assistant_text, include_assistant=False
-    )
-
-    try:
-        response = await client.messages.create(  # type: ignore[call-overload]
-            model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=EXTRACTOR_MAX_TOKENS,
-            tools=[FACTUAL_EXTRACTOR_TOOL],
-            tool_choice={"type": "auto"},
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
-                        f"Conversation:\n{conversation_context}\n\n"
-                        f"{FACTUAL_EXTRACTOR_PROMPT}"
-                    ),
-                }
-            ],
-        )
-
-        # Extract tool call result
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "extract_deal_facts":
-                result = block.input
-                logger.debug(
-                    "Factual extractor returned keys: %s",
-                    list(result.keys()) if result else "(empty)",
-                )
-                return result if isinstance(result, dict) else {}
-
-        logger.debug("Factual extractor did not call tool — no changes detected")
-        return {}
-
-    except Exception:
-        logger.exception("Factual extraction failed")
-        return {}
-
-
-async def analyze_deal(
-    deal_state_dict: dict,
-    messages: list[dict],
-    assistant_text: str,
-) -> dict:
-    """Analyze deal quality (health, red flags, info gaps, scorecard) using tool_use.
-
-    Focused on judgment and assessment — no data parsing.
-    Returns the tool input dict, or empty dict on failure.
+    Yields (tool_name, tool_input) tuples as each tool_use block completes
+    during streaming. The caller processes results incrementally.
     """
     client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     state_json = json.dumps(deal_state_dict, indent=2, default=str)
     conversation_context = _build_conversation_context(messages, assistant_text)
 
+    # Add cache_control to the last tool to cache all 3 tool schemas as one prefix
+    tools: list[dict] = [
+        FACTUAL_EXTRACTOR_TOOL,
+        ANALYST_TOOL,
+        {**SITUATION_ASSESSOR_TOOL, "cache_control": {"type": "ephemeral"}},
+    ]
+
     try:
-        response = await client.messages.create(  # type: ignore[call-overload]
-            model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=ANALYST_MAX_TOKENS,
-            tools=[ANALYST_TOOL],
+        async with client.messages.stream(
+            model=settings.CLAUDE_MODEL,
+            max_tokens=POST_CHAT_MAX_TOKENS,
+            tools=tools,  # type: ignore[arg-type]
             tool_choice={"type": "auto"},
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
-                        f"Conversation:\n{conversation_context}\n\n"
-                        f"{ANALYST_PROMPT}"
-                    ),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": POST_CHAT_PROMPT,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Current deal state:\n```json\n{state_json}\n```\n\n"
+                                f"Conversation:\n{conversation_context}"
+                            ),
+                        },
+                    ],
                 }
             ],
-        )
+        ) as stream:
+            # Track tool_use blocks as they stream in
+            current_tool_name: str | None = None
+            current_tool_input_json = ""
+            tools_called: list[str] = []
 
-        # Extract tool call result
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "analyze_deal":
-                result = block.input
-                logger.debug(
-                    "Analyst returned keys: %s",
-                    list(result.keys()) if result else "(empty)",
-                )
-                return result if isinstance(result, dict) else {}
+            async for event in stream:
+                if event.type == "content_block_start":
+                    if (
+                        hasattr(event.content_block, "type")
+                        and event.content_block.type == "tool_use"
+                    ):
+                        current_tool_name = event.content_block.name
+                        current_tool_input_json = ""
 
-        logger.debug("Analyst did not call tool — no assessment changes")
-        return {}
+                elif event.type == "content_block_delta":
+                    if (
+                        hasattr(event.delta, "type")
+                        and event.delta.type == "input_json_delta"
+                    ):
+                        current_tool_input_json += event.delta.partial_json
 
-    except Exception:
-        logger.exception("Deal analysis failed")
-        return {}
+                elif event.type == "content_block_stop":
+                    if current_tool_name and current_tool_input_json:
+                        try:
+                            tool_input = json.loads(current_tool_input_json)
+                            if isinstance(tool_input, dict):
+                                tools_called.append(current_tool_name)
+                                logger.debug(
+                                    "Post-chat tool [%s] keys: %s",
+                                    current_tool_name,
+                                    list(tool_input.keys()),
+                                )
+                                yield (current_tool_name, tool_input)
+                            else:
+                                logger.warning(
+                                    "Post-chat tool [%s] returned non-dict: %s",
+                                    current_tool_name,
+                                    type(tool_input).__name__,
+                                )
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "Post-chat tool [%s] returned invalid JSON",
+                                current_tool_name,
+                            )
+                    current_tool_name = None
+                    current_tool_input_json = ""
 
+            # Log cache usage from the final message
+            final_message = await stream.get_final_message()
+            usage = final_message.usage
+            logger.info(
+                "Cache [post_chat]: creation=%d read=%d uncached=%d",
+                getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                getattr(usage, "cache_read_input_tokens", 0) or 0,
+                usage.input_tokens,
+            )
 
-async def assess_situation(
-    deal_state_dict: dict,
-    messages: list[dict],
-    assistant_text: str,
-) -> dict:
-    """Assess the buyer's negotiation situation and maintain structured context.
-
-    Uses a wider conversation window than the extractor to capture situational
-    nuance. Returns the negotiation context dict, or empty dict if no change.
-    """
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-    state_json = json.dumps(deal_state_dict, indent=2, default=str)
-    conversation_context = _build_conversation_context(
-        messages,
-        assistant_text,
-        recent_count=SITUATION_RECENT_MESSAGES,
-        msg_truncation=SITUATION_MESSAGE_TRUNCATION,
-        assistant_truncation=SITUATION_ASSISTANT_TRUNCATION,
-    )
-
-    try:
-        response = await client.messages.create(  # type: ignore[call-overload]
-            model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=SITUATION_MAX_TOKENS,
-            tools=[SITUATION_ASSESSOR_TOOL],
-            tool_choice={"type": "auto"},
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
-                        f"Conversation:\n{conversation_context}\n\n"
-                        f"{SITUATION_ASSESSOR_PROMPT}"
-                    ),
-                }
-            ],
-        )
-
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "assess_situation":
-                result = block.input
-                logger.debug(
-                    "Situation assessor returned stance=%s",
-                    result.get("stance") if isinstance(result, dict) else "(invalid)",
-                )
-                if isinstance(result, dict):
-                    result["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    return result
-                return {}
-
-        logger.debug("Situation assessor did not call tool — no situation change")
-        return {}
+            logger.info(
+                "Post-chat complete: tools_called=%s",
+                tools_called if tools_called else "(none)",
+            )
 
     except Exception:
-        logger.exception("Situation assessment failed")
-        return {}
+        logger.exception("Post-chat processing failed")
 
 
 def merge_extraction_results(facts: dict, analysis: dict) -> dict:
@@ -817,24 +758,109 @@ def merge_extraction_results(facts: dict, analysis: dict) -> dict:
     return merged
 
 
-def build_system_prompt(
+async def analyze_deal(
+    deal_state_dict: dict,
+    messages: list[dict],
+    assistant_text: str,
+) -> dict:
+    """Standalone deal analysis for re-assessment (e.g., after inline corrections).
+
+    Used by the deals PATCH endpoint. Uses Sonnet with cached tool definition
+    for consistency with the post-chat pipeline.
+    """
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    state_json = json.dumps(deal_state_dict, indent=2, default=str)
+    conversation_context = _build_conversation_context(messages, assistant_text)
+
+    try:
+        response = await client.messages.create(  # type: ignore[call-overload]
+            model=settings.CLAUDE_MODEL,
+            max_tokens=1536,
+            tools=[
+                {**ANALYST_TOOL, "cache_control": {"type": "ephemeral"}},
+            ],
+            tool_choice={"type": "auto"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current deal state:\n```json\n{state_json}\n```\n\n"
+                        f"Conversation:\n{conversation_context}\n\n"
+                        "Assess the deal quality, identify risks, and surface information gaps. "
+                        "Health summary must reference the buyer's actual data. "
+                        "Recommendation must be specific. Missing info is NEVER a red flag."
+                    ),
+                }
+            ],
+        )
+
+        # Log cache usage
+        usage = response.usage
+        logger.info(
+            "Cache [analyze_deal]: creation=%d read=%d uncached=%d",
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            usage.input_tokens,
+        )
+
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "analyze_deal":
+                result = block.input
+                logger.debug(
+                    "Analyst returned keys: %s",
+                    list(result.keys()) if result else "(empty)",
+                )
+                return result if isinstance(result, dict) else {}
+
+        logger.debug("Analyst did not call tool — no assessment changes")
+        return {}
+
+    except Exception:
+        logger.exception("Deal analysis failed")
+        return {}
+
+
+def build_system_prompt() -> list[dict]:
+    """Build system prompt as a single static cached block.
+
+    The system prompt is entirely static — no per-session or per-turn content.
+    Dynamic context (deal state, negotiation context, buyer situation) is
+    injected as a context message via build_context_message() to preserve
+    cache hits across turns.
+    """
+    return [
+        {
+            "type": "text",
+            "text": SYSTEM_PROMPT_STATIC,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
+def build_context_message(
     deal_state_dict: dict | None, linked_messages: list[dict] | None = None
-) -> str:
-    # Inject buyer context preamble
-    context_preamble = ""
+) -> dict | None:
+    """Build a synthetic context message with dynamic per-turn state.
+
+    This is prepended to the messages array (not the system prompt) so the
+    system prompt stays stable and cacheable across turns. Uses
+    <system-reminder> tags following the reference architecture pattern.
+    """
+    context_parts: list[str] = []
+
     if deal_state_dict:
         buyer_context = deal_state_dict.get("buyer_context", BuyerContext.RESEARCHING)
         preamble = CONTEXT_PREAMBLES.get(BuyerContext(buyer_context))
         if preamble:
-            context_preamble = f"\nBuyer situation: {preamble}"
+            context_parts.append(f"Buyer situation: {preamble}")
 
-        # Inject negotiation context summary for primary model awareness
+        # Negotiation context summary for primary model awareness
         negotiation_context = deal_state_dict.get("negotiation_context")
         if negotiation_context and isinstance(negotiation_context, dict):
             stance = negotiation_context.get("stance", "")
             situation = negotiation_context.get("situation", "")
             if stance and situation:
-                context_preamble += f"\nNegotiation status: [{stance}] {situation}"
+                context_parts.append(f"Negotiation status: [{stance}] {situation}")
             pending_actions = negotiation_context.get("pending_actions", [])
             pending_summary = ", ".join(
                 item["action"]
@@ -842,11 +868,9 @@ def build_system_prompt(
                 if isinstance(item, dict) and not item.get("done")
             )
             if pending_summary:
-                context_preamble += f"\nPending actions: {pending_summary}"
+                context_parts.append(f"Pending actions: {pending_summary}")
 
-    deal_context = ""
-    if deal_state_dict:
-        # Find the active deal to extract health/flags summary
+        # Health/flags summary from active deal
         active_deal_id = deal_state_dict.get("active_deal_id")
         deals = deal_state_dict.get("deals", [])
         active_deal = None
@@ -856,18 +880,15 @@ def build_system_prompt(
                     active_deal = deal
                     break
 
-        # Extract health/flags from the active deal
         health = active_deal.get("health", {}) if active_deal else {}
         health_status = health.get("status") if health else None
         health_summary = health.get("summary") if health else None
         deal_red_flags = active_deal.get("red_flags", []) if active_deal else []
         deal_info_gaps = active_deal.get("information_gaps", []) if active_deal else []
 
-        # Session-level flags and gaps
         session_red_flags = deal_state_dict.get("session_red_flags", [])
         session_info_gaps = deal_state_dict.get("session_information_gaps", [])
 
-        # Combine for summary counts
         all_red_flags = deal_red_flags + session_red_flags
         all_info_gaps = deal_info_gaps + session_info_gaps
 
@@ -889,17 +910,14 @@ def build_system_prompt(
         if all_info_gaps:
             summary_lines.append(f"Information gaps: {len(all_info_gaps)} remaining")
 
-        state_summary = "\n".join(summary_lines)
-        if state_summary:
-            state_summary = f"\n{state_summary}"
+        if summary_lines:
+            context_parts.append("\n".join(summary_lines))
 
-        deal_context = (
-            f"{state_summary}"
-            f"\nCurrent deal state:\n```json\n"
+        context_parts.append(
+            f"Current deal state:\n```json\n"
             f"{json.dumps(deal_state_dict, indent=2, default=str)}\n```"
         )
 
-    linked_context = ""
     if linked_messages:
         summaries = []
         for msg in linked_messages[-LINKED_CONTEXT_MAX_MESSAGES:]:
@@ -914,26 +932,67 @@ def build_system_prompt(
             summaries.append(
                 f"[{msg['role']}]: {content[:LINKED_CONTEXT_MESSAGE_TRUNCATION]}"
             )
-        linked_context = "\nPrevious conversation context:\n" + "\n".join(summaries)
+        context_parts.append("Previous conversation context:\n" + "\n".join(summaries))
 
-    return SYSTEM_PROMPT.format(
-        deal_state_context=context_preamble + deal_context,
-        linked_context=linked_context,
+    if not context_parts:
+        return None
+
+    context_text = (
+        "<system-reminder>\n"
+        + "\n".join(context_parts)
+        + "\n\nIMPORTANT: This context reflects the current deal state. "
+        "Use it to inform your response but do not repeat it back to the user."
+        "\n</system-reminder>"
     )
+    return {"role": "user", "content": context_text}
 
 
 def build_messages(
-    history: list[dict], user_content: str, image_url: str | None = None
+    history: list[dict],
+    user_content: str,
+    image_url: str | None = None,
+    context_message: dict | None = None,
 ) -> list[dict]:
-    """Build the messages array for Claude API from message history."""
-    messages = []
+    """Build the messages array for Claude API from message history.
 
-    # Add history (last N messages)
+    Conversation history comes first (stable, cacheable prefix) with a cache
+    breakpoint on the last history message. Dynamic context and the new user
+    message come after the breakpoint (uncached, change every turn).
+    """
+    messages: list[dict] = []
+
+    # History FIRST — stable prefix, cacheable across turns
     max_history = settings.CLAUDE_MAX_HISTORY
-    for msg in history[-max_history:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
+    history_slice = history[-max_history:]
+    for i, msg in enumerate(history_slice):
+        entry: dict = {"role": msg["role"], "content": msg["content"]}
+        # Cache breakpoint on the last history message
+        if i == len(history_slice) - 1:
+            if isinstance(entry["content"], str):
+                entry["content"] = [
+                    {
+                        "type": "text",
+                        "text": entry["content"],
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            elif isinstance(entry["content"], list):
+                last_block = {
+                    **entry["content"][-1],
+                    "cache_control": {"type": "ephemeral"},
+                }
+                entry["content"] = [*entry["content"][:-1], last_block]
+        messages.append(entry)
 
-    # Add current user message
+    # Dynamic context AFTER history — changes every turn, not cached
+    if context_message:
+        messages.append(context_message)
+        # Claude requires alternating user/assistant
+        messages.append(
+            {"role": "assistant", "content": "Understood. I have the current context."}
+        )
+
+    # New user message (uncached — changes every turn)
     if image_url:
         messages.append(
             {
@@ -954,10 +1013,15 @@ def build_messages(
 
 
 async def stream_chat(
-    system_prompt: str,
+    system_prompt: list[dict],
     messages: list[dict],
 ) -> AsyncGenerator[str, None]:
-    """Stream Claude response as SSE events.
+    """Stream Claude response as SSE events with prompt caching.
+
+    system_prompt is a list of content blocks (static block with cache_control,
+    dynamic block without). Top-level cache_control enables automatic multi-turn
+    conversation caching — the cache breakpoint advances through the growing
+    message history each turn.
 
     Yields SSE-formatted strings:
     - event: text\\ndata: {"chunk": "..."}\\n\\n
@@ -970,7 +1034,7 @@ async def stream_chat(
     async with client.messages.stream(
         model=settings.CLAUDE_MODEL,
         max_tokens=settings.CLAUDE_MAX_TOKENS,
-        system=system_prompt,
+        system=system_prompt,  # type: ignore[arg-type]
         messages=messages,  # type: ignore[arg-type]
     ) as stream:
         async for event in stream:
@@ -979,6 +1043,16 @@ async def stream_chat(
                     chunk = event.delta.text
                     full_text += chunk
                     yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
+
+        # Log cache usage
+        final_message = await stream.get_final_message()
+        usage = final_message.usage
+        logger.info(
+            "Cache [main_chat]: creation=%d read=%d uncached=%d",
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            usage.input_tokens,
+        )
 
     yield f"event: done\ndata: {json.dumps({'text': full_text})}\n\n"
 
@@ -1121,8 +1195,8 @@ async def generate_ai_panel_cards(
     """Generate AI panel cards based on deal state and conversation context.
 
     Called after the main Claude response to populate the AI-driven panel.
-    Uses the fast model (Haiku) for low latency since the user already has
-    the chat response.
+    Uses Sonnet with prompt caching — the large static panel prompt (~2,500 tokens)
+    is cached across calls, making subsequent calls fast and cheap.
     """
     client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
@@ -1137,19 +1211,37 @@ async def generate_ai_panel_cards(
 
     try:
         response = await client.messages.create(
-            model=settings.CLAUDE_FAST_MODEL,
+            model=settings.CLAUDE_MODEL,
             max_tokens=PANEL_GENERATOR_MAX_TOKENS,
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        f"Deal state:\n```json\n{state_json}\n```\n\n"
-                        f"Recent conversation:\n{conversation_context}\n\n"
-                        f"{GENERATE_AI_PANEL_PROMPT}"
-                    ),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": GENERATE_AI_PANEL_PROMPT,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Deal state:\n```json\n{state_json}\n```\n\n"
+                                f"Recent conversation:\n{conversation_context}"
+                            ),
+                        },
+                    ],
                 }
             ],
         )
+        # Log cache usage
+        usage = response.usage
+        logger.info(
+            "Cache [panel]: creation=%d read=%d uncached=%d",
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            usage.input_tokens,
+        )
+
         text = ""
         for block in response.content:
             if hasattr(block, "text"):

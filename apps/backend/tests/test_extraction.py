@@ -151,77 +151,162 @@ def test_merge_ignores_unknown_keys():
     assert "bogus" not in result
 
 
-# ─── extract_deal_facts (mocked API) ───
+# ─── process_post_chat (mocked streaming API) ───
+
+
+def _make_stream_events(tool_calls: list[tuple[str, dict]]) -> list[MagicMock]:
+    """Build a list of mock streaming events for tool_use blocks."""
+    events = []
+    for tool_name, tool_input in tool_calls:
+        # content_block_start
+        start_event = MagicMock()
+        start_event.type = "content_block_start"
+        start_event.content_block = MagicMock()
+        start_event.content_block.type = "tool_use"
+        start_event.content_block.name = tool_name
+        events.append(start_event)
+
+        # content_block_delta with the full JSON
+        import json
+
+        delta_event = MagicMock()
+        delta_event.type = "content_block_delta"
+        delta_event.delta = MagicMock()
+        delta_event.delta.type = "input_json_delta"
+        delta_event.delta.partial_json = json.dumps(tool_input)
+        events.append(delta_event)
+
+        # content_block_stop
+        stop_event = MagicMock()
+        stop_event.type = "content_block_stop"
+        events.append(stop_event)
+
+    return events
+
+
+def _make_mock_stream(events, cache_creation=0, cache_read=0, input_tokens=100):
+    """Create a mock async stream context manager."""
+    mock_usage = MagicMock()
+    mock_usage.cache_creation_input_tokens = cache_creation
+    mock_usage.cache_read_input_tokens = cache_read
+    mock_usage.input_tokens = input_tokens
+
+    mock_final_message = MagicMock()
+    mock_final_message.usage = mock_usage
+
+    mock_stream = AsyncMock()
+    mock_stream.__aiter__ = MagicMock(return_value=AsyncIterator(events))
+    mock_stream.get_final_message = AsyncMock(return_value=mock_final_message)
+
+    mock_context = AsyncMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_stream)
+    mock_context.__aexit__ = AsyncMock(return_value=False)
+
+    return mock_context
+
+
+class AsyncIterator:
+    """Helper to make a list work as an async iterator."""
+
+    def __init__(self, items):
+        self._items = iter(items)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._items)
+        except StopIteration:
+            raise StopAsyncIteration
 
 
 @pytest.mark.asyncio
 @patch("app.services.claude.anthropic.AsyncAnthropic")
-async def test_extract_deal_facts_returns_tool_input(mock_anthropic_class):
-    """extract_deal_facts returns the tool input from the API response."""
-    from app.services.claude import extract_deal_facts
+async def test_process_post_chat_yields_tool_results(mock_anthropic_class):
+    """process_post_chat yields (tool_name, tool_input) tuples for each tool call."""
+    from app.services.claude import process_post_chat
 
-    tool_result = {"numbers": {"listing_price": 34000}, "phase": "negotiation"}
-    mock_tool_block = MagicMock()
-    mock_tool_block.type = "tool_use"
-    mock_tool_block.name = "extract_deal_facts"
-    mock_tool_block.input = tool_result
+    facts_data = {"numbers": {"listing_price": 34000}, "phase": "negotiation"}
+    analysis_data = {
+        "health": {"status": "concerning", "summary": "Test", "recommendation": "Act"}
+    }
 
-    mock_response = MagicMock()
-    mock_response.content = [mock_tool_block]
+    events = _make_stream_events(
+        [
+            ("extract_deal_facts", facts_data),
+            ("analyze_deal", analysis_data),
+        ]
+    )
+    mock_stream = _make_mock_stream(events)
 
     mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_client.messages.stream = MagicMock(return_value=mock_stream)
     mock_anthropic_class.return_value = mock_client
 
-    result = await extract_deal_facts(
+    results = {}
+    async for tool_name, tool_input in process_post_chat(
         {"buyer_context": "researching", "vehicles": [], "deals": []},
         [{"role": "user", "content": "test"}],
         "test response",
-    )
-    assert result == tool_result
+    ):
+        results[tool_name] = tool_input
+
+    assert results["extract_deal_facts"] == facts_data
+    assert results["analyze_deal"] == analysis_data
 
 
 @pytest.mark.asyncio
 @patch("app.services.claude.anthropic.AsyncAnthropic")
-async def test_extract_deal_facts_no_tool_call(mock_anthropic_class):
-    """extract_deal_facts returns empty dict if model doesn't call tool."""
-    from app.services.claude import extract_deal_facts
+async def test_process_post_chat_no_tool_calls(mock_anthropic_class):
+    """process_post_chat yields nothing if model doesn't call any tools."""
+    from app.services.claude import process_post_chat
 
-    mock_text_block = MagicMock()
-    mock_text_block.type = "text"
-    mock_text_block.text = "No changes detected."
+    # Only a text block, no tool calls
+    text_event = MagicMock()
+    text_event.type = "content_block_start"
+    text_event.content_block = MagicMock()
+    text_event.content_block.type = "text"
 
-    mock_response = MagicMock()
-    mock_response.content = [mock_text_block]
+    stop_event = MagicMock()
+    stop_event.type = "content_block_stop"
+
+    mock_stream = _make_mock_stream([text_event, stop_event])
 
     mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_client.messages.stream = MagicMock(return_value=mock_stream)
     mock_anthropic_class.return_value = mock_client
 
-    result = await extract_deal_facts(
+    results = []
+    async for item in process_post_chat(
         {"buyer_context": "researching", "vehicles": [], "deals": []},
         [{"role": "user", "content": "test"}],
         "test response",
-    )
-    assert result == {}
+    ):
+        results.append(item)
+
+    assert results == []
 
 
 @pytest.mark.asyncio
 @patch("app.services.claude.anthropic.AsyncAnthropic")
-async def test_extract_deal_facts_handles_api_error(mock_anthropic_class):
-    """extract_deal_facts returns empty dict on API exception."""
-    from app.services.claude import extract_deal_facts
+async def test_process_post_chat_handles_api_error(mock_anthropic_class):
+    """process_post_chat yields nothing on API exception."""
+    from app.services.claude import process_post_chat
 
     mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
+    mock_client.messages.stream = MagicMock(side_effect=Exception("API error"))
     mock_anthropic_class.return_value = mock_client
 
-    result = await extract_deal_facts(
+    results = []
+    async for item in process_post_chat(
         {"buyer_context": "researching", "vehicles": [], "deals": []},
         [{"role": "user", "content": "test"}],
         "test response",
-    )
-    assert result == {}
+    ):
+        results.append(item)
+
+    assert results == []
 
 
 # ─── analyze_deal (mocked API) ───
@@ -302,76 +387,30 @@ async def test_analyze_deal_handles_api_error(mock_anthropic_class):
     assert result == {}
 
 
-# ─── assess_situation (mocked API) ───
+# ─── process_post_chat: situation assessor yields ───
 
 
 @pytest.mark.asyncio
 @patch("app.services.claude.anthropic.AsyncAnthropic")
-async def test_assess_situation_returns_tool_input(mock_anthropic_class):
-    """assess_situation returns the tool input from the API response."""
-    from app.services.claude import assess_situation
+async def test_process_post_chat_yields_situation(mock_anthropic_class):
+    """process_post_chat yields assess_situation tool results."""
+    from app.services.claude import process_post_chat
 
-    tool_result = {"stance": "firm", "leverage_points": ["competing offer"]}
-    mock_tool_block = MagicMock()
-    mock_tool_block.type = "tool_use"
-    mock_tool_block.name = "assess_situation"
-    mock_tool_block.input = tool_result
+    situation_data = {"stance": "firm", "situation": "Waiting for callback"}
 
-    mock_response = MagicMock()
-    mock_response.content = [mock_tool_block]
+    events = _make_stream_events([("assess_situation", situation_data)])
+    mock_stream = _make_mock_stream(events)
 
     mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_client.messages.stream = MagicMock(return_value=mock_stream)
     mock_anthropic_class.return_value = mock_client
 
-    result = await assess_situation(
+    results = {}
+    async for tool_name, tool_input in process_post_chat(
         {"buyer_context": "at_dealership", "vehicles": [], "deals": []},
         [{"role": "user", "content": "test"}],
         "test response",
-    )
-    assert result["stance"] == "firm"
-    assert result["leverage_points"] == ["competing offer"]
-    assert "updated_at" in result
+    ):
+        results[tool_name] = tool_input
 
-
-@pytest.mark.asyncio
-@patch("app.services.claude.anthropic.AsyncAnthropic")
-async def test_assess_situation_no_tool_call(mock_anthropic_class):
-    """assess_situation returns empty dict if model doesn't call tool."""
-    from app.services.claude import assess_situation
-
-    mock_text_block = MagicMock()
-    mock_text_block.type = "text"
-    mock_text_block.text = "No situation change."
-
-    mock_response = MagicMock()
-    mock_response.content = [mock_text_block]
-
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
-    mock_anthropic_class.return_value = mock_client
-
-    result = await assess_situation(
-        {"buyer_context": "researching", "vehicles": [], "deals": []},
-        [{"role": "user", "content": "test"}],
-        "test response",
-    )
-    assert result == {}
-
-
-@pytest.mark.asyncio
-@patch("app.services.claude.anthropic.AsyncAnthropic")
-async def test_assess_situation_handles_api_error(mock_anthropic_class):
-    """assess_situation returns empty dict on API exception."""
-    from app.services.claude import assess_situation
-
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
-    mock_anthropic_class.return_value = mock_client
-
-    result = await assess_situation(
-        {"buyer_context": "researching", "vehicles": [], "deals": []},
-        [{"role": "user", "content": "test"}],
-        "test response",
-    )
-    assert result == {}
+    assert results["assess_situation"]["stance"] == "firm"

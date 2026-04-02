@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -15,13 +14,12 @@ from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.chat import ChatMessageRequest, MessageResponse
 from app.services.claude import (
-    analyze_deal,
-    assess_situation,
+    build_context_message,
     build_messages,
     build_system_prompt,
-    extract_deal_facts,
     generate_ai_panel_cards,
     merge_extraction_results,
+    process_post_chat,
     stream_chat,
 )
 from app.services.deal_state import apply_extraction, deal_state_to_dict
@@ -85,9 +83,12 @@ async def send_message(
         )
         linked_messages = [{"role": m.role, "content": m.content} for m in linked_msgs]
 
-    # Build Claude request
-    system_prompt = build_system_prompt(deal_state_dict, linked_messages)
-    messages = build_messages(history_dicts, body.content, body.image_url)
+    # Build Claude request — system prompt is static, dynamic context goes in messages
+    system_prompt = build_system_prompt()
+    context_message = build_context_message(deal_state_dict, linked_messages)
+    messages = build_messages(
+        history_dicts, body.content, body.image_url, context_message
+    )
 
     async def generate():
         full_text = ""
@@ -126,65 +127,26 @@ async def send_message(
         if full_text:
             all_messages.append({"role": "assistant", "content": full_text})
 
-        # ── Stage 2: Extract data + analyze deal (parallel subagents) ──
+        # ── Stage 2: Post-chat extraction + analysis (single streamed Sonnet call) ──
         if deal_state_dict:
             logger.debug(
-                "Stage 2: Running factual extractor + analyst + situation assessor in parallel, session_id=%s",
+                "Stage 2: Running post-chat processing, session_id=%s",
                 session_id,
-            )
-            results = await asyncio.gather(
-                extract_deal_facts(deal_state_dict, all_messages, full_text),
-                analyze_deal(deal_state_dict, all_messages, full_text),
-                assess_situation(deal_state_dict, all_messages, full_text),
-                return_exceptions=True,
             )
 
             facts: dict = {}
             analysis: dict = {}
             situation: dict = {}
 
-            if isinstance(results[0], Exception):
-                logger.exception(
-                    "Factual extraction failed: session_id=%s",
-                    session_id,
-                    exc_info=results[0],
-                )
-            elif isinstance(results[0], dict):
-                facts = results[0]
-                logger.debug(
-                    "Factual extractor keys: %s, session_id=%s",
-                    list(facts.keys()) if facts else "(empty)",
-                    session_id,
-                )
-
-            if isinstance(results[1], Exception):
-                logger.exception(
-                    "Deal analysis failed: session_id=%s",
-                    session_id,
-                    exc_info=results[1],
-                )
-            elif isinstance(results[1], dict):
-                analysis = results[1]
-                logger.debug(
-                    "Analyst keys: %s, session_id=%s",
-                    list(analysis.keys()) if analysis else "(empty)",
-                    session_id,
-                )
-
-            if isinstance(results[2], Exception):
-                logger.exception(
-                    "Situation assessment failed: session_id=%s",
-                    session_id,
-                    exc_info=results[2],
-                )
-            elif isinstance(results[2], dict):
-                situation = results[2]
-                if situation:
-                    logger.debug(
-                        "Situation assessor stance=%s, session_id=%s",
-                        situation.get("stance"),
-                        session_id,
-                    )
+            async for tool_name, tool_input in process_post_chat(
+                deal_state_dict, all_messages, full_text
+            ):
+                if tool_name == "extract_deal_facts":
+                    facts = tool_input
+                elif tool_name == "analyze_deal":
+                    analysis = tool_input
+                elif tool_name == "assess_situation":
+                    situation = tool_input
 
             # Merge results and apply to DB
             extraction = merge_extraction_results(facts, analysis)
