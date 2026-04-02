@@ -1,17 +1,35 @@
+import { useRef, useCallback } from 'react'
 import { TouchableOpacity, Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { useRouter } from 'expo-router'
+import { useIsFocused } from '@react-navigation/native'
 import { ArrowLeftRight, LogOut, Sun, Moon, ChevronLeft } from '@tamagui/lucide-icons'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
-import { AppCard, ThemedSafeArea } from '@/components/shared'
-import { useIconEntrance } from '@/hooks/useAnimatedValue'
+import { AppCard, ThemedSafeArea, ScreenHeader } from '@/components/shared'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 
 export default function SettingsScreen() {
   const router = useRouter()
-  const backIcon = useIconEntrance()
+  const isFocused = useIsFocused()
   const { role, setRole, logout } = useAuthStore()
   const { mode, toggle } = useThemeStore()
+  const themeRotation = useRef(new Animated.Value(0)).current
+
+  const handleThemeToggle = useCallback(() => {
+    themeRotation.setValue(0)
+    Animated.timing(themeRotation, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start()
+    toggle()
+  }, [toggle, themeRotation])
+
+  const themeIconRotate = themeRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  })
 
   const handleSwitchRole = () => {
     const newRole = role === 'buyer' ? 'dealer' : 'buyer'
@@ -31,33 +49,13 @@ export default function SettingsScreen() {
   return (
     <ThemedSafeArea edges={['top']}>
       <YStack flex={1} backgroundColor="$background">
-        <XStack
-          paddingHorizontal="$4"
-          paddingVertical="$3"
-          alignItems="center"
-          justifyContent="space-between"
-          borderBottomWidth={1}
-          borderBottomColor="$borderColor"
-          backgroundColor="$backgroundStrong"
-        >
-          <TouchableOpacity
-            onPress={() => router.back()}
-            activeOpacity={0.6}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Animated.View
-              style={{ opacity: backIcon.opacity, transform: [{ rotate: backIcon.rotate }] }}
-            >
-              <ChevronLeft size={24} color="$color" />
-            </Animated.View>
-          </TouchableOpacity>
-          <Text fontSize={18} fontWeight="700" color="$color">
-            Settings
-          </Text>
-          <XStack width={44} />
-        </XStack>
+        <ScreenHeader
+          leftIcon={<ChevronLeft size={24} color="$color" />}
+          onLeftPress={() => router.back()}
+          leftLabel="Go back"
+          title="Settings"
+          iconTrigger={isFocused}
+        />
 
         <YStack padding="$4" gap="$5" maxWidth={480} width="100%" alignSelf="center">
           <YStack gap="$3">
@@ -71,14 +69,16 @@ export default function SettingsScreen() {
               Appearance
             </Text>
 
-            <TouchableOpacity onPress={toggle} activeOpacity={0.7}>
-              <AppCard>
+            <TouchableOpacity onPress={handleThemeToggle} activeOpacity={0.7}>
+              <AppCard interactive>
                 <XStack alignItems="center" gap="$3">
-                  {mode === 'dark' ? (
-                    <Sun size={20} color="$brand" />
-                  ) : (
-                    <Moon size={20} color="$brand" />
-                  )}
+                  <Animated.View style={{ transform: [{ rotate: themeIconRotate }] }}>
+                    {mode === 'dark' ? (
+                      <Sun size={20} color="$brand" />
+                    ) : (
+                      <Moon size={20} color="$brand" />
+                    )}
+                  </Animated.View>
                   <YStack flex={1}>
                     <Text fontSize={15} fontWeight="600" color="$color">
                       {mode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
@@ -105,7 +105,7 @@ export default function SettingsScreen() {
 
             {__DEV__ && (
               <TouchableOpacity onPress={handleSwitchRole} activeOpacity={0.7}>
-                <AppCard>
+                <AppCard interactive>
                   <XStack alignItems="center" gap="$3">
                     <ArrowLeftRight size={20} color="$brand" />
                     <YStack flex={1}>
@@ -122,7 +122,7 @@ export default function SettingsScreen() {
             )}
 
             <TouchableOpacity onPress={handleLogout} activeOpacity={0.7}>
-              <AppCard>
+              <AppCard interactive>
                 <XStack alignItems="center" gap="$3">
                   <LogOut size={20} color="$danger" />
                   <Text fontSize={15} fontWeight="600" color="$danger">

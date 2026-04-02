@@ -99,6 +99,8 @@ interface ChatState {
   decodeVinAssistForVehicle: (vin: string, vehicleId?: string) => Promise<void>
   confirmVinAssist: (vinAssistId: string) => Promise<void>
   rejectVinAssist: (vinAssistId: string) => Promise<void>
+  /** Submit a VIN from the insights panel — skips the "Decode?" prompt and auto-decodes. */
+  submitVinFromPanel: (vin: string) => Promise<void>
   clearSendError: () => void
 }
 
@@ -612,6 +614,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
       trackVinAssistEvent('reject_failed', { sessionId: activeSessionId, vin: item.vin, message })
     }
+  },
+
+  submitVinFromPanel: async (vin) => {
+    const { activeSessionId } = get()
+    if (!activeSessionId) return
+
+    // Add the VIN as a user message in chat
+    const userMessage: Message = {
+      id: Math.random().toString(36).substring(2),
+      sessionId: activeSessionId,
+      role: 'user',
+      content: vin,
+      createdAt: new Date().toISOString(),
+    }
+
+    // Stash the pending send and create a vinAssistItem in 'decoding' status
+    // (skipping the 'detected' step entirely)
+    const itemId = Math.random().toString(36).substring(2)
+    set((state) => ({
+      messages: [...state.messages, userMessage],
+      _pendingSend: { content: vin },
+      vinAssistItems: [
+        ...state.vinAssistItems.filter((item) => item.vin !== vin),
+        {
+          id: itemId,
+          sessionId: activeSessionId,
+          vin,
+          sourceMessageId: userMessage.id,
+          status: 'decoding' as const,
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    }))
+
+    // Auto-trigger decode — this updates the vinAssistItem to 'decoded'
+    // and the VinAssistCard in chat will show the confirm step
+    await get().decodeVinAssistForVehicle(vin)
   },
 
   clearSendError: () => {

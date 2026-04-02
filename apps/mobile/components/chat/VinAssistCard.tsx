@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState, useCallback } from 'react'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
 
 import type { VinAssistItem } from '@/lib/types'
@@ -16,6 +16,27 @@ export const VinAssistCard = memo(function VinAssistCard({ item }: { item: VinAs
   const decodeVinAssist = useChatStore((s) => s.decodeVinAssist)
   const confirmVinAssist = useChatStore((s) => s.confirmVinAssist)
   const rejectVinAssist = useChatStore((s) => s.rejectVinAssist)
+
+  const [confirming, setConfirming] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
+
+  const handleConfirm = useCallback(async () => {
+    setConfirming(true)
+    try {
+      await confirmVinAssist(item.id)
+    } finally {
+      setConfirming(false)
+    }
+  }, [confirmVinAssist, item.id])
+
+  const handleReject = useCallback(async () => {
+    setRejecting(true)
+    try {
+      await rejectVinAssist(item.id)
+    } finally {
+      setRejecting(false)
+    }
+  }, [rejectVinAssist, item.id])
 
   return (
     <XStack paddingHorizontal="$3" paddingBottom="$3" justifyContent="flex-start">
@@ -98,11 +119,34 @@ export const VinAssistCard = memo(function VinAssistCard({ item }: { item: VinAs
 
           {item.status === 'decoded' ? (
             <XStack gap="$2" flexWrap="wrap">
-              <AppButton minHeight={44} onPress={() => confirmVinAssist(item.id)}>
-                Yes, use this vehicle
+              <AppButton minHeight={44} onPress={handleConfirm} disabled={confirming || rejecting}>
+                {confirming ? (
+                  <XStack alignItems="center" gap="$2">
+                    <Spinner size="small" color="$white" />
+                    <Text color="$white" fontSize={14} fontWeight="600">
+                      Confirming...
+                    </Text>
+                  </XStack>
+                ) : (
+                  'Yes, use this vehicle'
+                )}
               </AppButton>
-              <AppButton minHeight={44} variant="ghost" onPress={() => rejectVinAssist(item.id)}>
-                No, that&apos;s not correct
+              <AppButton
+                minHeight={44}
+                variant="ghost"
+                onPress={handleReject}
+                disabled={confirming || rejecting}
+              >
+                {rejecting ? (
+                  <XStack alignItems="center" gap="$2">
+                    <Spinner size="small" color="$placeholderColor" />
+                    <Text color="$placeholderColor" fontSize={14}>
+                      Rejecting...
+                    </Text>
+                  </XStack>
+                ) : (
+                  "No, that's not correct"
+                )}
               </AppButton>
             </XStack>
           ) : null}

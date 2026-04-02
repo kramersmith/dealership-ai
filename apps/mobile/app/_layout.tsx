@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { Platform, UIManager } from 'react-native'
 import { useFonts } from 'expo-font'
 import { Stack } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
@@ -9,6 +10,13 @@ import { useThemeStore } from '@/stores/themeStore'
 export { ErrorBoundary } from 'expo-router'
 
 SplashScreen.preventAutoHideAsync()
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true)
+}
+
+// Dev: expose mockPanel() and clearPanel() on globalThis for console testing
+if (__DEV__) require('@/lib/dev/mockPanelUpdates')
 
 export default function RootLayout() {
   const mode = useThemeStore((s) => s.mode)

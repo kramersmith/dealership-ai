@@ -1,9 +1,29 @@
-import { XStack, YStack, Text } from 'tamagui'
+import { Animated } from 'react-native'
+import { XStack, Text, useTheme } from 'tamagui'
 import type { DealPhase } from '@/lib/types'
 import { DEAL_PHASES } from '@/lib/constants'
+import { useAnimatedNumber } from '@/hooks/useAnimatedValue'
 
 interface CompactPhaseIndicatorProps {
   currentPhase: DealPhase
+}
+
+function PhaseBar({ active, current }: { active: boolean; current: boolean }) {
+  const theme = useTheme()
+  const flex = useAnimatedNumber(current ? 2 : 1, 300)
+  const brandColor = theme.brand?.val as string
+  const borderColor = theme.borderColor?.val as string
+
+  return (
+    <Animated.View
+      style={{
+        flex,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: active ? brandColor : borderColor,
+      }}
+    />
+  )
 }
 
 export function CompactPhaseIndicator({ currentPhase }: CompactPhaseIndicatorProps) {
@@ -17,13 +37,7 @@ export function CompactPhaseIndicator({ currentPhase }: CompactPhaseIndicatorPro
       </Text>
       <XStack gap="$1" alignItems="center" flex={1}>
         {DEAL_PHASES.map((phase, i) => (
-          <YStack
-            key={phase.key}
-            flex={i === currentIndex ? 2 : 1}
-            height={4}
-            borderRadius={2}
-            backgroundColor={i <= currentIndex ? '$brand' : '$borderColor'}
-          />
+          <PhaseBar key={phase.key} active={i <= currentIndex} current={i === currentIndex} />
         ))}
       </XStack>
     </XStack>

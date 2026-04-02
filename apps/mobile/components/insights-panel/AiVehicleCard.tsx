@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   View,
   Text as RNText,
@@ -7,14 +7,61 @@ import {
   Platform,
   TouchableOpacity,
   ActivityIndicator,
+  Animated,
 } from 'react-native'
 import { useTheme } from 'tamagui'
-import { AlertTriangle, ChevronDown, ChevronUp, Check } from '@tamagui/lucide-icons'
+import { AlertTriangle, ChevronDown, Check } from '@tamagui/lucide-icons'
 import { formatMileage, formatCurrency } from '@/lib/utils'
 import { palette } from '@/lib/theme/tokens'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore, normalizeVinCandidate } from '@/stores/chatStore'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { useFocusBorder } from '@/hooks/useAnimatedValue'
 import type { Vehicle, VehicleIntelligence } from '@/lib/types'
+
+/** Fade in a child on mount */
+function FadeInView({ children }: { children: React.ReactNode }) {
+  const opacity = useRef(new Animated.Value(0)).current
+  useEffect(() => {
+    Animated.timing(opacity, {
+      toValue: 1,
+      duration: 250,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start()
+  }, [opacity])
+  return <Animated.View style={{ opacity }}>{children}</Animated.View>
+}
+
+/** Animated chevron that rotates between up/down */
+function AnimatedChevron({
+  expanded,
+  color,
+  size = 14,
+}: {
+  expanded: boolean
+  color: string
+  size?: number
+}) {
+  const rotation = useRef(new Animated.Value(expanded ? 1 : 0)).current
+  useEffect(() => {
+    Animated.timing(rotation, {
+      toValue: expanded ? 1 : 0,
+      duration: 200,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start()
+  }, [expanded, rotation])
+
+  const rotate = rotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  })
+
+  return (
+    <Animated.View style={{ transform: [{ rotate }] }}>
+      <ChevronDown size={size} color={color} />
+    </Animated.View>
+  )
+}
 
 // NOTE: This component uses plain RN View/Text instead of Tamagui YStack/XStack/Text.
 // This is a workaround for a Tamagui web runtime bug where the CSS class serialization
@@ -76,11 +123,7 @@ function SectionHeader({
       <View style={styles.sectionRight}>
         {status === 'complete' && <Check size={14} color={successColor} />}
         {status === 'loading' && <ActivityIndicator size="small" color={brandColor} />}
-        {expanded ? (
-          <ChevronUp size={14} color={mutedColor} />
-        ) : (
-          <ChevronDown size={14} color={mutedColor} />
-        )}
+        <AnimatedChevron expanded={expanded} color={mutedColor} />
       </View>
     </TouchableOpacity>
   )
@@ -234,101 +277,103 @@ function DecodeSection({
         successColor={colors.successColor}
       />
       {expanded && (
-        <View style={styles.sectionContent}>
-          {decode ? (
-            <>
-              <SpecRow
-                label="Engine"
-                value={decode.engine}
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
-              <SpecRow
-                label="Body"
-                value={decode.bodyType}
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
-              <SpecRow
-                label="Cab"
-                value={decode.rawPayload?.BodyCabType}
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
-              <SpecRow
-                label="Drivetrain"
-                value={decode.drivetrain}
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
-              <SpecRow
-                label="Transmission"
-                value={decode.transmission}
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
-              <SpecRow
-                label="Fuel"
-                value={decode.fuelType}
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
+        <FadeInView>
+          <View style={styles.sectionContent}>
+            {decode ? (
+              <>
+                <SpecRow
+                  label="Engine"
+                  value={decode.engine}
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <SpecRow
+                  label="Body"
+                  value={decode.bodyType}
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <SpecRow
+                  label="Cab"
+                  value={decode.rawPayload?.BodyCabType}
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <SpecRow
+                  label="Drivetrain"
+                  value={decode.drivetrain}
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <SpecRow
+                  label="Transmission"
+                  value={decode.transmission}
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <SpecRow
+                  label="Fuel"
+                  value={decode.fuelType}
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
 
-              {extraSpecs.length > 0 && (
-                <>
-                  <TouchableOpacity
-                    onPress={() => setShowAllSpecs((prev) => !prev)}
-                    activeOpacity={0.7}
-                    style={styles.allSpecsToggle}
-                    accessibilityRole="button"
-                  >
-                    <View style={styles.allSpecsToggleInner}>
-                      {showAllSpecs ? (
-                        <ChevronUp size={12} color={colors.brandColor} />
-                      ) : (
-                        <ChevronDown size={12} color={colors.brandColor} />
-                      )}
-                      <RNText style={[styles.allSpecsToggleText, { color: colors.brandColor }]}>
-                        {showAllSpecs
-                          ? 'Hide extra specs'
-                          : `All decoded specs (${extraSpecs.length} more)`}
-                      </RNText>
-                    </View>
-                  </TouchableOpacity>
-
-                  {showAllSpecs && (
-                    <View style={styles.allSpecsList}>
-                      {extraSpecs.map(({ label, value }) => (
-                        <SpecRow
-                          key={label}
-                          label={label}
-                          value={value}
-                          textColor={colors.textColor}
-                          mutedColor={colors.mutedColor}
+                {extraSpecs.length > 0 && (
+                  <>
+                    <TouchableOpacity
+                      onPress={() => setShowAllSpecs((prev) => !prev)}
+                      activeOpacity={0.7}
+                      style={styles.allSpecsToggle}
+                      accessibilityRole="button"
+                    >
+                      <View style={styles.allSpecsToggleInner}>
+                        <AnimatedChevron
+                          expanded={showAllSpecs}
+                          color={colors.brandColor}
+                          size={12}
                         />
-                      ))}
-                    </View>
-                  )}
-                </>
-              )}
+                        <RNText style={[styles.allSpecsToggleText, { color: colors.brandColor }]}>
+                          {showAllSpecs
+                            ? 'Hide extra specs'
+                            : `All decoded specs (${extraSpecs.length} more)`}
+                        </RNText>
+                      </View>
+                    </TouchableOpacity>
 
-              <RNText style={[styles.sourceNote, { color: colors.mutedColor }]}>
-                {decode.sourceSummary ?? 'NHTSA vPIC'}
-              </RNText>
-            </>
-          ) : (
-            <ActionButton
-              label={loadingAction === 'decode' ? 'Decoding...' : 'Decode VIN'}
-              onPress={() => {
-                if (vehicle?.vin) {
-                  void decodeVinAssistForVehicle(vehicle.vin, vehicle.id)
-                }
-              }}
-              disabled={loadingAction !== null}
-              brandColor={colors.brandColor}
-            />
-          )}
-        </View>
+                    {showAllSpecs && (
+                      <View style={styles.allSpecsList}>
+                        {extraSpecs.map(({ label, value }) => (
+                          <SpecRow
+                            key={label}
+                            label={label}
+                            value={value}
+                            textColor={colors.textColor}
+                            mutedColor={colors.mutedColor}
+                          />
+                        ))}
+                      </View>
+                    )}
+                  </>
+                )}
+
+                <RNText style={[styles.sourceNote, { color: colors.mutedColor }]}>
+                  {decode.sourceSummary ?? 'NHTSA vPIC'}
+                </RNText>
+              </>
+            ) : (
+              <ActionButton
+                label={loadingAction === 'decode' ? 'Decoding...' : 'Decode VIN'}
+                onPress={() => {
+                  if (vehicle?.vin) {
+                    void decodeVinAssistForVehicle(vehicle.vin, vehicle.id)
+                  }
+                }}
+                disabled={loadingAction !== null}
+                brandColor={colors.brandColor}
+              />
+            )}
+          </View>
+        </FadeInView>
       )}
     </View>
   )
@@ -371,50 +416,54 @@ function HistorySection({
         successColor={hasRisk ? colors.dangerColor : colors.successColor}
       />
       {expanded && (
-        <View style={styles.sectionContent}>
-          {history ? (
-            <>
-              <SpecRow
-                label="Title brands"
-                value={
-                  history.titleBrands.length > 0 ? history.titleBrands.join(', ') : 'None reported'
-                }
-                textColor={colors.textColor}
-                mutedColor={colors.mutedColor}
+        <FadeInView>
+          <View style={styles.sectionContent}>
+            {history ? (
+              <>
+                <SpecRow
+                  label="Title brands"
+                  value={
+                    history.titleBrands.length > 0
+                      ? history.titleBrands.join(', ')
+                      : 'None reported'
+                  }
+                  textColor={colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <SpecRow
+                  label="Risk flags"
+                  value={
+                    [
+                      history.hasSalvage ? 'Salvage' : null,
+                      history.hasTotalLoss ? 'Total loss' : null,
+                      history.hasTheftRecord ? 'Theft record' : null,
+                      history.hasOdometerIssue ? 'Odometer issue' : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' | ') || 'No major flags'
+                  }
+                  textColor={hasRisk ? colors.dangerColor : colors.textColor}
+                  mutedColor={colors.mutedColor}
+                />
+                <RNText style={[styles.sourceNote, { color: colors.mutedColor }]}>
+                  {history.coverageNotes ??
+                    'NMVTIS title and brand check — not full service history.'}
+                </RNText>
+              </>
+            ) : (
+              <ActionButton
+                label={loadingAction === 'history' ? 'Checking...' : 'Check title history'}
+                onPress={() => {
+                  if (vehicle) {
+                    void checkVehicleHistory(vehicle.id, vehicle.vin)
+                  }
+                }}
+                disabled={loadingAction !== null}
+                brandColor={colors.brandColor}
               />
-              <SpecRow
-                label="Risk flags"
-                value={
-                  [
-                    history.hasSalvage ? 'Salvage' : null,
-                    history.hasTotalLoss ? 'Total loss' : null,
-                    history.hasTheftRecord ? 'Theft record' : null,
-                    history.hasOdometerIssue ? 'Odometer issue' : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' | ') || 'No major flags'
-                }
-                textColor={hasRisk ? colors.dangerColor : colors.textColor}
-                mutedColor={colors.mutedColor}
-              />
-              <RNText style={[styles.sourceNote, { color: colors.mutedColor }]}>
-                {history.coverageNotes ??
-                  'NMVTIS title and brand check — not full service history.'}
-              </RNText>
-            </>
-          ) : (
-            <ActionButton
-              label={loadingAction === 'history' ? 'Checking...' : 'Check title history'}
-              onPress={() => {
-                if (vehicle) {
-                  void checkVehicleHistory(vehicle.id, vehicle.vin)
-                }
-              }}
-              disabled={loadingAction !== null}
-              brandColor={colors.brandColor}
-            />
-          )}
-        </View>
+            )}
+          </View>
+        </FadeInView>
       )}
     </View>
   )
@@ -450,32 +499,34 @@ function ValuationSection({
         successColor={colors.successColor}
       />
       {expanded && (
-        <View style={styles.sectionContent}>
-          {valuation ? (
-            <>
-              <RNText style={[styles.valuationAmount, { color: colors.textColor }]}>
-                {formatCurrency(valuation.amount ?? null)}
-              </RNText>
-              <RNText style={[styles.valuationLabel, { color: colors.mutedColor }]}>
-                {valuation.valuationLabel ?? 'Estimated Market Value'}
-              </RNText>
-              <RNText style={[styles.sourceNote, { color: colors.mutedColor }]}>
-                {valuation.sourceSummary ?? 'Listing-based estimate, not transaction value.'}
-              </RNText>
-            </>
-          ) : (
-            <ActionButton
-              label={loadingAction === 'valuation' ? 'Pricing...' : 'Get market value'}
-              onPress={() => {
-                if (vehicle) {
-                  void getVehicleValuation(vehicle.id, vehicle.vin)
-                }
-              }}
-              disabled={loadingAction !== null}
-              brandColor={colors.brandColor}
-            />
-          )}
-        </View>
+        <FadeInView>
+          <View style={styles.sectionContent}>
+            {valuation ? (
+              <>
+                <RNText style={[styles.valuationAmount, { color: colors.textColor }]}>
+                  {formatCurrency(valuation.amount ?? null)}
+                </RNText>
+                <RNText style={[styles.valuationLabel, { color: colors.mutedColor }]}>
+                  {valuation.valuationLabel ?? 'Estimated Market Value'}
+                </RNText>
+                <RNText style={[styles.sourceNote, { color: colors.mutedColor }]}>
+                  {valuation.sourceSummary ?? 'Listing-based estimate, not transaction value.'}
+                </RNText>
+              </>
+            ) : (
+              <ActionButton
+                label={loadingAction === 'valuation' ? 'Pricing...' : 'Get market value'}
+                onPress={() => {
+                  if (vehicle) {
+                    void getVehicleValuation(vehicle.id, vehicle.vin)
+                  }
+                }}
+                disabled={loadingAction !== null}
+                brandColor={colors.brandColor}
+              />
+            )}
+          </View>
+        </FadeInView>
       )}
     </View>
   )
@@ -488,6 +539,7 @@ function VinPrompt({ colors }: { colors: Colors }) {
   const [vinInput, setVinInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const focusBorder = useFocusBorder(colors.borderColor, colors.borderColorHover)
 
   const handleSubmit = useCallback(async () => {
     const normalized = normalizeVinCandidate(vinInput)
@@ -499,12 +551,12 @@ function VinPrompt({ colors }: { colors: Colors }) {
     setSubmitting(true)
     setError(null)
     try {
-      // Send VIN as a chat message — triggers the normal VIN intercept flow
-      await useChatStore.getState().sendMessage(normalized)
+      // Auto-decode from panel — skips the "Decode VIN?" prompt, goes straight to confirm
+      await useChatStore.getState().submitVinFromPanel(normalized)
       setVinInput('')
       setExpanded(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send VIN')
+      setError(err instanceof Error ? err.message : 'Failed to decode VIN')
     } finally {
       setSubmitting(false)
     }
@@ -523,70 +575,84 @@ function VinPrompt({ colors }: { colors: Colors }) {
           Add VIN for deeper insights
         </RNText>
         <View style={styles.vinInfoToggle}>
-          {expanded ? (
-            <ChevronUp size={14} color={colors.mutedColor} />
-          ) : (
-            <ChevronDown size={14} color={colors.mutedColor} />
-          )}
+          <AnimatedChevron expanded={expanded} color={colors.mutedColor} />
         </View>
       </TouchableOpacity>
       {expanded && (
-        <View style={styles.vinPromptBody}>
-          <RNText style={[styles.vinPromptDesc, { color: colors.mutedColor }]}>
-            With the VIN we can decode full specs, check title history, and get market value.
-          </RNText>
-          <View style={styles.vinInputRow}>
-            <TextInput
-              style={[
-                styles.vinInput,
-                {
-                  color: colors.textColor,
-                  borderColor: colors.borderColor,
+        <FadeInView>
+          <View style={styles.vinPromptBody}>
+            <RNText style={[styles.vinPromptDesc, { color: colors.mutedColor }]}>
+              With the VIN we can decode full specs, check title history, and get market value.
+            </RNText>
+            <View style={styles.vinInputRow}>
+              <Animated.View
+                style={{
+                  flex: 1,
+                  borderWidth: 1,
+                  borderRadius: 8,
+                  borderColor: focusBorder.borderColor,
                   backgroundColor: colors.bgColor,
-                },
-              ]}
-              value={vinInput}
-              onChangeText={(text) => {
-                setVinInput(text.toUpperCase())
-                if (error) setError(null)
-              }}
-              placeholder="e.g. 1FT7W2BN0NED52782"
-              placeholderTextColor={colors.mutedColor}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={17}
-              returnKeyType="done"
-              onSubmitEditing={handleSubmit}
-              editable={!submitting}
-            />
-            <TouchableOpacity
-              onPress={handleSubmit}
-              disabled={submitting || vinInput.length < 17}
-              activeOpacity={0.7}
-              style={[
-                styles.vinSubmitButton,
-                {
-                  backgroundColor: colors.brandColor,
-                  opacity: submitting || vinInput.length < 17 ? 0.5 : 1,
-                },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Submit VIN"
-            >
-              {submitting ? (
-                <ActivityIndicator size="small" color={palette.white} />
-              ) : (
-                <RNText style={styles.vinSubmitText}>Add</RNText>
-              )}
-            </TouchableOpacity>
+                  overflow: 'hidden',
+                }}
+              >
+                <TextInput
+                  style={[
+                    styles.vinInput,
+                    {
+                      color: colors.textColor,
+                      borderWidth: 0,
+                    },
+                  ]}
+                  value={vinInput}
+                  onChangeText={(text) => {
+                    setVinInput(text.toUpperCase())
+                    if (error) setError(null)
+                  }}
+                  onFocus={focusBorder.onFocus}
+                  onBlur={focusBorder.onBlur}
+                  placeholder="e.g. 1FT7W2BN0NED52782"
+                  placeholderTextColor={colors.mutedColor}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={17}
+                  returnKeyType="done"
+                  onSubmitEditing={handleSubmit}
+                  editable={!submitting}
+                />
+              </Animated.View>
+              <TouchableOpacity
+                onPress={handleSubmit}
+                disabled={submitting || vinInput.length < 17}
+                activeOpacity={0.7}
+                style={[
+                  styles.vinSubmitButton,
+                  {
+                    backgroundColor: colors.brandColor,
+                    opacity: submitting || vinInput.length < 17 ? 0.5 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Submit VIN"
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color={palette.white} />
+                ) : (
+                  <RNText style={styles.vinSubmitText}>Add</RNText>
+                )}
+              </TouchableOpacity>
+            </View>
+            {error ? (
+              <FadeInView>
+                <RNText style={[styles.vinPromptError, { color: colors.dangerColor }]}>
+                  {error}
+                </RNText>
+              </FadeInView>
+            ) : null}
+            <RNText style={[styles.vinPromptHint, { color: colors.mutedColor }]}>
+              Or paste it in the chat.
+            </RNText>
           </View>
-          {error ? (
-            <RNText style={[styles.vinPromptError, { color: colors.dangerColor }]}>{error}</RNText>
-          ) : null}
-          <RNText style={[styles.vinPromptHint, { color: colors.mutedColor }]}>
-            Or paste it in the chat.
-          </RNText>
-        </View>
+        </FadeInView>
       )}
     </View>
   )
@@ -598,6 +664,7 @@ interface Colors {
   bgColor: string
   sectionBgColor: string
   borderColor: string
+  borderColorHover: string
   textColor: string
   mutedColor: string
   dangerColor: string
@@ -657,6 +724,7 @@ export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
     bgColor: theme.backgroundStrong?.val as string,
     sectionBgColor: theme.backgroundHover?.val as string,
     borderColor: theme.borderColor?.val as string,
+    borderColorHover: theme.borderColorHover?.val as string,
     textColor: theme.color?.val as string,
     mutedColor: theme.placeholderColor?.val as string,
     dangerColor: theme.danger?.val as string,
@@ -734,9 +802,11 @@ export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
 
             {/* Error display */}
             {intelligence?.error ? (
-              <RNText style={[styles.errorText, { color: colors.dangerColor }]}>
-                {intelligence.error}
-              </RNText>
+              <FadeInView>
+                <RNText style={[styles.errorText, { color: colors.dangerColor }]}>
+                  {intelligence.error}
+                </RNText>
+              </FadeInView>
             ) : null}
           </>
         )}
@@ -926,13 +996,13 @@ const styles = StyleSheet.create({
   },
   vinInput: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 8,
+    borderWidth: 0,
     paddingHorizontal: 12,
     fontSize: 14,
     fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
     minHeight: 44,
-  },
+    outlineWidth: 0,
+  } as any,
   vinSubmitButton: {
     borderRadius: 8,
     paddingHorizontal: 16,

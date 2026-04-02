@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text, Input, Button, H2, Separator } from 'tamagui'
-import { ThemedSafeArea } from '@/components/shared'
+import { ThemedSafeArea, AnimatedError } from '@/components/shared'
 import { useRouter } from 'expo-router'
 import { APP_NAME } from '@/lib/constants'
 import { useAuthStore } from '@/stores/authStore'
@@ -69,19 +69,7 @@ export default function LoginScreen() {
           </Text>
         </YStack>
 
-        {error && (
-          <YStack
-            backgroundColor="$red2"
-            borderColor="$red8"
-            borderWidth={1}
-            borderRadius="$3"
-            padding="$3"
-          >
-            <Text color="$red10" fontSize={14}>
-              {error}
-            </Text>
-          </YStack>
-        )}
+        {error && <AnimatedError message={error} />}
 
         {/* Quick sign-in buttons — dev only, hidden in production builds */}
         {__DEV__ && (
@@ -130,6 +118,7 @@ export default function LoginScreen() {
             size="$5"
             borderColor="$borderColor"
             backgroundColor="$backgroundStrong"
+            focusStyle={{ borderColor: '$brand' }}
           />
           <Input
             placeholder="Password"
@@ -142,6 +131,7 @@ export default function LoginScreen() {
             size="$5"
             borderColor="$borderColor"
             backgroundColor="$backgroundStrong"
+            focusStyle={{ borderColor: '$brand' }}
           />
         </YStack>
 

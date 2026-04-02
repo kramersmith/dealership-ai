@@ -1,10 +1,13 @@
-import { Animated, TouchableOpacity, Platform } from 'react-native'
-import { XStack, YStack, Text } from 'tamagui'
+import { useRef, useEffect, useCallback } from 'react'
+import { Animated, TouchableOpacity, Platform, View } from 'react-native'
+import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Trash2 } from '@tamagui/lucide-icons'
 import type { DealPhase, DealSummary, Session } from '@/lib/types'
 import { DEAL_PHASES } from '@/lib/constants'
 import { formatCurrency, stripMarkdown } from '@/lib/utils'
-import { useSlideIn } from '@/hooks/useAnimatedValue'
+import { HoverLiftFrame } from '@/components/shared/HoverLiftFrame'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { palette } from '@/lib/theme/tokens'
 
 // ─── Phase dot color mapping ───
 
@@ -78,13 +81,65 @@ interface SessionCardProps {
   index: number
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  isFocused?: boolean
 }
 
-export function SessionCard({ session, index, onSelect, onDelete }: SessionCardProps) {
-  const { opacity, translateY } = useSlideIn(250, index * 60)
+const STAGGER_DELAY = 40
+const SLIDE_DURATION = 250
+const SLIDE_DISTANCE = 12
+
+export function SessionCard({
+  session,
+  index,
+  onSelect,
+  onDelete,
+  isFocused = true,
+}: SessionCardProps) {
+  const opacity = useRef(new Animated.Value(0)).current
+  const translateY = useRef(new Animated.Value(SLIDE_DISTANCE)).current
+
+  useEffect(() => {
+    if (!isFocused) return
+    opacity.setValue(0)
+    translateY.setValue(SLIDE_DISTANCE)
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: SLIDE_DURATION,
+        delay: index * STAGGER_DELAY,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: SLIDE_DURATION,
+        delay: index * STAGGER_DELAY,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start()
+  }, [isFocused, index, opacity, translateY])
+  const pressScale = useRef(new Animated.Value(1)).current
+  const theme = useTheme()
+
+  const handlePressIn = useCallback(() => {
+    Animated.timing(pressScale, {
+      toValue: 0.98,
+      duration: 100,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start()
+  }, [pressScale])
+
+  const handlePressOut = useCallback(() => {
+    Animated.timing(pressScale, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start()
+  }, [pressScale])
+
   const phase = session.dealSummary?.phase ?? 'research'
   const phaseDotColor = PHASE_TOKEN[phase] ?? '$placeholderColor'
   const summaryLine = buildSummaryLine(session.dealSummary)
+  const shadow = theme.shadowColor?.val ?? palette.overlay
   const accessibilityText = [
     session.title,
     session.dealSummary?.phase ? phaseLabel(session.dealSummary.phase) : null,
@@ -93,90 +148,104 @@ export function SessionCard({ session, index, onSelect, onDelete }: SessionCardP
     .filter(Boolean)
     .join(', ')
 
-  return (
-    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <XStack
-        backgroundColor="$backgroundStrong"
-        borderRadius="$3"
-        borderWidth={1}
-        borderColor="$borderColor"
-        alignItems="stretch"
+  const card = (
+    <XStack
+      backgroundColor="$backgroundStrong"
+      borderRadius={12}
+      borderWidth={1}
+      borderColor="$borderColor"
+      alignItems="stretch"
+      cursor="pointer"
+      {...(Platform.OS !== 'web'
+        ? {
+            shadowColor: (shadow as string) ?? palette.overlay,
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 1,
+            shadowRadius: 3,
+            elevation: 2,
+          }
+        : {})}
+    >
+      {/* Card body — tappable to open session, long-press to delete on native */}
+      <TouchableOpacity
+        onPress={() => onSelect(session.id)}
+        onLongPress={Platform.OS !== 'web' ? () => onDelete(session.id) : undefined}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityText}
+        accessibilityHint={Platform.OS !== 'web' ? 'Long press to delete' : undefined}
+        style={{ flex: 1, minHeight: 72, flexDirection: 'row', padding: 12, gap: 12 }}
       >
-        {/* Card body — tappable to open session, long-press to delete on native */}
+        <YStack paddingTop={4}>
+          <YStack
+            width={10}
+            height={10}
+            borderRadius={100}
+            backgroundColor={phaseDotColor}
+            accessibilityLabel={
+              session.dealSummary?.phase ? phaseLabel(session.dealSummary.phase) : 'No phase'
+            }
+          />
+        </YStack>
+
+        <YStack flex={1} gap="$1">
+          <XStack justifyContent="space-between" alignItems="center">
+            <Text
+              fontSize={16}
+              fontWeight="700"
+              color="$color"
+              flex={1}
+              numberOfLines={1}
+              marginRight="$2"
+            >
+              {session.title}
+            </Text>
+            <Text fontSize={11} color="$placeholderColor" flexShrink={0}>
+              {formatRelativeTime(session.updatedAt)}
+            </Text>
+          </XStack>
+
+          {session.lastMessagePreview ? (
+            <Text fontSize={13} color="$placeholderColor" numberOfLines={2} lineHeight={18}>
+              {stripMarkdown(session.lastMessagePreview)}
+            </Text>
+          ) : null}
+
+          {summaryLine ? (
+            <Text fontSize={11} color="$placeholderColor" numberOfLines={1} opacity={0.7}>
+              {summaryLine}
+            </Text>
+          ) : null}
+        </YStack>
+      </TouchableOpacity>
+
+      {Platform.OS === 'web' && (
         <TouchableOpacity
-          onPress={() => onSelect(session.id)}
-          onLongPress={Platform.OS !== 'web' ? () => onDelete(session.id) : undefined}
-          activeOpacity={0.7}
+          onPress={() => onDelete(session.id)}
+          activeOpacity={0.6}
           accessibilityRole="button"
-          accessibilityLabel={accessibilityText}
-          accessibilityHint={Platform.OS !== 'web' ? 'Long press to delete' : undefined}
-          style={{ flex: 1, minHeight: 72, flexDirection: 'row', padding: 12, gap: 12 }}
+          accessibilityLabel={`Delete ${session.title}`}
+          style={{
+            width: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
-          {/* Phase dot */}
-          <YStack paddingTop={4}>
-            <YStack
-              width={10}
-              height={10}
-              borderRadius={100}
-              backgroundColor={phaseDotColor}
-              accessibilityLabel={
-                session.dealSummary?.phase ? phaseLabel(session.dealSummary.phase) : 'No phase'
-              }
-            />
-          </YStack>
-
-          {/* Content */}
-          <YStack flex={1} gap="$1">
-            {/* Title + timestamp row */}
-            <XStack justifyContent="space-between" alignItems="center">
-              <Text
-                fontSize={16}
-                fontWeight="700"
-                color="$color"
-                flex={1}
-                numberOfLines={1}
-                marginRight="$2"
-              >
-                {session.title}
-              </Text>
-              <Text fontSize={11} color="$placeholderColor" flexShrink={0}>
-                {formatRelativeTime(session.updatedAt)}
-              </Text>
-            </XStack>
-
-            {/* Message preview */}
-            {session.lastMessagePreview ? (
-              <Text fontSize={13} color="$placeholderColor" numberOfLines={2} lineHeight={18}>
-                {stripMarkdown(session.lastMessagePreview)}
-              </Text>
-            ) : null}
-
-            {/* Deal summary line */}
-            {summaryLine ? (
-              <Text fontSize={11} color="$placeholderColor" numberOfLines={1} opacity={0.7}>
-                {summaryLine}
-              </Text>
-            ) : null}
-          </YStack>
+          <Trash2 size={16} color="$placeholderColor" />
         </TouchableOpacity>
+      )}
+    </XStack>
+  )
 
-        {/* Delete button — outside the card TouchableOpacity to avoid nested buttons on web */}
-        {Platform.OS === 'web' && (
-          <TouchableOpacity
-            onPress={() => onDelete(session.id)}
-            activeOpacity={0.6}
-            accessibilityRole="button"
-            accessibilityLabel={`Delete ${session.title}`}
-            style={{
-              width: 44,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Trash2 size={16} color="$placeholderColor" />
-          </TouchableOpacity>
-        )}
-      </XStack>
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale: pressScale }] }}>
+      {Platform.OS === 'web' ? (
+        <HoverLiftFrame shadowColor={shadow as string}>{card}</HoverLiftFrame>
+      ) : (
+        <View>{card}</View>
+      )}
     </Animated.View>
   )
 }

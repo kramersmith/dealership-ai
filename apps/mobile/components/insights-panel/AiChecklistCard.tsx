@@ -1,7 +1,9 @@
-import { XStack, YStack, Text } from 'tamagui'
+import { Animated } from 'react-native'
+import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Check } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
 import { CardTitle } from './CardTitle'
+import { useAnimatedNumber } from '@/hooks/useAnimatedValue'
 
 interface ChecklistItem {
   label: string
@@ -41,6 +43,30 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
   )
 }
 
+function AnimatedProgressBar({ progress }: { progress: number }) {
+  const theme = useTheme()
+  const animatedProgress = useAnimatedNumber(progress, 400)
+  const widthPercent = animatedProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  })
+
+  return (
+    <XStack height={3} borderRadius={2} backgroundColor="$borderColor">
+      <Animated.View
+        style={{
+          height: 3,
+          borderRadius: 2,
+          backgroundColor:
+            progress === 1 ? (theme.positive?.val as string) : (theme.brand?.val as string),
+          width: widthPercent,
+        }}
+      />
+    </XStack>
+  )
+}
+
 export function AiChecklistCard({ title, content }: AiChecklistCardProps) {
   const items = (content.items as ChecklistItem[]) ?? []
 
@@ -54,14 +80,7 @@ export function AiChecklistCard({ title, content }: AiChecklistCardProps) {
       <YStack gap="$3">
         <YStack gap="$1.5">
           <CardTitle>{title}</CardTitle>
-          <XStack height={3} borderRadius={2} backgroundColor="$borderColor">
-            <XStack
-              height={3}
-              borderRadius={2}
-              backgroundColor={progress === 1 ? '$positive' : '$brand'}
-              width={`${progress * 100}%` as any}
-            />
-          </XStack>
+          <AnimatedProgressBar progress={progress} />
         </YStack>
         <YStack gap="$0.5">
           {items.map((item, index) => (

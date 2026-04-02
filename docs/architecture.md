@@ -31,7 +31,7 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview), ChatInput, VoiceButton, ContextPicker, CopyableBlock, VinAssistCard, VinInterceptModal
+│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview), ChatInput, VoiceButton, ContextPicker (situation cards + VIN submit), CopyableBlock, VinAssistCard, VinInterceptModal
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
 │   │   │   ├── insights-panel/   # AI-driven InsightsPanel with card-based layout:
 │   │   │   │                    # AiCard (base renderer + reply button), CardReplyInput,
@@ -41,12 +41,13 @@ dealership-ai/
 │   │   │   │                    # VehicleIntelligencePanel, WarningCard, TipCard,
 │   │   │   │                    # SuccessCard, AiChecklistCard (read-only + progress bar),
 │   │   │   │                    # AiComparisonCard, CompactPhaseIndicator,
-│   │   │   │                    # PanelMarkdown, QuickActions
-│   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard
+│   │   │   │                    # ThinkingIndicator, PanelMarkdown, QuickActions
+│   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard, ScreenHeader, HeaderIconButton, HoverLiftFrame, ScrambleText
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
 │   │   │   ├── useEditableField.ts # Inline editing with debounced backend sync
-│   │   │   ├── useAnimatedValue.ts # useIconEntrance (animated icon transitions)
+│   │   │   ├── useAnimatedValue.ts # useIconEntrance (animated icon transitions), useSlideIn
+│   │   │   ├── useDesktopChatTransition.ts # Desktop animated chat/insights panel transitions
 │   │   │   └── useScreenWidth.ts # Responsive breakpoint hook
 │   │   ├── stores/              # Zustand: auth, chat, deal, simulation, theme
 │   │   └── lib/
@@ -55,6 +56,8 @@ dealership-ai/
 │   │       │   ├── tokens.ts    # Centralized color palette + token colors
 │   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
 │   │       ├── constants.ts     # APP_NAME, WEB_FONT_FAMILY, buyer context defaults, deal phases, fallback quick actions, APR thresholds, TIMER_TIPS, SCORE_DESCRIPTIONS, MAX_INSIGHTS_PREVIEW_ITEMS, animation/layout constants
+│   │       ├── headerTitles.ts  # Vehicle-aware header title resolution
+│   │       ├── dev/mockPanelUpdates.ts # Dev-only mock panel updates for animation testing
 │   │       ├── dealComputations.ts # Derived deal metrics (savings, computeOfferDelta, getNextActionRecommendation)
 │       ├── platform.ts      # Platform-specific constants (USE_NATIVE_DRIVER)
 │   │       ├── utils.ts         # snakeToCamel, formatCurrency, formatPercent, etc.
@@ -88,11 +91,11 @@ dealership-ai/
 
 **users** — (id, email, hashed_password, role [UserRole enum: buyer/dealer], display_name, created_at)
 
-**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, and simulation.
+**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
 
-**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in.
+**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
 
 **vehicle_decodes** — (id, vehicle_id, provider [IntelligenceProvider], status [IntelligenceStatus], vin, year, make, model, trim, engine, body_type, drivetrain, transmission, fuel_type, source_summary, raw_payload JSON, requested_at, fetched_at, expires_at). NHTSA vPIC decode results; raw_payload exposed to LLM context.
 

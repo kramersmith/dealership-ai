@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo } from 'react'
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
@@ -11,8 +11,14 @@ import {
   Dimensions,
 } from 'react-native'
 import { YStack, XStack, Text, Theme, useTheme } from 'tamagui'
-import { ThemedSafeArea, LoadingIndicator, RoleGuard } from '@/components/shared'
-import { Plus, X, ChevronLeft } from '@tamagui/lucide-icons'
+import {
+  ThemedSafeArea,
+  LoadingIndicator,
+  RoleGuard,
+  ScreenHeader,
+  HeaderIconButton,
+} from '@/components/shared'
+import { MessageSquarePlus, X, ChevronLeft } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
   APP_NAME,
@@ -29,10 +35,13 @@ import type { BuyerContext, DealState, HealthStatus } from '@/lib/types'
 import { formatCurrency, getActiveDeal } from '@/lib/utils'
 import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { getVehicleAwareHeaderTitleInfo } from '@/lib/headerTitles'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { useChat } from '@/hooks/useChat'
+import { useSlideIn } from '@/hooks/useAnimatedValue'
+import { useDesktopChatTransition, DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { STATUS_LABELS, STATUS_THEMES } from '@/lib/constants'
 import { InsightsPanel, QuickActions, CompactPhaseIndicator } from '@/components/insights-panel'
@@ -164,6 +173,7 @@ export default function ChatScreen() {
   const theme = useTheme()
   const mobileInsightsWidth = useMobileInsightsWidth()
   const [isInsightsOpen, setIsInsightsOpen] = useState(false)
+
   const [isInsightsVisible, setIsInsightsVisible] = useState(false)
   const [mobileInsightsPreviewHeight, setMobileInsightsPreviewHeight] = useState(0)
   const insightsSlide = useRef(new Animated.Value(mobileInsightsWidth)).current
@@ -173,13 +183,47 @@ export default function ChatScreen() {
     useChat(activeSessionId)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
 
+  // Mobile entrance animation — fade + slide up when the chat screen mounts
+  const mobileEntrance = useSlideIn(isDesktop ? 0 : 260, 40)
+
   // Subscribe to dealState only for mobile preview — desktop doesn't need it
   const dealState = useDealStore((s) => s.dealState)
 
   const dismissedFlagIds = useDealStore((s) => s.dismissedFlagIds)
-
   const showContextPicker = !activeSessionId && !isLoading
+
+  const headerTitleInfo = useMemo(
+    () => getVehicleAwareHeaderTitleInfo(activeSessionTitle, dealState, APP_NAME),
+    [activeSessionTitle, dealState]
+  )
+  const headerTitle = showContextPicker ? 'New Chat' : headerTitleInfo.title
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
+  const isDesktopChatActive = isDesktop && !showContextPicker
+
+  const desktopTransition = useDesktopChatTransition({
+    dealState,
+    enabled: isDesktopChatActive,
+    onBackComplete: () => router.back(),
+    onResetComplete: () => {
+      useChatStore.setState({
+        activeSessionId: null,
+        messages: [],
+        vinAssistItems: [],
+        quickActions: [],
+        aiResponseCount: 0,
+        quickActionsUpdatedAtResponse: 0,
+        _sessionJustCreated: false,
+      })
+    },
+  })
+
+  const handleBack = useCallback(() => {
+    if (isDesktopChatActive) {
+      desktopTransition.beginBackNavigation()
+    } else {
+      router.back()
+    }
+  }, [isDesktopChatActive, desktopTransition, router])
 
   useEffect(() => {
     if (!showMobileInsightsToggle && isInsightsOpen) {
@@ -239,6 +283,22 @@ export default function ChatScreen() {
     }
   }
 
+  const handleVinSubmit = async (vin: string) => {
+    if (isCreating.current) return
+    isCreating.current = true
+
+    try {
+      const session = await createSession('buyer_chat', undefined, 'researching')
+      if (session) {
+        await useChatStore.getState().submitVinFromPanel(vin)
+      }
+    } catch {
+      // Error already logged in chatStore
+    } finally {
+      isCreating.current = false
+    }
+  }
+
   const handleDirectSend = async (content: string, imageUri?: string) => {
     if (!activeSessionId) {
       if (isCreating.current) return
@@ -262,6 +322,10 @@ export default function ChatScreen() {
   const handleNewSession = () => {
     if (isCreating.current) return
     setIsInsightsOpen(false)
+    if (isDesktopChatActive) {
+      desktopTransition.beginChatReset()
+      return
+    }
     useChatStore.setState({
       activeSessionId: null,
       messages: [],
@@ -323,55 +387,15 @@ export default function ChatScreen() {
   }
 
   const header = (
-    <XStack
-      paddingHorizontal="$4"
-      paddingVertical="$3"
-      alignItems="center"
-      justifyContent="space-between"
-      borderBottomWidth={1}
-      borderBottomColor="$borderColor"
-      backgroundColor="$backgroundStrong"
-    >
-      <TouchableOpacity
-        onPress={() => router.push('/(app)/chats')}
-        activeOpacity={0.6}
-        accessibilityRole="button"
-        accessibilityLabel="Back to chats"
-        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <ChevronLeft size={24} color="$color" />
-      </TouchableOpacity>
-      <Text
-        fontSize={18}
-        fontWeight="700"
-        color="$color"
-        flex={1}
-        textAlign="center"
-        numberOfLines={1}
-      >
-        {activeSessionTitle || APP_NAME}
-      </Text>
-      <TouchableOpacity
-        onPress={handleNewSession}
-        activeOpacity={0.6}
-        accessibilityRole="button"
-        accessibilityLabel="Start new chat"
-        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <YStack
-          width={36}
-          height={36}
-          borderRadius={12}
-          alignItems="center"
-          justifyContent="center"
-          backgroundColor="$backgroundHover"
-          borderWidth={1}
-          borderColor="$borderColor"
-        >
-          <Plus size={18} color="$brand" />
-        </YStack>
-      </TouchableOpacity>
-    </XStack>
+    <ScreenHeader
+      leftIcon={<ChevronLeft size={24} color="$color" />}
+      onLeftPress={handleBack}
+      leftLabel="Back to chats"
+      title={headerTitle}
+      rightIcon={<MessageSquarePlus size={22} color="white" />}
+      onRightPress={handleNewSession}
+      rightLabel="Start new chat"
+    />
   )
 
   const mobileInsightsPreview =
@@ -481,7 +505,7 @@ export default function ChatScreen() {
     <View style={{ flex: 1, overflow: 'hidden' }}>
       {showContextPicker ? (
         <View style={{ flex: 1, justifyContent: 'center', overflow: 'auto' as any }}>
-          <ContextPicker onSelect={handleContextSelect} />
+          <ContextPicker onSelect={handleContextSelect} onVinSubmit={handleVinSubmit} />
         </View>
       ) : (
         <YStack flex={1} position="relative">
@@ -493,6 +517,7 @@ export default function ChatScreen() {
             topPadding={mobileChatTopInset}
             bottomPadding={12}
             footer={quickActionsFooter}
+            scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
           />
           {mobileInsightsPreview ? (
             <YStack
@@ -533,22 +558,35 @@ export default function ChatScreen() {
           <YStack flex={1} backgroundColor="$background">
             {header}
 
-            <XStack flex={1}>
-              {chatColumn}
-
-              {/* AI Insights Panel — right sidebar on desktop */}
+            <View style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
               <Animated.View
                 style={{
-                  width: dealState && !showContextPicker ? 360 : 0,
-                  overflow: 'hidden',
-                  borderLeftWidth: dealState && !showContextPicker ? 1 : 0,
-                  borderLeftColor: theme.borderColor?.val as string,
-                  backgroundColor: theme.backgroundStrong?.val as string,
-                  ...(Platform.OS === 'web' ? { transition: 'width 250ms ease-out' } : {}),
+                  flex: 1,
+                  marginRight: desktopTransition.chatInset,
+                  opacity: desktopTransition.chatOpacity,
                 }}
               >
-                {dealState ? (
-                  <View style={{ width: 360, flex: 1 }}>
+                {chatColumn}
+              </Animated.View>
+
+              {/* AI Insights Panel — right sidebar on desktop */}
+              {desktopTransition.isInsightsVisible && desktopTransition.insightsDealState ? (
+                <Animated.View
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    width: DESKTOP_INSIGHTS_WIDTH,
+                    overflow: 'hidden',
+                    borderLeftWidth: 1,
+                    borderLeftColor: theme.borderColor?.val as string,
+                    backgroundColor: theme.backgroundStrong?.val as string,
+                    opacity: desktopTransition.insightsOpacity,
+                    transform: [{ translateX: desktopTransition.insightsTranslateX }],
+                  }}
+                >
+                  <View style={{ width: '100%', flex: 1 }}>
                     <ScrollView
                       showsVerticalScrollIndicator
                       style={
@@ -558,13 +596,14 @@ export default function ChatScreen() {
                           scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
                         } as any
                       }
+                      contentContainerStyle={{ flexGrow: 1 }}
                     >
-                      <InsightsPanel />
+                      <InsightsPanel dealStateOverride={desktopTransition.insightsDealState} />
                     </ScrollView>
                   </View>
-                ) : null}
-              </Animated.View>
-            </XStack>
+                </Animated.View>
+              ) : null}
+            </View>
           </YStack>
         </ThemedSafeArea>
       </RoleGuard>
@@ -581,7 +620,15 @@ export default function ChatScreen() {
         >
           <YStack flex={1} backgroundColor="$background">
             {header}
-            {chatColumn}
+            <Animated.View
+              style={{
+                flex: 1,
+                opacity: mobileEntrance.opacity,
+                transform: [{ translateY: mobileEntrance.translateY }],
+              }}
+            >
+              {chatColumn}
+            </Animated.View>
           </YStack>
         </KeyboardAvoidingView>
 
@@ -654,32 +701,19 @@ export default function ChatScreen() {
                       <Text fontSize={18} fontWeight="700" color="$color">
                         Insights
                       </Text>
-                      <TouchableOpacity
+                      <HeaderIconButton
                         onPress={() => setIsInsightsOpen(false)}
-                        activeOpacity={0.6}
-                        accessibilityRole="button"
                         accessibilityLabel="Close insights"
-                        style={{
-                          width: 44,
-                          height: 44,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
                       >
-                        <YStack
-                          width={36}
-                          height={36}
-                          borderRadius={12}
-                          alignItems="center"
-                          justifyContent="center"
-                          backgroundColor="$backgroundHover"
-                        >
-                          <X size={18} color="$color" />
-                        </YStack>
-                      </TouchableOpacity>
+                        <X size={18} color="$color" />
+                      </HeaderIconButton>
                     </XStack>
 
-                    <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+                    <ScrollView
+                      showsVerticalScrollIndicator={false}
+                      style={{ flex: 1 }}
+                      contentContainerStyle={{ flexGrow: 1 }}
+                    >
                       {dealState ? <InsightsPanel /> : null}
                     </ScrollView>
                   </YStack>

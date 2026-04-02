@@ -1,9 +1,10 @@
 import { useRef, useEffect, memo, type ReactNode } from 'react'
 import { ScrollView, Animated } from 'react-native'
-import { YStack, Text, Spinner, useTheme } from 'tamagui'
+import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import type { Message, VinAssistItem } from '@/lib/types'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { ChatBubble } from './ChatBubble'
 import { StreamingBubble } from './StreamingBubble'
 import { VinAssistCard } from './VinAssistCard'
@@ -26,6 +27,67 @@ function useJustFinalizedId(messages: Message[], streamingText: string) {
   return justFinalized
 }
 
+/** Animated bouncing dots — shows while AI is thinking before streaming starts */
+function TypingIndicator() {
+  const dot1 = useRef(new Animated.Value(0)).current
+  const dot2 = useRef(new Animated.Value(0)).current
+  const dot3 = useRef(new Animated.Value(0)).current
+  const fadeIn = useFadeIn(200)
+  const theme = useTheme()
+  const dotColor = theme.placeholderColor?.val as string
+
+  useEffect(() => {
+    const animate = (dot: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(dot, {
+            toValue: -4,
+            duration: 300,
+            delay,
+            useNativeDriver: USE_NATIVE_DRIVER,
+          }),
+          Animated.timing(dot, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: USE_NATIVE_DRIVER,
+          }),
+        ])
+      )
+
+    const animations = [animate(dot1, 0), animate(dot2, 150), animate(dot3, 300)]
+    animations.forEach((a) => a.start())
+    return () => animations.forEach((a) => a.stop())
+  }, [dot1, dot2, dot3])
+
+  return (
+    <Animated.View style={{ opacity: fadeIn }}>
+      <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
+        <XStack
+          backgroundColor="$backgroundStrong"
+          borderRadius={16}
+          paddingHorizontal="$3"
+          paddingVertical="$2.5"
+          gap="$1.5"
+          alignItems="center"
+        >
+          {[dot1, dot2, dot3].map((dot, i) => (
+            <Animated.View
+              key={i}
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: 4,
+                backgroundColor: dotColor,
+                transform: [{ translateY: dot }],
+              }}
+            />
+          ))}
+        </XStack>
+      </YStack>
+    </Animated.View>
+  )
+}
+
 interface ChatMessageListProps {
   messages: Message[]
   vinAssistItems?: VinAssistItem[]
@@ -34,6 +96,40 @@ interface ChatMessageListProps {
   topPadding?: number
   bottomPadding?: number
   footer?: ReactNode
+  scrollbarOpacity?: number
+}
+
+function withAlpha(color: string, alpha: number) {
+  const normalizedAlpha = Math.max(0, Math.min(1, alpha))
+
+  if (color.startsWith('rgba(')) {
+    return color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, (_, r, g, b) => {
+      return `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${normalizedAlpha})`
+    })
+  }
+
+  if (color.startsWith('rgb(')) {
+    return color.replace(/rgb\(([^,]+),([^,]+),([^)]+)\)/, (_, r, g, b) => {
+      return `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${normalizedAlpha})`
+    })
+  }
+
+  if (color.startsWith('#')) {
+    const hex = color.slice(1)
+    const expanded =
+      hex.length === 3
+        ? hex
+            .split('')
+            .map((char) => char + char)
+            .join('')
+        : hex.slice(0, 6)
+    const r = parseInt(expanded.slice(0, 2), 16)
+    const g = parseInt(expanded.slice(2, 4), 16)
+    const b = parseInt(expanded.slice(4, 6), 16)
+    return `rgba(${r}, ${g}, ${b}, ${normalizedAlpha})`
+  }
+
+  return color
 }
 
 function EmptyState() {
@@ -62,6 +158,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   topPadding = 8,
   bottomPadding = 8,
   footer,
+  scrollbarOpacity = 1,
 }: ChatMessageListProps) {
   const justFinalizedId = useJustFinalizedId(messages, streamingText)
   const scrollRef = useRef<ScrollView>(null)
@@ -87,7 +184,10 @@ export const ChatMessageList = memo(function ChatMessageList({
         {
           flex: 1,
           scrollbarWidth: 'thin',
-          scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
+          scrollbarColor: `${withAlpha(
+            (theme.placeholderColor?.val as string) ?? palette.overlay,
+            scrollbarOpacity
+          )} transparent`,
         } as any
       }
       onContentSizeChange={() => {
@@ -112,9 +212,7 @@ export const ChatMessageList = memo(function ChatMessageList({
         streamingText ? (
           <StreamingBubble text={streamingText} />
         ) : (
-          <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
-            <Spinner size="small" color="$brand" />
-          </YStack>
+          <TypingIndicator />
         )
       ) : null}
 

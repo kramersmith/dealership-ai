@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { TouchableOpacity } from 'react-native'
 import { YStack, XStack, Text, Input, Button, H2 } from 'tamagui'
-import { ThemedSafeArea } from '@/components/shared'
+import { ThemedSafeArea, AnimatedError } from '@/components/shared'
 import { useRouter } from 'expo-router'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -49,19 +49,7 @@ export default function RegisterScreen() {
           </Text>
         </YStack>
 
-        {error && (
-          <YStack
-            backgroundColor="$red2"
-            borderColor="$red8"
-            borderWidth={1}
-            borderRadius="$3"
-            padding="$3"
-          >
-            <Text color="$red10" fontSize={14}>
-              {error}
-            </Text>
-          </YStack>
-        )}
+        {error && <AnimatedError message={error} />}
 
         <XStack gap="$3">
           <Button
@@ -105,6 +93,7 @@ export default function RegisterScreen() {
             size="$5"
             borderColor="$borderColor"
             backgroundColor="$backgroundStrong"
+            focusStyle={{ borderColor: '$brand' }}
           />
           <Input
             placeholder="Password"
@@ -117,6 +106,7 @@ export default function RegisterScreen() {
             size="$5"
             borderColor="$borderColor"
             backgroundColor="$backgroundStrong"
+            focusStyle={{ borderColor: '$brand' }}
           />
         </YStack>
 

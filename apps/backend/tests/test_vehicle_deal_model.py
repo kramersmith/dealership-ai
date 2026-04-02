@@ -3,10 +3,19 @@
 from app.core.security import hash_password
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import DealPhase, UserRole, VehicleRole
+from app.models.enums import (
+    DealPhase,
+    IntelligenceProvider,
+    IntelligenceStatus,
+    UserRole,
+    VehicleRole,
+)
 from app.models.session import ChatSession
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from app.models.vehicle_decode import VehicleDecode
+from app.models.vehicle_history_report import VehicleHistoryReport
+from app.models.vehicle_valuation import VehicleValuation
 
 # ─── Helpers ───
 
@@ -395,3 +404,148 @@ def test_deal_state_deal_comparison(db):
     db.refresh(deal_state)
 
     assert deal_state.deal_comparison["winner"] == "deal1"
+
+
+# ─── Vehicle intelligence cascade deletes ───
+
+
+def test_cascade_delete_vehicle_removes_decodes(db):
+    """Deleting a vehicle cascades to its VehicleDecode children (delete-orphan)."""
+    user = _create_user(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db, session.id, make="Honda", model="Civic", vin="1HGBH41JXMN109186"
+    )
+
+    decode = VehicleDecode(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.NHTSA_VPIC,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+        year=2024,
+        make="Honda",
+        model="Civic",
+    )
+    db.add(decode)
+    db.commit()
+    decode_id = decode.id
+
+    assert (
+        db.query(VehicleDecode).filter(VehicleDecode.id == decode_id).first()
+        is not None
+    )
+
+    db.delete(vehicle)
+    db.commit()
+
+    assert db.query(VehicleDecode).filter(VehicleDecode.id == decode_id).first() is None
+
+
+def test_cascade_delete_vehicle_removes_history_reports(db):
+    """Deleting a vehicle cascades to its VehicleHistoryReport children."""
+    user = _create_user(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db, session.id, make="Honda", model="Civic", vin="1HGBH41JXMN109186"
+    )
+
+    report = VehicleHistoryReport(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.VINAUDIT,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+    )
+    db.add(report)
+    db.commit()
+    report_id = report.id
+
+    db.delete(vehicle)
+    db.commit()
+
+    assert (
+        db.query(VehicleHistoryReport)
+        .filter(VehicleHistoryReport.id == report_id)
+        .first()
+        is None
+    )
+
+
+def test_cascade_delete_vehicle_removes_valuations(db):
+    """Deleting a vehicle cascades to its VehicleValuation children."""
+    user = _create_user(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db, session.id, make="Honda", model="Civic", vin="1HGBH41JXMN109186"
+    )
+
+    valuation = VehicleValuation(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.VINAUDIT,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+        amount=25000.0,
+    )
+    db.add(valuation)
+    db.commit()
+    valuation_id = valuation.id
+
+    db.delete(vehicle)
+    db.commit()
+
+    assert (
+        db.query(VehicleValuation).filter(VehicleValuation.id == valuation_id).first()
+        is None
+    )
+
+
+def test_cascade_delete_session_removes_vehicle_intelligence(db):
+    """Full cascade: deleting a session removes vehicles and their intelligence children."""
+    user = _create_user(db)
+    session, _ = _create_session_with_deal_state(db, user)
+    vehicle = _create_vehicle(
+        db, session.id, make="Honda", model="Civic", vin="1HGBH41JXMN109186"
+    )
+
+    decode = VehicleDecode(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.NHTSA_VPIC,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+    )
+    report = VehicleHistoryReport(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.VINAUDIT,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+    )
+    valuation = VehicleValuation(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.VINAUDIT,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+        amount=25000.0,
+    )
+    db.add_all([decode, report, valuation])
+    db.commit()
+
+    session_id = session.id
+    db.delete(session)
+    db.commit()
+
+    assert db.query(Vehicle).filter(Vehicle.session_id == session_id).count() == 0
+    assert (
+        db.query(VehicleDecode).filter(VehicleDecode.vehicle_id == vehicle.id).count()
+        == 0
+    )
+    assert (
+        db.query(VehicleHistoryReport)
+        .filter(VehicleHistoryReport.vehicle_id == vehicle.id)
+        .count()
+        == 0
+    )
+    assert (
+        db.query(VehicleValuation)
+        .filter(VehicleValuation.vehicle_id == vehicle.id)
+        .count()
+        == 0
+    )

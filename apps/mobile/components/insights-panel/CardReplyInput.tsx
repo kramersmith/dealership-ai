@@ -4,6 +4,7 @@ import {
   TouchableOpacity,
   Keyboard,
   Platform,
+  Animated,
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
 } from 'react-native'
@@ -11,11 +12,36 @@ import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Send } from '@tamagui/lucide-icons'
 import type { AiPanelCard, QuotedCard } from '@/lib/types'
 import { CONFIRMATION_DISPLAY_MS } from '@/lib/constants'
+import { useFadeIn } from '@/hooks/useAnimatedValue'
 
 interface CardReplyInputProps {
   card: AiPanelCard
   onSend: (text: string, quotedCard: QuotedCard) => Promise<void>
   onClose: () => void
+}
+
+function SentConfirmation() {
+  const opacity = useFadeIn(200)
+  return (
+    <Animated.View style={{ opacity }}>
+      <YStack
+        backgroundColor="$backgroundHover"
+        borderBottomLeftRadius={12}
+        borderBottomRightRadius={12}
+        borderWidth={1}
+        borderTopWidth={0}
+        borderColor="$borderColor"
+        marginTop={-12}
+        alignItems="center"
+        paddingTop="$3"
+        paddingBottom="$2.5"
+      >
+        <Text fontSize={12} fontWeight="500" color="$brand">
+          Sent to your advisor
+        </Text>
+      </YStack>
+    </Animated.View>
+  )
 }
 
 export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
@@ -67,24 +93,7 @@ export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
   )
 
   if (justSent) {
-    return (
-      <YStack
-        backgroundColor="$backgroundHover"
-        borderBottomLeftRadius={12}
-        borderBottomRightRadius={12}
-        borderWidth={1}
-        borderTopWidth={0}
-        borderColor="$borderColor"
-        marginTop={-12}
-        alignItems="center"
-        paddingTop="$3"
-        paddingBottom="$2.5"
-      >
-        <Text fontSize={12} fontWeight="500" color="$brand">
-          Sent to your advisor
-        </Text>
-      </YStack>
-    )
+    return <SentConfirmation />
   }
 
   return (

@@ -1,6 +1,7 @@
 import { Platform } from 'react-native'
 import { YStack, useTheme, type YStackProps } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
+import { HoverLiftFrame } from './HoverLiftFrame'
 
 interface AppCardProps extends YStackProps {
   children: React.ReactNode
@@ -8,12 +9,21 @@ interface AppCardProps extends YStackProps {
   accent?: boolean
   /** Reduced padding for compact/secondary contexts */
   compact?: boolean
+  /** Enable hover lift effect for interactive (tappable) cards */
+  interactive?: boolean
 }
 
-export function AppCard({ children, accent = false, compact = false, ...props }: AppCardProps) {
+export function AppCard({
+  children,
+  accent = false,
+  compact = false,
+  interactive = false,
+  ...props
+}: AppCardProps) {
   const theme = useTheme()
+  const shadow = theme.shadowColor?.val ?? palette.overlay
 
-  return (
+  const card = (
     <YStack
       backgroundColor="$backgroundStrong"
       borderRadius={12}
@@ -23,13 +33,9 @@ export function AppCard({ children, accent = false, compact = false, ...props }:
       borderTopWidth={accent ? 2 : 1}
       borderTopColor={accent ? '$brand' : '$borderColor'}
       {...(Platform.OS === 'web'
-        ? {
-            style: {
-              boxShadow: `0 1px 3px ${theme.shadowColor?.val ?? palette.overlay}, 0 1px 2px ${theme.shadowColor?.val ?? palette.overlay}`,
-            },
-          }
+        ? {}
         : {
-            shadowColor: (theme.shadowColor?.val as string) ?? palette.overlay,
+            shadowColor: (shadow as string) ?? palette.overlay,
             shadowOffset: { width: 0, height: 1 },
             shadowOpacity: 1,
             shadowRadius: 3,
@@ -40,4 +46,14 @@ export function AppCard({ children, accent = false, compact = false, ...props }:
       {children}
     </YStack>
   )
+
+  if (Platform.OS === 'web') {
+    return (
+      <HoverLiftFrame shadowColor={shadow as string} interactive={interactive}>
+        {card}
+      </HoverLiftFrame>
+    )
+  }
+
+  return card
 }

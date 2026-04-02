@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Modal, TouchableOpacity } from 'react-native'
+import { useState, useRef, useEffect } from 'react'
+import { Modal, TouchableOpacity, Animated } from 'react-native'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import { AppButton } from '@/components/shared'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { api } from '@/lib/api'
@@ -21,6 +22,27 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
   const [phase, setPhase] = useState<InterceptPhase>('prompt')
   const [decoded, setDecoded] = useState<VinAssistDecodedVehicle | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const scale = useRef(new Animated.Value(0.9)).current
+  const contentOpacity = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    if (visible) {
+      scale.setValue(0.9)
+      contentOpacity.setValue(0)
+      Animated.parallel([
+        Animated.timing(scale, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(contentOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]).start()
+    }
+  }, [visible, scale, contentOpacity])
 
   const handleDecode = async () => {
     const sessionId = useChatStore.getState().activeSessionId
@@ -106,101 +128,103 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
         }}
       >
         <TouchableOpacity activeOpacity={1} onPress={() => {}}>
-          <YStack
-            backgroundColor="$backgroundStrong"
-            borderRadius="$4"
-            padding="$5"
-            width={340}
-            gap="$4"
-            borderWidth={1}
-            borderColor="$borderColor"
-          >
-            {/* Header */}
-            <YStack gap="$2">
-              <Text fontSize={18} fontWeight="700" color="$color">
-                {phase === 'decoded' ? 'Vehicle Identified' : 'VIN Detected'}
-              </Text>
-              <Text fontSize={14} color="$placeholderColor" lineHeight={20}>
-                {phase === 'prompt' &&
-                  'We found a VIN in your message. Decode it now so the AI can give you vehicle-specific advice from the start.'}
-                {phase === 'decoding' && 'Looking up vehicle details...'}
-                {phase === 'decoded' && 'Is this the right vehicle?'}
-                {phase === 'failed' &&
-                  (error ?? 'Decode failed. You can retry or continue without decoding.')}
-              </Text>
-            </YStack>
+          <Animated.View style={{ transform: [{ scale }], opacity: contentOpacity }}>
+            <YStack
+              backgroundColor="$backgroundStrong"
+              borderRadius="$4"
+              padding="$5"
+              width={340}
+              gap="$4"
+              borderWidth={1}
+              borderColor="$borderColor"
+            >
+              {/* Header */}
+              <YStack gap="$2">
+                <Text fontSize={18} fontWeight="700" color="$color">
+                  {phase === 'decoded' ? 'Vehicle Identified' : 'VIN Detected'}
+                </Text>
+                <Text fontSize={14} color="$placeholderColor" lineHeight={20}>
+                  {phase === 'prompt' &&
+                    'We found a VIN in your message. Decode it now so the AI can give you vehicle-specific advice from the start.'}
+                  {phase === 'decoding' && 'Looking up vehicle details...'}
+                  {phase === 'decoded' && 'Is this the right vehicle?'}
+                  {phase === 'failed' &&
+                    (error ?? 'Decode failed. You can retry or continue without decoding.')}
+                </Text>
+              </YStack>
 
-            {/* VIN display */}
-            <YStack gap="$1">
-              <Text fontSize={12} color="$placeholderColor">
-                VIN
-              </Text>
-              <Text fontSize={14} fontWeight="600" color="$color">
-                {vin}
-              </Text>
-            </YStack>
-
-            {/* Decoded vehicle display */}
-            {decoded && phase === 'decoded' ? (
-              <YStack gap="$1" backgroundColor="$backgroundHover" padding="$3" borderRadius="$3">
+              {/* VIN display */}
+              <YStack gap="$1">
                 <Text fontSize={12} color="$placeholderColor">
-                  Decoded Vehicle
+                  VIN
                 </Text>
-                <Text fontSize={16} fontWeight="700" color="$color">
-                  {vehicleLabel}
+                <Text fontSize={14} fontWeight="600" color="$color">
+                  {vin}
                 </Text>
-                {decoded.partial ? (
+              </YStack>
+
+              {/* Decoded vehicle display */}
+              {decoded && phase === 'decoded' ? (
+                <YStack gap="$1" backgroundColor="$backgroundHover" padding="$3" borderRadius="$3">
                   <Text fontSize={12} color="$placeholderColor">
-                    Some details may be incomplete.
+                    Decoded Vehicle
                   </Text>
-                ) : null}
-              </YStack>
-            ) : null}
+                  <Text fontSize={16} fontWeight="700" color="$color">
+                    {vehicleLabel}
+                  </Text>
+                  {decoded.partial ? (
+                    <Text fontSize={12} color="$placeholderColor">
+                      Some details may be incomplete.
+                    </Text>
+                  ) : null}
+                </YStack>
+              ) : null}
 
-            {/* Loading spinner */}
-            {phase === 'decoding' ? (
-              <XStack alignItems="center" gap="$2" justifyContent="center" paddingVertical="$3">
-                <Spinner size="small" color="$brand" />
-                <Text fontSize={13} color="$placeholderColor">
-                  Decoding VIN...
-                </Text>
-              </XStack>
-            ) : null}
+              {/* Loading spinner */}
+              {phase === 'decoding' ? (
+                <XStack alignItems="center" gap="$2" justifyContent="center" paddingVertical="$3">
+                  <Spinner size="small" color="$brand" />
+                  <Text fontSize={13} color="$placeholderColor">
+                    Decoding VIN...
+                  </Text>
+                </XStack>
+              ) : null}
 
-            {/* Action buttons */}
-            {phase === 'prompt' ? (
-              <YStack gap="$2">
-                <AppButton minHeight={44} onPress={handleDecode}>
-                  Decode VIN
-                </AppButton>
-                <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
-                  Continue without decoding
-                </AppButton>
-              </YStack>
-            ) : null}
+              {/* Action buttons */}
+              {phase === 'prompt' ? (
+                <YStack gap="$2">
+                  <AppButton minHeight={44} onPress={handleDecode}>
+                    Decode VIN
+                  </AppButton>
+                  <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
+                    Continue without decoding
+                  </AppButton>
+                </YStack>
+              ) : null}
 
-            {phase === 'decoded' ? (
-              <YStack gap="$2">
-                <AppButton minHeight={44} onPress={handleConfirm}>
-                  Yes, use this vehicle
-                </AppButton>
-                <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
-                  No, continue without decoding
-                </AppButton>
-              </YStack>
-            ) : null}
+              {phase === 'decoded' ? (
+                <YStack gap="$2">
+                  <AppButton minHeight={44} onPress={handleConfirm}>
+                    Yes, use this vehicle
+                  </AppButton>
+                  <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
+                    No, continue without decoding
+                  </AppButton>
+                </YStack>
+              ) : null}
 
-            {phase === 'failed' ? (
-              <YStack gap="$2">
-                <AppButton minHeight={44} onPress={handleDecode}>
-                  Retry Decode
-                </AppButton>
-                <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
-                  Continue without decoding
-                </AppButton>
-              </YStack>
-            ) : null}
-          </YStack>
+              {phase === 'failed' ? (
+                <YStack gap="$2">
+                  <AppButton minHeight={44} onPress={handleDecode}>
+                    Retry Decode
+                  </AppButton>
+                  <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
+                    Continue without decoding
+                  </AppButton>
+                </YStack>
+              ) : null}
+            </YStack>
+          </Animated.View>
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>

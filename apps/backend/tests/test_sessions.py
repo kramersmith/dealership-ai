@@ -6,6 +6,8 @@ from app.models.deal_state import DealState
 from app.models.enums import (
     BuyerContext,
     DealPhase,
+    IntelligenceProvider,
+    IntelligenceStatus,
     MessageRole,
     SessionType,
     UserRole,
@@ -15,6 +17,7 @@ from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from app.models.vehicle_decode import VehicleDecode
 
 
 def _create_user_and_token(db) -> tuple[User, str]:
@@ -120,6 +123,72 @@ def test_delete_session_cascades_to_vehicles_and_deals(client, db):
 
     assert db.query(Vehicle).filter(Vehicle.session_id == session_id).count() == 0
     assert db.query(Deal).filter(Deal.session_id == session_id).count() == 0
+
+
+def test_delete_session_with_active_deal_id_set(client, db):
+    """Deleting a session that has active_deal_id set succeeds (null-out before cascade)."""
+    _user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    # Add vehicle, deal, and set active_deal_id
+    vehicle = _create_vehicle(db, session_id, make="Honda", model="Civic", year=2024)
+    deal = _create_deal(db, session_id, vehicle.id, current_offer=28000)
+
+    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
+    deal_state.active_deal_id = deal.id
+    db.commit()
+
+    # This would fail without the active_deal_id null-out fix
+    resp = client.delete(f"/api/sessions/{session_id}", headers=headers)
+    assert resp.status_code == 204
+
+    assert db.query(ChatSession).filter(ChatSession.id == session_id).first() is None
+    assert db.query(Deal).filter(Deal.session_id == session_id).count() == 0
+    assert db.query(Vehicle).filter(Vehicle.session_id == session_id).count() == 0
+    assert db.query(DealState).filter(DealState.session_id == session_id).count() == 0
+
+
+def test_delete_session_cascades_vehicle_intelligence(client, db):
+    """Deleting a session cascades through vehicles to their intelligence children."""
+    _user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    vehicle = _create_vehicle(
+        db, session_id, make="Honda", model="Civic", vin="1HGBH41JXMN109186"
+    )
+    decode = VehicleDecode(
+        vehicle_id=vehicle.id,
+        provider=IntelligenceProvider.NHTSA_VPIC,
+        status=IntelligenceStatus.SUCCESS,
+        vin="1HGBH41JXMN109186",
+        year=2024,
+        make="Honda",
+        model="Civic",
+    )
+    db.add(decode)
+    db.commit()
+    decode_id = decode.id
+
+    resp = client.delete(f"/api/sessions/{session_id}", headers=headers)
+    assert resp.status_code == 204
+
+    assert db.query(VehicleDecode).filter(VehicleDecode.id == decode_id).first() is None
 
 
 def test_delete_session_returns_404_for_nonexistent(client, db):

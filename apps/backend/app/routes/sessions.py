@@ -244,6 +244,15 @@ def delete_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
+        # Null out active_deal_id before cascade delete — the FK from
+        # deal_states → deals has no DB-level ON DELETE SET NULL, so
+        # SQLAlchemy would try to delete deals while the reference exists.
+        deal_state = (
+            db.query(DealState).filter(DealState.session_id == session_id).first()
+        )
+        if deal_state and deal_state.active_deal_id:
+            deal_state.active_deal_id = None
+            db.flush()
         db.delete(session)
         db.commit()
     except Exception:

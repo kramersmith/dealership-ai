@@ -1,9 +1,10 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
-import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { AppCard } from '@/components/shared'
 import { CardTitle } from './CardTitle'
+
+// ─── Types ───
 
 interface NumberRow {
   label: string
@@ -23,43 +24,179 @@ interface NumbersCardProps {
   content: Record<string, any>
 }
 
-function NumberRowItem({ row }: { row: NumberRow }) {
-  const flash = useRef(new Animated.Value(0)).current
-  const isSecondary = !!row.secondary
+// ─── Number Parsing ───
+
+/** Extract numeric value, prefix (e.g. "$"), and suffix from a formatted string. */
+function parseFormattedNumber(value: string): {
+  numeric: number
+  prefix: string
+  suffix: string
+  isNumeric: boolean
+  hasDecimals: boolean
+} {
+  // Match optional prefix, number (with commas/decimals), optional suffix
+  const match = value.match(/^([^0-9.-]*)(-?[\d,]+\.?\d*)(.*)$/)
+  if (!match) {
+    return { numeric: 0, prefix: '', suffix: '', isNumeric: false, hasDecimals: false }
+  }
+
+  const prefix = match[1]
+  const numStr = match[2].replace(/,/g, '')
+  const suffix = match[3]
+  const numeric = parseFloat(numStr)
+
+  if (isNaN(numeric)) {
+    return { numeric: 0, prefix: '', suffix: '', isNumeric: false, hasDecimals: false }
+  }
+
+  const hasDecimals = numStr.includes('.')
+  return { numeric, prefix, suffix, isNumeric: true, hasDecimals }
+}
+
+/** Format a number with commas and optional decimals to match the original format. */
+function formatNumber(value: number, hasDecimals: boolean): string {
+  if (hasDecimals) {
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  }
+  return Math.round(value).toLocaleString('en-US')
+}
+
+// ─── Animated Number Display ───
+
+const MORPH_DURATION = 600
+
+function AnimatedNumberValue({
+  value,
+  color,
+  fontSize,
+  fontWeight,
+}: {
+  value: string
+  color?: string
+  fontSize: number
+  fontWeight: string
+}) {
+  const parsed = parseFormattedNumber(value)
+
+  // For non-numeric values, render plain text
+  if (!parsed.isNumeric) {
+    return (
+      <Text fontSize={fontSize} fontWeight={fontWeight as any} color={color ?? '$color'}>
+        {value}
+      </Text>
+    )
+  }
+
+  return (
+    <AnimatedCounter
+      targetValue={parsed.numeric}
+      prefix={parsed.prefix}
+      suffix={parsed.suffix}
+      hasDecimals={parsed.hasDecimals}
+      color={color}
+      fontSize={fontSize}
+      fontWeight={fontWeight}
+    />
+  )
+}
+
+function AnimatedCounter({
+  targetValue,
+  prefix,
+  suffix,
+  hasDecimals,
+  color,
+  fontSize,
+  fontWeight,
+}: {
+  targetValue: number
+  prefix: string
+  suffix: string
+  hasDecimals: boolean
+  color?: string
+  fontSize: number
+  fontWeight: string
+}) {
+  const animValue = useRef(new Animated.Value(targetValue)).current
+  const [displayText, setDisplayText] = useState(
+    `${prefix}${formatNumber(targetValue, hasDecimals)}${suffix}`
+  )
+  const listenerRef = useRef<string | null>(null)
+  const prevTargetRef = useRef(targetValue)
 
   useEffect(() => {
-    if (row.value !== '—') {
-      flash.setValue(1)
-      Animated.timing(flash, {
-        toValue: 0,
-        duration: 600,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }).start()
+    // Only animate if the value actually changed
+    if (prevTargetRef.current === targetValue) return
+    prevTargetRef.current = targetValue
+
+    // Clean up previous listener
+    if (listenerRef.current) {
+      animValue.removeListener(listenerRef.current)
     }
-  }, [row.value, flash])
+
+    // Add listener to update display text during animation
+    listenerRef.current = animValue.addListener(({ value: v }) => {
+      setDisplayText(`${prefix}${formatNumber(v, hasDecimals)}${suffix}`)
+    })
+
+    Animated.timing(animValue, {
+      toValue: targetValue,
+      duration: MORPH_DURATION,
+      useNativeDriver: false, // text content requires JS driver
+    }).start(({ finished }) => {
+      if (finished) {
+        // Ensure final value is exact
+        setDisplayText(`${prefix}${formatNumber(targetValue, hasDecimals)}${suffix}`)
+      }
+    })
+
+    return () => {
+      if (listenerRef.current) {
+        animValue.removeListener(listenerRef.current)
+        listenerRef.current = null
+      }
+    }
+  }, [targetValue, prefix, suffix, hasDecimals, animValue])
+
+  // Update display when prefix/suffix changes without animation
+  useEffect(() => {
+    setDisplayText(`${prefix}${formatNumber(targetValue, hasDecimals)}${suffix}`)
+  }, [prefix, suffix, hasDecimals, targetValue])
+
+  return (
+    <Text fontSize={fontSize} fontWeight={fontWeight as any} color={color ?? '$color'}>
+      {displayText}
+    </Text>
+  )
+}
+
+// ─── Number Row ───
+
+function NumberRowItem({ row }: { row: NumberRow }) {
+  const isSecondary = !!row.secondary
 
   const valueColor =
     row.highlight === 'good' ? '$positive' : row.highlight === 'bad' ? '$danger' : undefined
 
   return (
-    <Animated.View
-      style={{ opacity: flash.interpolate({ inputRange: [0, 1], outputRange: [1, 0.7] }) }}
-    >
-      <XStack justifyContent="space-between" alignItems="center" paddingVertical="$1.5">
-        <Text fontSize={isSecondary ? 12 : 13} color="$placeholderColor" fontWeight="500">
-          {row.label}
-        </Text>
-        <Text
-          fontSize={isSecondary ? 12 : 14}
-          fontWeight={isSecondary ? '500' : '700'}
-          color={valueColor ?? '$color'}
-        >
-          {row.value}
-        </Text>
-      </XStack>
-    </Animated.View>
+    <XStack justifyContent="space-between" alignItems="center" paddingVertical="$1.5">
+      <Text fontSize={isSecondary ? 12 : 13} color="$placeholderColor" fontWeight="500">
+        {row.label}
+      </Text>
+      <AnimatedNumberValue
+        value={row.value}
+        color={valueColor}
+        fontSize={isSecondary ? 12 : 14}
+        fontWeight={isSecondary ? '500' : '700'}
+      />
+    </XStack>
   )
 }
+
+// ─── Numbers Card ───
 
 export function NumbersCard({ title, content }: NumbersCardProps) {
   const groups = (content.groups as NumberGroup[]) ?? []

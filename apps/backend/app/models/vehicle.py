@@ -1,11 +1,19 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import IdentityConfirmationStatus, VehicleRole
+
+if TYPE_CHECKING:
+    from app.models.vehicle_decode import VehicleDecode
+    from app.models.vehicle_history_report import VehicleHistoryReport
+    from app.models.vehicle_valuation import VehicleValuation
 
 
 class Vehicle(Base):
@@ -16,6 +24,17 @@ class Vehicle(Base):
     )
     session_id: Mapped[str] = mapped_column(
         String, ForeignKey("chat_sessions.id"), nullable=False, index=True
+    )
+
+    # Intelligence relationships — cascade so child rows are removed with the vehicle.
+    decodes: Mapped[list["VehicleDecode"]] = relationship(
+        "VehicleDecode", cascade="all, delete-orphan"
+    )
+    history_reports: Mapped[list["VehicleHistoryReport"]] = relationship(
+        "VehicleHistoryReport", cascade="all, delete-orphan"
+    )
+    valuations: Mapped[list["VehicleValuation"]] = relationship(
+        "VehicleValuation", cascade="all, delete-orphan"
     )
     role: Mapped[str] = mapped_column(
         String, nullable=False, default=VehicleRole.PRIMARY
