@@ -141,12 +141,19 @@ async def send_message(
             session_id,
         )
 
+        # ── Emit done immediately so the frontend can unblock input ──
+        # Usage here reflects the step loop only (panel generation costs
+        # are added to the persisted message but not to this SSE event).
+        yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary)})}\n\n"
+
         # Build full message list for panel generation and metadata
         all_messages = [*history_dicts, {"role": "user", "content": body.content}]
         if result.full_text:
             all_messages.append({"role": "assistant", "content": result.full_text})
 
         # ── Panel generation: generate AI insight cards ──
+        # Runs after done — tool_result events still reach the frontend
+        # via the open SSE stream.
         if deal_state:
             logger.debug("Generating AI panel cards, session_id=%s", session_id)
             try:
@@ -180,7 +187,7 @@ async def send_message(
                     "AI panel generation failed: session_id=%s", session_id
                 )
 
-        # Persist assistant message
+        # Persist assistant message (includes full usage with panel costs)
         assistant_msg = Message(
             session_id=session_id,
             role=MessageRole.ASSISTANT,
@@ -224,10 +231,7 @@ async def send_message(
         except Exception:
             logger.exception("Final db.commit failed: session_id=%s", session_id)
             await db.rollback()
-            yield f"event: error\ndata: {json.dumps({'message': 'Failed to save response. Please try again.'})}\n\n"
             return
-
-        yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary), 'sessionUsage': session_usage_payload(session.usage)})}\n\n"
 
         logger.info(
             "Chat response complete: session_id=%s, text_length=%d, tool_calls=%d",

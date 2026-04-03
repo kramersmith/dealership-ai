@@ -738,7 +738,7 @@ async def test_stream_chat_loop_emits_partial_done_when_max_steps_reached(
     assert result.completed is True
 
 
-async def test_send_message_sse_orders_panel_updates_before_done(
+async def test_send_message_sse_done_before_panel_updates(
     async_client, adb, async_buyer_user
 ):
     session, deal_state = await async_create_session_with_deal_state(
@@ -824,46 +824,29 @@ async def test_send_message_sse_orders_panel_updates_before_done(
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
+    # done fires immediately after the step loop so the frontend can
+    # unblock input; panel tool_result arrives after done.
     assert [event_name for event_name, _ in events] == [
         "text",
         "tool_result",
+        "done",
         "tool_result",
-        "done",
     ]
-    assert events[-1] == (
-        "done",
-        {
-            "text": "Hold at $28,500 and get the out-the-door total in writing.",
-            "sessionUsage": {
-                "requestCount": 2,
-                "inputTokens": 360,
-                "outputTokens": 136,
-                "cacheCreationInputTokens": 0,
-                "cacheReadInputTokens": 240,
-                "totalTokens": 496,
-                "totalCostUsd": 0.003192,
-                "perModel": {
-                    "claude-sonnet-4-6": {
-                        "requestCount": 2,
-                        "inputTokens": 360,
-                        "outputTokens": 136,
-                        "cacheCreationInputTokens": 0,
-                        "cacheReadInputTokens": 240,
-                        "totalTokens": 496,
-                        "totalCostUsd": 0.003192,
-                    }
-                },
-            },
-            "usage": {
-                "requests": 2,
-                "inputTokens": 360,
-                "outputTokens": 136,
-                "cacheCreationInputTokens": 0,
-                "cacheReadInputTokens": 240,
-                "totalTokens": 496,
-            },
-        },
-    )
+    # done carries step-loop-only usage (no panel generation costs)
+    done_event = next(data for name, data in events if name == "done")
+    assert done_event["text"] == "Hold at $28,500 and get the out-the-door total in writing."
+    assert done_event["usage"] == {
+        "requests": 1,
+        "inputTokens": 240,
+        "outputTokens": 96,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 180,
+        "totalTokens": 336,
+    }
+    # Panel cards arrive as the last tool_result
+    panel_event = events[-1]
+    assert panel_event[0] == "tool_result"
+    assert panel_event[1]["tool"] == "update_insights_panel"
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(

@@ -456,8 +456,8 @@ class ApiClient implements ApiService {
               fullText += data.chunk
               onChunk?.(fullText)
             } else if (eventType === 'done') {
-              // Text streaming is complete — finalize immediately
-              // (don't wait for onload which blocks on Stages 2+3)
+              // Text streaming is complete — finalize immediately.
+              // Panel cards may still arrive as tool_result events after this.
               fullText = data.text ?? fullText
               messageUsage = data.usage
               sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
