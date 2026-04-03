@@ -6,6 +6,7 @@ from app.services.title_generator import (
     build_vehicle_title,
     generate_session_title,
 )
+from app.services.usage_tracking import RequestUsage
 
 
 def test_build_vehicle_title_full_info():
@@ -221,3 +222,39 @@ async def test_generate_session_title_uses_last_three_messages():
         m for m in sent_messages if m["content"] != sent_messages[-1]["content"]
     ]
     assert len(user_assistant_in_call) <= 3
+
+
+@pytest.mark.asyncio
+async def test_generate_session_title_records_usage():
+    """generate_session_title records request usage when a recorder is provided."""
+    mock_block = MagicMock()
+    mock_block.text = "Deal Title"
+    mock_response = MagicMock()
+    mock_response.content = [mock_block]
+    mock_response.usage = MagicMock(
+        input_tokens=120,
+        output_tokens=18,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=36,
+    )
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    recorded: list[RequestUsage] = []
+
+    with patch(
+        "app.services.title_generator.create_anthropic_client",
+        return_value=mock_client,
+    ):
+        result = await generate_session_title(
+            [{"role": "user", "content": "Need a title"}],
+            usage_recorder=recorded.append,
+            session_id="session-123",
+        )
+
+    assert result == "Deal Title"
+    assert len(recorded) == 1
+    assert recorded[0].model == "claude-haiku-4-5-20251001"
+    assert recorded[0].input_tokens == 120
+    assert recorded[0].output_tokens == 18
+    assert recorded[0].cache_read_input_tokens == 36

@@ -319,6 +319,27 @@ export interface MessageUsage {
   totalTokens: number
 }
 
+export interface ModelUsageSummary {
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationInputTokens: number
+  cacheReadInputTokens: number
+  totalTokens: number
+  totalCostUsd: number
+}
+
+export interface SessionUsage {
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationInputTokens: number
+  cacheReadInputTokens: number
+  totalTokens: number
+  totalCostUsd: number
+  perModel: Record<string, ModelUsageSummary>
+}
+
 export interface Message {
   id: string
   sessionId: string
@@ -374,6 +395,7 @@ export interface Session {
   sessionType: 'buyer_chat' | 'dealer_sim'
   linkedSessionIds: string[]
   lastMessagePreview: string
+  usage?: SessionUsage
   dealSummary: DealSummary | null
   updatedAt: string
   createdAt: string
@@ -423,7 +445,7 @@ export interface ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string, usage?: MessageUsage) => void,
+    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void
   ): Promise<Message>

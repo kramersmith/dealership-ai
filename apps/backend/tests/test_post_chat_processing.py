@@ -208,7 +208,9 @@ async def test_title_llm_fallback_when_still_default(mock_generate, adb):
         db=adb,
     )
 
-    mock_generate.assert_called_once_with(messages)
+    mock_generate.assert_called_once_with(
+        messages, usage_recorder=None, session_id=session.id
+    )
     assert session.title == "Financing Question"
 
 

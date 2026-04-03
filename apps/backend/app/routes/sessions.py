@@ -20,6 +20,7 @@ from app.schemas.session import (
     SessionUpdate,
 )
 from app.services.post_chat_processing import DEFAULT_BUYER_TITLE, DEFAULT_DEALER_TITLE
+from app.services.usage_tracking import session_usage_payload
 
 # Maps session types to the role allowed to create them
 _SESSION_TYPE_ROLE = {
@@ -95,6 +96,7 @@ async def _session_to_response(
         session_type=SessionType(session.session_type),
         linked_session_ids=session.linked_session_ids or [],
         last_message_preview=session.last_message_preview,
+        usage=session_usage_payload(session.usage),
         deal_summary=await _build_deal_summary(session.deal_state, db),
         created_at=session.created_at,
         updated_at=session.updated_at,

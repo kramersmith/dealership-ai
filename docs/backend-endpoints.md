@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-03-31 (vehicle intelligence endpoints added)
+Last updated: 2026-04-03 (session usage ledger + SSE usage metadata)
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -129,6 +129,35 @@ List all sessions for the authenticated user, ordered by most recently updated. 
     "session_type": "buyer_chat",
     "linked_session_ids": [],
     "last_message_preview": "Based on the numbers you shared, this looks like a fair deal...",
+    "usage": {
+      "requestCount": 5,
+      "inputTokens": 3120,
+      "outputTokens": 544,
+      "cacheCreationInputTokens": 620,
+      "cacheReadInputTokens": 1120,
+      "totalTokens": 3664,
+      "totalCostUsd": 0.023846,
+      "perModel": {
+        "claude-sonnet-4-6": {
+          "requestCount": 4,
+          "inputTokens": 3000,
+          "outputTokens": 520,
+          "cacheCreationInputTokens": 620,
+          "cacheReadInputTokens": 1120,
+          "totalTokens": 3520,
+          "totalCostUsd": 0.023086
+        },
+        "claude-haiku-4-5-20251001": {
+          "requestCount": 1,
+          "inputTokens": 120,
+          "outputTokens": 24,
+          "cacheCreationInputTokens": 0,
+          "cacheReadInputTokens": 0,
+          "totalTokens": 144,
+          "totalCostUsd": 0.00076
+        }
+      }
+    },
     "deal_summary": {
       "phase": "negotiation",
       "vehicle_year": 2024,
@@ -159,6 +188,8 @@ The `deal_summary` object is a lightweight projection of the session's deal stat
 | `score_overall` | string | Overall scorecard rating (`red`, `yellow`, `green`) |
 
 All `deal_summary` fields are nullable. The `deal_summary` itself is `null` if no deal state exists.
+
+The optional `usage` field is the cumulative per-session Claude usage ledger. It tracks request counts, token totals, cache token totals, computed USD cost, and a per-model breakdown across all Claude-backed work tied to the session.
 
 ---
 
@@ -193,6 +224,7 @@ Create a new chat session. Also creates a deal state linked to the session, opti
   "session_type": "buyer_chat",
   "linked_session_ids": [],
   "last_message_preview": "",
+  "usage": null,
   "deal_summary": null,
   "created_at": "2026-03-24T12:00:00Z",
   "updated_at": "2026-03-24T12:00:00Z"
@@ -228,6 +260,35 @@ Get a single session by ID. Only returns sessions owned by the authenticated use
   "session_type": "buyer_chat",
   "linked_session_ids": [],
   "last_message_preview": "Based on the numbers you shared...",
+  "usage": {
+    "requestCount": 5,
+    "inputTokens": 3120,
+    "outputTokens": 544,
+    "cacheCreationInputTokens": 620,
+    "cacheReadInputTokens": 1120,
+    "totalTokens": 3664,
+    "totalCostUsd": 0.023846,
+    "perModel": {
+      "claude-sonnet-4-6": {
+        "requestCount": 4,
+        "inputTokens": 3000,
+        "outputTokens": 520,
+        "cacheCreationInputTokens": 620,
+        "cacheReadInputTokens": 1120,
+        "totalTokens": 3520,
+        "totalCostUsd": 0.023086
+      },
+      "claude-haiku-4-5-20251001": {
+        "requestCount": 1,
+        "inputTokens": 120,
+        "outputTokens": 24,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+        "totalTokens": 144,
+        "totalCostUsd": 0.00076
+      }
+    }
+  },
   "deal_summary": {
     "phase": "negotiation",
     "vehicle_year": 2024,
@@ -380,13 +441,14 @@ data: {"tool": "update_scorecard", "data": {"score_price": "green", "score_overa
 **`done` event** — Final event with complete response:
 ```
 event: done
-data: {"text": "Based on the numbers you've shared, this is a fair deal.", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
+data: {"text": "Based on the numbers you've shared, this is a fair deal.", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}, "sessionUsage": {"requestCount": 5, "inputTokens": 3120, "outputTokens": 544, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3664, "totalCostUsd": 0.023846, "perModel": {"claude-sonnet-4-6": {"requestCount": 4, "inputTokens": 3000, "outputTokens": 520, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3520, "totalCostUsd": 0.023086}, "claude-haiku-4-5-20251001": {"requestCount": 1, "inputTokens": 120, "outputTokens": 24, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "totalTokens": 144, "totalCostUsd": 0.00076}}}}
 ```
 
 **Side effects:**
 - Message history is loaded before the user message is saved (prevents duplicate user messages in Claude context)
 - User message is persisted before streaming begins
 - The step loop may execute multiple model requests before the terminal `done` event; the `usage` payload reflects the full assistant response, not just the final step
+- The terminal `done` event also includes `sessionUsage`, a cumulative per-session ledger covering chat turns, panel generation, title generation, and session-bound re-analysis calls
 - If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
 - Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
 - Tool call results are applied to the session's deal state
@@ -450,6 +512,8 @@ Get the full message history for a session, ordered by creation time.
   }
 ]
 ```
+
+Message-level `usage` remains per assistant turn. Session-wide totals are exposed on the session resource and mirrored in the terminal chat `done` event's `sessionUsage` payload.
 
 **Error responses:**
 

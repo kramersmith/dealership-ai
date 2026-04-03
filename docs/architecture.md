@@ -93,7 +93,7 @@ dealership-ai/
 
 **users** — (id, email, hashed_password, role [UserRole enum: buyer/dealer], display_name, created_at)
 
-**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
+**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, usage JSON, timestamps). `usage` stores the cumulative per-session Claude ledger: request counts, token totals, cache token totals, per-model totals, and computed USD cost. Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, created_at)
 
@@ -217,7 +217,7 @@ POST   /simulations/{id}/complete     # End + score
 4. Each step streams `text` chunks and accumulates `tool_use` blocks. If the transport stalls or the model hits `stop_reason == "max_tokens"`, the backend emits a `retry` SSE event and replays the step with a reset signal for the client.
 5. When a step finishes with tool calls, the backend executes them, emits `tool_result` SSE events, appends tool results back into the Claude transcript, and continues the loop.
 6. When the step loop reaches a text-only completion, or exhausts its retry or step budget, the backend generates AI panel cards in a separate Claude call and merges that request's usage into the turn summary.
-7. Backend persists the assistant message with its tool calls and aggregated usage summary, then emits the terminal `done` SSE event with the final text and usage payload.
+7. Backend persists the assistant message with its tool calls and aggregated usage summary, folds that turn into the session-level usage ledger, then emits the terminal `done` SSE event with the final text, per-message `usage`, and cumulative `sessionUsage` payload.
 8. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
 9. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.
 10. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events.

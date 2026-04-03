@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from app.core.config import settings
 from app.models.enums import AiCardPriority, AiCardType
@@ -11,6 +12,11 @@ from app.services.claude import (
     empty_usage_summary,
     merge_usage_summary,
     summarize_usage,
+)
+from app.services.usage_tracking import (
+    UsageRecorder,
+    build_request_usage,
+    log_request_usage,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,11 +243,16 @@ async def generate_ai_panel_cards(
     deal_state_dict: dict,
     assistant_text: str,
     messages: list[dict],
+    *,
+    usage_recorder: UsageRecorder | None = None,
+    session_id: str | None = None,
 ) -> list[dict]:
     cards, _usage_summary = await generate_ai_panel_cards_with_usage(
         deal_state_dict,
         assistant_text,
         messages,
+        usage_recorder=usage_recorder,
+        session_id=session_id,
     )
     return cards
 
@@ -250,6 +261,9 @@ async def generate_ai_panel_cards_with_usage(
     deal_state_dict: dict,
     assistant_text: str,
     messages: list[dict],
+    *,
+    usage_recorder: UsageRecorder | None = None,
+    session_id: str | None = None,
 ) -> tuple[list[dict], dict[str, int]]:
     """Generate AI panel cards based on deal state and conversation context.
 
@@ -270,6 +284,7 @@ async def generate_ai_panel_cards_with_usage(
     )
 
     try:
+        started_at = time.monotonic()
         response = await _create_panel_message_with_retry(
             client,
             model=settings.CLAUDE_MODEL,
@@ -294,7 +309,21 @@ async def generate_ai_panel_cards_with_usage(
                 }
             ],
         )
-        merge_usage_summary(usage_summary, summarize_usage(response.usage))
+        request_summary = summarize_usage(response.usage)
+        merge_usage_summary(usage_summary, request_summary)
+        request_usage = build_request_usage(
+            model=settings.CLAUDE_MODEL,
+            usage_summary=request_summary,
+            latency_ms=int((time.monotonic() - started_at) * 1000),
+        )
+        log_request_usage(
+            logger,
+            request_usage,
+            context="panel_generation",
+            session_id=session_id,
+        )
+        if usage_recorder:
+            usage_recorder(request_usage)
 
         text = ""
         for block in response.content:

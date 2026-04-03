@@ -427,6 +427,85 @@ def test_session_response_includes_last_message_preview(client, db):
     assert resp.json()[0]["last_message_preview"] == "Here is your deal analysis..."
 
 
+def test_session_response_includes_usage_summary(client, db):
+    """Session responses expose the transformed session usage ledger."""
+    user, token = _create_user_and_token(db)
+    headers = _auth_header(token)
+
+    resp = client.post(
+        "/api/sessions",
+        json={"session_type": SessionType.BUYER_CHAT},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    session_id = resp.json()["id"]
+
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    session.usage = {
+        "request_count": 3,
+        "input_tokens": 1200,
+        "output_tokens": 300,
+        "cache_creation_input_tokens": 400,
+        "cache_read_input_tokens": 250,
+        "total_tokens": 1500,
+        "total_cost_usd": 0.0123,
+        "per_model": {
+            "claude-sonnet-4-6": {
+                "request_count": 2,
+                "input_tokens": 1100,
+                "output_tokens": 280,
+                "cache_creation_input_tokens": 400,
+                "cache_read_input_tokens": 250,
+                "total_tokens": 1380,
+                "total_cost_usd": 0.0117,
+            },
+            "claude-haiku-4-5-20251001": {
+                "request_count": 1,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "total_tokens": 120,
+                "total_cost_usd": 0.0006,
+            },
+        },
+    }
+    db.commit()
+
+    resp = client.get("/api/sessions", headers=headers)
+    assert resp.status_code == 200
+    usage = resp.json()[0]["usage"]
+    assert usage == {
+        "requestCount": 3,
+        "inputTokens": 1200,
+        "outputTokens": 300,
+        "cacheCreationInputTokens": 400,
+        "cacheReadInputTokens": 250,
+        "totalTokens": 1500,
+        "totalCostUsd": 0.0123,
+        "perModel": {
+            "claude-sonnet-4-6": {
+                "requestCount": 2,
+                "inputTokens": 1100,
+                "outputTokens": 280,
+                "cacheCreationInputTokens": 400,
+                "cacheReadInputTokens": 250,
+                "totalTokens": 1380,
+                "totalCostUsd": 0.0117,
+            },
+            "claude-haiku-4-5-20251001": {
+                "requestCount": 1,
+                "inputTokens": 100,
+                "outputTokens": 20,
+                "cacheCreationInputTokens": 0,
+                "cacheReadInputTokens": 0,
+                "totalTokens": 120,
+                "totalCostUsd": 0.0006,
+            },
+        },
+    }
+
+
 # --- search tests ---
 
 

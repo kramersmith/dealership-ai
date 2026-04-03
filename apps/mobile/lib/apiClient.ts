@@ -8,6 +8,8 @@ import type {
   Scenario,
   ToolCall,
   MessageUsage,
+  ModelUsageSummary,
+  SessionUsage,
 } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
@@ -61,9 +63,36 @@ function mapSession(s: any): Session {
     sessionType: s.session_type,
     linkedSessionIds: s.linked_session_ids || [],
     lastMessagePreview: s.last_message_preview || '',
+    usage: s.usage ? mapSessionUsage(s.usage) : undefined,
     dealSummary: mapDealSummary(s.deal_summary),
     updatedAt: s.updated_at,
     createdAt: s.created_at,
+  }
+}
+
+function mapUsageSummary(value: any): ModelUsageSummary {
+  return {
+    requestCount: value.requestCount ?? 0,
+    inputTokens: value.inputTokens ?? 0,
+    outputTokens: value.outputTokens ?? 0,
+    cacheCreationInputTokens: value.cacheCreationInputTokens ?? 0,
+    cacheReadInputTokens: value.cacheReadInputTokens ?? 0,
+    totalTokens: value.totalTokens ?? 0,
+    totalCostUsd: value.totalCostUsd ?? 0,
+  }
+}
+
+function mapSessionUsage(value: any): SessionUsage {
+  const perModel = Object.fromEntries(
+    Object.entries(value.perModel ?? {}).map(([model, summary]: [string, any]) => [
+      model,
+      mapUsageSummary(summary),
+    ])
+  )
+
+  return {
+    ...mapUsageSummary(value),
+    perModel,
   }
 }
 
@@ -374,7 +403,7 @@ class ApiClient implements ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string, usage?: MessageUsage) => void,
+    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void
   ): Promise<Message> {
@@ -390,6 +419,7 @@ class ApiClient implements ApiService {
 
       let fullText = ''
       let messageUsage: MessageUsage | undefined
+      let sessionUsage: SessionUsage | undefined
       const toolCalls: ToolCall[] = []
       let processed = 0
       let buffer = ''
@@ -430,7 +460,8 @@ class ApiClient implements ApiService {
               // (don't wait for onload which blocks on Stages 2+3)
               fullText = data.text ?? fullText
               messageUsage = data.usage
-              onTextDone?.(fullText, messageUsage)
+              sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
+              onTextDone?.(fullText, messageUsage, sessionUsage)
             } else if (eventType === 'error') {
               console.error('[apiClient] SSE error event:', data.message ?? data)
               sseError = data.message ?? 'An error occurred'

@@ -15,6 +15,7 @@ from app.core.security import create_access_token
 from app.main import app
 from app.models.deal import Deal
 from app.models.message import Message
+from app.models.session import ChatSession
 from app.services.claude import (
     CHAT_TOOLS,
     ChatLoopResult,
@@ -833,6 +834,26 @@ async def test_send_message_sse_orders_panel_updates_before_done(
         "done",
         {
             "text": "Hold at $28,500 and get the out-the-door total in writing.",
+            "sessionUsage": {
+                "requestCount": 2,
+                "inputTokens": 360,
+                "outputTokens": 136,
+                "cacheCreationInputTokens": 0,
+                "cacheReadInputTokens": 240,
+                "totalTokens": 496,
+                "totalCostUsd": 0.003192,
+                "perModel": {
+                    "claude-sonnet-4-6": {
+                        "requestCount": 2,
+                        "inputTokens": 360,
+                        "outputTokens": 136,
+                        "cacheCreationInputTokens": 0,
+                        "cacheReadInputTokens": 240,
+                        "totalTokens": 496,
+                        "totalCostUsd": 0.003192,
+                    }
+                },
+            },
             "usage": {
                 "requests": 2,
                 "inputTokens": 360,
@@ -896,6 +917,31 @@ async def test_send_message_sse_orders_panel_updates_before_done(
                 },
             ]
         )
+
+        session_result = await check_db.execute(
+            select(ChatSession).where(ChatSession.id == session.id)
+        )
+        persisted_session = session_result.scalar_one()
+        assert persisted_session.usage == {
+            "request_count": 2,
+            "input_tokens": 360,
+            "output_tokens": 136,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 240,
+            "total_tokens": 496,
+            "total_cost_usd": 0.003192,
+            "per_model": {
+                "claude-sonnet-4-6": {
+                    "request_count": 2,
+                    "input_tokens": 360,
+                    "output_tokens": 136,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 240,
+                    "total_tokens": 496,
+                    "total_cost_usd": 0.003192,
+                }
+            },
+        }
 
     history_response = await async_client.get(
         f"/api/chat/{session.id}/messages",

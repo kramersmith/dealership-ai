@@ -1,6 +1,6 @@
 # Operational Guidelines
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-03
 
 ---
 
@@ -30,6 +30,14 @@
 | `SECRET_KEY` | Yes (prod) | `dev-secret` | Must change in production |
 | `ANTHROPIC_API_KEY` | Yes | `` | Required for chat functionality |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model for AI interactions |
+| `CLAUDE_FAST_MODEL` | No | `claude-haiku-4-5-20251001` | Fast Claude model for lightweight tasks |
+| `CLAUDE_STREAM_IDLE_TIMEOUT` | No | `30` | Idle timeout before retrying stalled Claude streams |
+| `CLAUDE_STREAM_MAX_RETRIES` | No | `2` | Stream retry budget before non-streaming fallback |
+| `CLAUDE_API_TIMEOUT` | No | `120` | Anthropic API timeout in seconds |
+| `CLAUDE_SDK_MAX_RETRIES` | No | `3` | Anthropic SDK retry budget for retryable transport failures |
+| `CLAUDE_MAX_TOKENS_RETRIES` | No | `1` | Bounded retry count for `max_tokens` truncation |
+| `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR` | No | `2` | Retry multiplier for truncation recovery |
+| `CLAUDE_MAX_TOKENS_CAP` | No | `8192` | Hard cap for truncation retry budgets |
 | `CORS_ORIGINS` | No | localhost origins | Explicit HTTPS in production |
 | `ENV` | No | `development` | Controls seed users and dev features |
 | `LOG_LEVEL` | No | `INFO` | See logging-guidelines.md |
@@ -72,8 +80,9 @@ See `docs/logging-guidelines.md` for log level reference, PII rules, and configu
 ## 5. Claude API Cost Control
 
 - Default model: `claude-sonnet-4-6` (balances cost and quality)
+- Fast model: `claude-haiku-4-5-20251001` for titles and other lightweight tasks
 - Max tokens per response: 4096
 - Message history truncated to last 20 messages per request
-- Deal assessment safety net: 512 max tokens (Haiku fast model)
-- Situation assessment: 1024 max tokens (Haiku fast model)
-- Future: per-user daily token limits, usage tracking table
+- Bounded `max_tokens` retries use configurable escalation rather than silently truncating responses
+- Per-turn assistant usage is persisted on messages, and cumulative per-session usage is persisted on `ChatSession.usage` with per-model token and cost totals
+- Pricing is tracked server-side from a fixed backend pricing table for deterministic accounting; it is not fetched dynamically at runtime

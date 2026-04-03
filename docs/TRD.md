@@ -82,7 +82,7 @@ graph TB
 
     subgraph Backend["FastAPI Backend (:8001)"]
         Routes["Routes Layer<br/>/api/auth · /api/sessions · /api/chat<br/>/api/deal · /api/simulations"]
-        Services["Services Layer<br/>Claude integration (two-pass extraction, SSE streaming)<br/>Deal state logic · Post-chat processing · Title generation"]
+        Services["Services Layer<br/>Claude integration (step loop, SSE streaming, usage tracking)<br/>Deal state logic · Post-chat processing · Title generation"]
         Data["Data Layer<br/>SQLAlchemy ORM · Alembic Migrations · Pydantic"]
         Routes --> Services --> Data
     end
@@ -108,11 +108,11 @@ graph TB
     - `event: done` -- final payload with full text and aggregated usage for the entire assistant turn
 8. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku. The analyst calls `analyze_deal()` to generate health status, red flags, AI panel cards, and recommendations. The situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage).
-11. After the step loop completes, the backend generates AI panel cards in a separate Claude call and merges that request's usage into the same assistant-turn summary.
-12. On stream completion, backend persists the assistant message, including tool calls and aggregated usage metadata, and applies tool call results to `deal_states`.
-13. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
-14. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+10. After the step loop completes, the backend generates AI panel cards in a separate Sonnet call and merges that request's usage into the same assistant-turn summary.
+11. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata, applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
+12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
+13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+14. The terminal `done` event carries both per-turn `usage` and cumulative `sessionUsage` so the frontend can render assistant-turn usage and developer-facing session totals separately.
 
 ---
 
@@ -198,7 +198,7 @@ graph TB
 | `POST`   | `/api/chat/{session_id}/message`  | Yes  | Send message, receive SSE stream    |
 | `GET`    | `/api/chat/{session_id}/messages` | Yes  | Get message history for session     |
 | `GET`    | `/api/deal/{session_id}`          | Yes  | Get deal state for session          |
-| `PATCH`  | `/api/deal/{session_id}`          | Yes  | User corrections → Haiku re-assessment |
+| `PATCH`  | `/api/deal/{session_id}`          | Yes  | User corrections → Sonnet re-assessment |
 | `GET`    | `/api/simulations/scenarios`      | Yes  | List available simulation scenarios |
 
 
@@ -217,10 +217,10 @@ event: retry
 data: {"attempt": 1, "reason": "max_tokens", "reset_text": true, "max_tokens": 8192}
 
 event: done
-data: {"text": "Full response text...", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
+data: {"text": "Full response text...", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}, "sessionUsage": {"requestCount": 5, "inputTokens": 3120, "outputTokens": 544, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3664, "totalCostUsd": 0.023846, "perModel": {"claude-sonnet-4-6": {"requestCount": 4, "inputTokens": 3000, "outputTokens": 520, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3520, "totalCostUsd": 0.023086}, "claude-haiku-4-5-20251001": {"requestCount": 1, "inputTokens": 120, "outputTokens": 24, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "totalTokens": 144, "totalCostUsd": 0.00076}}}}
 ```
 
-The `done` event is the terminal SSE event. Its `usage` payload aggregates all model requests that contributed to that assistant turn, including the separate AI panel generation call.
+The `done` event is the terminal SSE event. Its `usage` payload aggregates all model requests that contributed to that assistant turn, including the separate AI panel generation call. Its `sessionUsage` payload is the cumulative per-session usage ledger, including title generation and session-bound re-analysis work.
 
 For detailed endpoint schemas (request/response bodies, status codes), see the Pydantic schemas in `apps/backend/app/schemas/`.
 
@@ -447,6 +447,7 @@ erDiagram
 | `last_message_preview` | String   | Not Null, default `""`            | Truncated last assistant message (max 120 chars) |
 | `session_type`         | String   | Not Null, default "buyer_chat"    | `buyer_chat` or `dealer_sim` |
 | `linked_session_ids`   | JSON     | default empty list                | Array of session UUIDs       |
+| `usage`                | JSON     | Nullable                          | Cumulative per-session usage ledger with per-model totals and USD cost |
 | `created_at`           | DateTime | default now(UTC)                  |                              |
 | `updated_at`           | DateTime | default now(UTC), on update       |                              |
 
@@ -585,7 +586,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation, session title generation, two-pass extraction (factual extractor + analyst + situation assessor subagents), deal re-assessment |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation and session title generation |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
 | Tool use       | 10 tool definitions (primary model only)   |
 | Streaming      | Yes (messages.stream)  |
@@ -593,7 +594,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. The terminal `done` event aggregates the full assistant-turn usage, including the separate AI panel generation call. After the primary response, a two-pass extraction runs factual extractor, analyst, and situation assessor subagents in parallel via the async Anthropic client with the fast model (Haiku). The factual extractor pulls structured data (vehicle, numbers, scorecard, phase), the analyst generates health assessment, red flags, AI panel cards, and recommendations via `analyze_deal()`, and the situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage). Quick action generation and session title generation also use the async client with Haiku.
+The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop, the backend generates AI panel cards in a separate Sonnet call and merges that usage into the assistant-turn summary. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. The terminal `done` event includes both the assistant-turn aggregate and the cumulative session usage ledger.
 
 ### No Other External Integrations (v1)
 

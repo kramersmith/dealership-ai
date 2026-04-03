@@ -1,6 +1,6 @@
 # Business Rules
 
-Last updated: 2026-03-31
+Last updated: 2026-04-03
 
 ## Table of Contents
 
@@ -367,9 +367,9 @@ Tools should be called in priority order (most important first):
 6. `update_quick_actions` — when context shifts (not every response)
 7. `update_scorecard` / `update_checklist` — assessment details and action items
 
-### Assessment Safety Net
+### Re-Assessment Path
 
-If the primary Claude model updates deal numbers but doesn't call `update_deal_health` or `update_red_flags`, the backend runs `assess_deal_state()` via Haiku (`CLAUDE_FAST_MODEL`) to generate health status, red flags, and a next-action recommendation. This ensures the deal health, red flags, and recommendation panels stay current even when the primary model focuses on other tools.
+There is no separate deal-assessment safety-net pass in the chat route. Deal health, flags, and other structured state should be updated by the primary chat/tool flow itself. The standalone re-assessment path is the explicit correction flow on `PATCH /api/deal/{session_id}`, which re-runs `analyze_deal()` after user edits.
 
 ### User Corrections
 
@@ -377,7 +377,7 @@ Users can inline-edit dealer name on the frontend. AiVehicleCard inline editing 
 1. Applies corrections to the specified vehicles and/or deals by ID
 2. Snapshots `first_offer` if this is the first time `current_offer` is set on a deal
 3. Vehicle corrections propagate to linked deals for re-assessment
-4. Re-runs `analyze_deal()` via Haiku on the first affected deal to update health status, red flags, and recommendation
+4. Re-runs `analyze_deal()` via Sonnet on the first affected deal to update health status, red flags, and recommendation
 5. Returns the updated assessment (including deal_id and recommendation) to the frontend
 
 ### Tool Application Order
@@ -457,30 +457,34 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 | Setting | Value | Description |
 |---|---|---|
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat with tool use |
-| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation, session title generation, deal assessment safety net, situation assessment) |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for lightweight tasks (quick action generation and session title generation) |
+| `CLAUDE_MAX_TOKENS_RETRIES` | `1` | Retry count when a Claude response stops at `max_tokens` |
+| `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR` | `2` | Multiplier used for each bounded truncation retry |
+| `CLAUDE_MAX_TOKENS_CAP` | `8192` | Hard cap for escalated truncation retries |
 | `CLAUDE_MAX_TOKENS` | `4096` | Maximum tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages included in context window |
 
 ### Streaming
 
-Chat responses are streamed via Server-Sent Events (SSE) with three event types:
+Chat responses are streamed via Server-Sent Events (SSE) with five event types:
 
 | Event | Data | Description |
 |---|---|---|
 | `text` | `{"chunk": "..."}` | Incremental text from the AI response |
 | `tool_result` | `{"tool": "...", "data": {...}}` | A tool call result for dashboard updates |
-| `done` | `{"text": "...", "tool_calls": [...]}` | Final event with complete text and all tool calls |
-| `followup_done` | `{"text": "..."}` | Follow-up text when primary response had tools but no text (two-pass) |
+| `retry` | `{"attempt": 1, "reason": "max_tokens", "reset_text": true, ...}` | Stream recovery or bounded truncation replay |
+| `step` | `{"step": 2}` | Multi-step turn progress |
+| `done` | `{"text": "...", "usage": {...}, "sessionUsage": {...}}` | Final event with complete text, assistant-turn usage, and cumulative session usage |
 
-### Two-Pass Response Architecture
+### Step Loop Architecture
 
-When Claude responds with only tool calls and no conversational text (common when processing deal numbers), the backend fires a lightweight follow-up call:
+The backend uses a bounded step loop rather than a two-pass follow-up flow:
 
-1. Primary call streams tool results to the client
-2. Backend detects empty text with tool calls present
-3. Follow-up call uses the same model but no tool definitions, with a system prompt asking for analysis/advice based on the tools just called
-4. Follow-up text is streamed as `text` events, with `followup_done` at completion
-5. The combined text (from both passes) is persisted as the assistant message
+1. Claude streams text and accumulates tool-use blocks in the current step
+2. Tool calls are executed after the step finishes streaming
+3. Tool results are appended back into the transcript
+4. Claude is called again until the turn reaches a text completion or the step budget is exhausted
+5. If a step is truncated at `max_tokens`, the backend retries that step with an escalated bounded token budget
 
 ### Server-Side Quick Actions
 
@@ -496,7 +500,6 @@ If Claude doesn't call `update_quick_actions` during the primary response, the b
 - Max tokens capped at 4096 per response (primary model)
 - Quick action generation capped at 256 tokens (fast model)
 - Session title generation capped at 30 tokens (fast model)
-- Deal assessment safety net capped at 512 tokens (fast model)
-- Situation assessment capped at 1024 tokens (fast model)
 - Message history limited to 20 messages to control context size
 - Linked session context limited to last 10 messages, each truncated to 200 characters
+- Assistant message `usage` is persisted per turn, while `ChatSession.usage` stores the cumulative per-session ledger with per-model totals and USD cost

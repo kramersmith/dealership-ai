@@ -40,6 +40,7 @@ from app.services.deal_state import (
 from app.services.panel import generate_ai_panel_cards
 from app.services.post_chat_processing import _get_primary_vehicle
 from app.services.title_generator import build_vehicle_title
+from app.services.usage_tracking import SessionUsageSummary
 from app.services.vehicle_intelligence import (
     ProviderConfigurationError,
     VehicleIntelligenceError,
@@ -114,6 +115,7 @@ async def _get_deal_in_session(
 async def _refresh_after_identity_resolution(
     session: ChatSession, deal_state: DealState, db: AsyncSession
 ) -> None:
+    session_usage = SessionUsageSummary.from_dict(session.usage)
     updated_state = await deal_state_to_dict(deal_state, db)
     history_result = await db.execute(
         select(Message)
@@ -128,7 +130,11 @@ async def _refresh_after_identity_resolution(
         messages = [{"role": m.role, "content": m.content} for m in history]
         try:
             deal_state.ai_panel_cards = await generate_ai_panel_cards(
-                updated_state, latest_assistant.content, messages
+                updated_state,
+                latest_assistant.content,
+                messages,
+                usage_recorder=session_usage.add_request,
+                session_id=session.id,
             )
         except Exception:
             logger.exception(
@@ -141,6 +147,7 @@ async def _refresh_after_identity_resolution(
         title = build_vehicle_title(vehicle_dict)
         if title:
             session.title = title
+    session.usage = session_usage.to_dict()
     session.updated_at = datetime.now(timezone.utc)
 
 
@@ -195,7 +202,7 @@ async def correct_deal_state(
     db: AsyncSession = Depends(get_db),
 ):
     """Apply user-initiated corrections to vehicles and/or deals, then re-assess."""
-    await _get_deal_state_or_404(session_id, user, db)
+    session, _deal_state = await _get_deal_state_or_404(session_id, user, db)
 
     if not body.vehicle_corrections and not body.deal_corrections:
         raise HTTPException(status_code=400, detail="No corrections provided")
@@ -284,6 +291,7 @@ async def correct_deal_state(
         assessment_deal = await _get_deal_in_session(session_id, first_deal_id, db)
 
     if assessment_deal:
+        session_usage = SessionUsageSummary.from_dict(session.usage)
         deal_dict = await build_deal_assessment_dict(assessment_deal, db)
         # Use analyst to re-assess health + flags after corrections
         try:
@@ -296,6 +304,8 @@ async def correct_deal_state(
                     }
                 ],
                 "The deal numbers were updated by the user.",
+                usage_recorder=session_usage.add_request,
+                session_id=session.id,
             )
         except Exception:
             logger.exception(
@@ -325,6 +335,8 @@ async def correct_deal_state(
                 logger.warning("Invalid health_status from extraction: %s", raw_status)
         if flags is not None:
             assessment_deal.red_flags = flags
+
+        session.usage = session_usage.to_dict()
 
         try:
             await db.commit()

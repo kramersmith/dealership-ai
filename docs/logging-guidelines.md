@@ -1,6 +1,6 @@
 # Logging Guidelines
 
-**Last updated:** 2026-03-24
+**Last updated:** 2026-04-03
 
 ---
 
@@ -17,6 +17,7 @@
 ## Usage
 
 - Use `INFO` for business events: user actions, deal milestones, tool call executions
+- Use `INFO` for Claude usage accounting events: model, token counts, cache token counts, computed USD cost, latency, and session context
 - Use `WARNING` for things that might need attention but aren't errors
 - Use `ERROR` only for actual failures that prevent an operation from completing
 - Use `DEBUG` for development troubleshooting — never log sensitive data at any level
@@ -29,6 +30,15 @@ Never log:
 - Email addresses in bulk (individual user actions at INFO are acceptable)
 - Financial details from deal sheets (log that analysis occurred, not the content)
 - Chat message content at INFO level (log at DEBUG only)
+
+Allowed in Claude usage logs:
+- Model name
+- Token counts
+- Cache token counts
+- Computed cost and latency
+- Session ID
+
+Do not include raw prompt text, message bodies, or extracted financial line items in usage logs.
 
 ## Configuration
 

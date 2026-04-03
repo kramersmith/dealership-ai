@@ -1,9 +1,15 @@
 """Session title generation — deterministic vehicle titles and LLM fallback."""
 
 import logging
+import time
 
 from app.core.config import settings
-from app.services.claude import create_anthropic_client
+from app.services.claude import create_anthropic_client, summarize_usage
+from app.services.usage_tracking import (
+    UsageRecorder,
+    build_request_usage,
+    log_request_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +36,12 @@ def build_vehicle_title(vehicle: dict | None) -> str | None:
     return " ".join(parts)[:MAX_TITLE_LENGTH]
 
 
-async def generate_session_title(messages: list[dict]) -> str | None:
+async def generate_session_title(
+    messages: list[dict],
+    *,
+    usage_recorder: UsageRecorder | None = None,
+    session_id: str | None = None,
+) -> str | None:
     """Generate a short title from conversation using Haiku.
 
     Returns None on failure so the caller can keep the existing title.
@@ -79,11 +90,25 @@ async def generate_session_title(messages: list[dict]) -> str | None:
 
     try:
         client = create_anthropic_client()
+        started_at = time.monotonic()
         response = await client.messages.create(
             model=settings.CLAUDE_FAST_MODEL,
             max_tokens=30,
             messages=api_messages,  # type: ignore[arg-type]
         )
+        request_usage = build_request_usage(
+            model=settings.CLAUDE_FAST_MODEL,
+            usage_summary=summarize_usage(response.usage),
+            latency_ms=int((time.monotonic() - started_at) * 1000),
+        )
+        log_request_usage(
+            logger,
+            request_usage,
+            context="title_generation",
+            session_id=session_id,
+        )
+        if usage_recorder:
+            usage_recorder(request_usage)
         block = response.content[0]
         title = (
             block.text.strip().strip('"').strip("'") if hasattr(block, "text") else ""

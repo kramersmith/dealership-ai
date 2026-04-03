@@ -74,6 +74,18 @@ function buildSummaryLine(summary: DealSummary | null): string | null {
   return parts.length > 0 ? parts.join(' \u00B7 ') : null
 }
 
+function formatUsageCost(value: number): string {
+  if (value >= 1) return `$${value.toFixed(2)}`
+  if (value >= 0.1) return `$${value.toFixed(3)}`
+  if (value >= 0.01) return `$${value.toFixed(4)}`
+  return `$${value.toFixed(5)}`
+}
+
+function buildDevUsageLine(session: Session): string | null {
+  if (!__DEV__ || !session.usage) return null
+  return `Dev \u00B7 ${session.usage.requestCount} req \u00B7 ${formatUsageCost(session.usage.totalCostUsd)}`
+}
+
 // ─── Component ───
 
 interface SessionCardProps {
@@ -139,6 +151,7 @@ export function SessionCard({
   const phase = session.dealSummary?.phase ?? 'research'
   const phaseDotColor = PHASE_TOKEN[phase] ?? '$placeholderColor'
   const summaryLine = buildSummaryLine(session.dealSummary)
+  const devUsageLine = buildDevUsageLine(session)
   const shadow = theme.shadowColor?.val ?? palette.overlay
   const accessibilityText = [
     session.title,
@@ -216,6 +229,12 @@ export function SessionCard({
           {summaryLine ? (
             <Text fontSize={11} color="$placeholderColor" numberOfLines={1} opacity={0.7}>
               {summaryLine}
+            </Text>
+          ) : null}
+
+          {devUsageLine ? (
+            <Text fontSize={10} color="$placeholderColor" numberOfLines={1} opacity={0.65}>
+              {devUsageLine}
             </Text>
           ) : null}
         </YStack>

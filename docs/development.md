@@ -87,6 +87,10 @@ make dev-frontend
 | `CLAUDE_MAX_TOKENS_RETRIES` | `1` | Retry count when Claude stops at `max_tokens` |
 | `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR` | `2` | Multiplier for each truncation retry budget |
 | `CLAUDE_MAX_TOKENS_CAP` | `8192` | Hard cap for escalated retry budgets |
+| `CLAUDE_STREAM_IDLE_TIMEOUT` | `30` | Idle timeout in seconds before retrying a stalled Claude stream |
+| `CLAUDE_STREAM_MAX_RETRIES` | `2` | Stream-level retry count before falling back to non-streaming Claude calls |
+| `CLAUDE_API_TIMEOUT` | `120` | Anthropic API timeout in seconds |
+| `CLAUDE_SDK_MAX_RETRIES` | `3` | Anthropic SDK retry count for transport-level retryable failures |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `NHTSA_VPIC_BASE_URL` | `https://vpic.nhtsa.dot.gov/api/vehicles` | NHTSA vPIC API base URL |
 | `VINAUDIT_API_KEY` | `` | VinAudit API key (required for history/valuation) |
@@ -173,6 +177,8 @@ Tests use an in-memory SQLite database with table recreation between tests.
 AI pipeline testing has its own guide covering fake-model tests, snapshots, SSE coverage, and VCR cassette recording/replay:
 
 - `docs/ai-pipeline-testing.md`
+
+Session-level usage tracking is persisted on `ChatSession.usage` and surfaced through session responses and the terminal chat `done` event's `sessionUsage` payload. Per-turn assistant usage remains on message history as `usage`.
 
 Useful commands for that workflow:
 

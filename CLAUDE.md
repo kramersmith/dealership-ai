@@ -55,8 +55,8 @@ FastAPI app with layered architecture:
 
 - **Routes** (`app/routes/`) — Endpoint definitions: auth, sessions, chat (SSE streaming), deals, simulations
 - **Schemas** (`app/schemas/`) — Pydantic models for request/response validation
-- **Services** (`app/services/`) — Business logic: Claude API integration split across three modules — chat step loop with 17 operational tools (`claude.py`: `stream_chat_loop()`, message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, usage aggregation, bounded `max_tokens` retries), AI panel card generation (`panel.py`: `generate_ai_panel_cards()`, `generate_ai_panel_cards_with_usage()`, conversation context building, panel prompt, card validation), and standalone deal analysis (`deal_analysis.py`: `analyze_deal()`, analyst tool definition). Also: SSE streaming, deal state logic (`deal_state.py`: apply_extraction, execute_tool, deal_state_to_dict, build_deal_assessment_dict), post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback), vehicle intelligence (`vehicle_intelligence.py`: NHTSA vPIC VIN decode, VinAudit history/valuation integration)
-- **Models** (`app/models/`) — SQLAlchemy ORM: User, ChatSession, Message (including persisted assistant `usage` JSON), DealState, Vehicle (with cascade delete-orphan relationships to VehicleDecode, VehicleHistoryReport, VehicleValuation), Deal, Simulation
+- **Services** (`app/services/`) — Business logic: Claude API integration split across four modules — chat step loop with 17 operational tools (`claude.py`: `stream_chat_loop()`, message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, usage aggregation, bounded `max_tokens` retries), AI panel card generation (`panel.py`: `generate_ai_panel_cards()`, `generate_ai_panel_cards_with_usage()`, conversation context building, panel prompt, card validation), standalone deal analysis (`deal_analysis.py`: `analyze_deal()`, analyst tool definition), and usage/cost accounting (`usage_tracking.py`: per-request usage, per-model session totals, USD cost calculation, API payload formatting). Also: SSE streaming, deal state logic (`deal_state.py`: apply_extraction, execute_tool, deal_state_to_dict, build_deal_assessment_dict), post-chat processing (preview + title updates), title generation (deterministic vehicle titles + Haiku LLM fallback), vehicle intelligence (`vehicle_intelligence.py`: NHTSA vPIC VIN decode, VinAudit history/valuation integration)
+- **Models** (`app/models/`) — SQLAlchemy ORM: User, ChatSession (including persisted cumulative `usage` JSON), Message (including persisted assistant `usage` JSON), DealState, Vehicle (with cascade delete-orphan relationships to VehicleDecode, VehicleHistoryReport, VehicleValuation), Deal, Simulation
 - **Core** (`app/core/`) — Config (Pydantic Settings), security (JWT + bcrypt), deps (FastAPI DI)
 
 Key patterns:
@@ -66,7 +66,7 @@ Key patterns:
 - Concurrent tool execution: tools are classified by priority (`TOOL_PRIORITY` in `deal_state.py`) — structural tools (set_vehicle, remove_vehicle) run first, context switches (create_deal, switch_active_deal) next, then field updates (all others) run concurrently via `asyncio.gather()`. Each concurrent tool gets an isolated `AsyncSession` to avoid shared-session conflicts. Results are emitted as SSE events in original call order. Orchestrated by `build_execution_plan()` and `_execute_tool_batch()` in `claude.py`.
 - After the step loop, a separate panel generation call (`generate_ai_panel_cards_with_usage()` in `panel.py`) produces AI insight cards using the updated deal state and contributes to the assistant turn's aggregated usage summary
 - Standalone deal analysis (`analyze_deal()` in `deal_analysis.py`) provides on-demand deal re-assessment outside the chat loop
-- Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (deal state updates from tool execution + panel cards), `retry` / `step` (recovery and multi-step progress), and terminal `done` (final text + aggregated usage)
+- Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (deal state updates from tool execution + panel cards), `retry` / `step` (recovery and multi-step progress), and terminal `done` (final text + per-turn `usage` + cumulative `sessionUsage`)
 - Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, NegotiationStance, AiCardType, AiCardPriority, IdentityConfirmationStatus, IntelligenceProvider, IntelligenceStatus (all `StrEnum`)
 - Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
 - Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)
@@ -113,7 +113,7 @@ Key patterns:
 ### Environment
 
 Both apps use `.env` files (copy from `.env.example`). Key variables:
-- Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_FAST_MODEL`, `CLAUDE_MAX_TOKENS_RETRIES`, `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR`, `CLAUDE_MAX_TOKENS_CAP`, `CORS_ORIGINS`, `VINAUDIT_API_KEY`, `NHTSA_VPIC_BASE_URL`, `VINAUDIT_HISTORY_URL`, `VINAUDIT_VALUATION_URL`
+- Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_FAST_MODEL`, `CLAUDE_STREAM_IDLE_TIMEOUT`, `CLAUDE_STREAM_MAX_RETRIES`, `CLAUDE_API_TIMEOUT`, `CLAUDE_SDK_MAX_RETRIES`, `CLAUDE_MAX_TOKENS_RETRIES`, `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR`, `CLAUDE_MAX_TOKENS_CAP`, `CORS_ORIGINS`, `VINAUDIT_API_KEY`, `NHTSA_VPIC_BASE_URL`, `VINAUDIT_HISTORY_URL`, `VINAUDIT_VALUATION_URL`
 - Frontend: Connects to real FastAPI backend
 
 ## Commit Conventions

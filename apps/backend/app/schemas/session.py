@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -34,6 +35,7 @@ class SessionResponse(BaseModel):
     session_type: SessionType
     linked_session_ids: list[str]
     last_message_preview: str
+    usage: dict[str, Any] | None = None
     deal_summary: DealSummary | None = None
     created_at: datetime
     updated_at: datetime

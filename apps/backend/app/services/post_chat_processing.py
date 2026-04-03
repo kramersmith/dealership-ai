@@ -15,6 +15,7 @@ from app.models.enums import IdentityConfirmationStatus
 from app.models.session import ChatSession
 from app.models.vehicle import Vehicle
 from app.services.title_generator import build_vehicle_title, generate_session_title
+from app.services.usage_tracking import UsageRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ async def _update_title(
     messages: list[dict],
     tool_calls: list[dict],
     db: AsyncSession,
+    usage_recorder: UsageRecorder | None = None,
 ) -> None:
     """Update session title based on triggers. Only runs if auto_title is True."""
     if not session.auto_title:
@@ -105,7 +107,11 @@ async def _update_title(
 
     # Trigger 2: Title is still default after first AI response — LLM fallback
     if session.title in (DEFAULT_BUYER_TITLE, DEFAULT_DEALER_TITLE) and messages:
-        title = await generate_session_title(messages)
+        title = await generate_session_title(
+            messages,
+            usage_recorder=usage_recorder,
+            session_id=session.id,
+        )
         if title:
             session.title = title
             logger.info(
@@ -123,10 +129,18 @@ async def update_session_metadata(
     response_text: str,
     user_message: str,
     db: AsyncSession,
+    usage_recorder: UsageRecorder | None = None,
 ) -> None:
     """Update session preview and title after a chat exchange.
 
     Called from the chat route after tool calls are applied, before db.commit().
     """
     _update_preview(session, response_text, user_message)
-    await _update_title(session, deal_state, messages, tool_calls, db)
+    await _update_title(
+        session,
+        deal_state,
+        messages,
+        tool_calls,
+        db,
+        usage_recorder=usage_recorder,
+    )

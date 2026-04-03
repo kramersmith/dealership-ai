@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
 from app.models.enums import MessageRole
@@ -26,6 +27,11 @@ from app.services.claude import (
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import generate_ai_panel_cards_with_usage
 from app.services.post_chat_processing import update_session_metadata
+from app.services.usage_tracking import (
+    SessionUsageSummary,
+    build_request_usage,
+    session_usage_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +116,7 @@ async def send_message(
 
     async def generate():
         result = ChatLoopResult()
+        session_usage = SessionUsageSummary.from_dict(session.usage)
 
         # ── Step loop: stream text + execute tools until done ──
         async for sse_event in stream_chat_loop(
@@ -149,7 +156,10 @@ async def send_message(
                     ai_cards,
                     panel_usage_summary,
                 ) = await generate_ai_panel_cards_with_usage(
-                    updated_state_dict, result.full_text, all_messages
+                    updated_state_dict,
+                    result.full_text,
+                    all_messages,
+                    session_id=session_id,
                 )
                 merge_usage_summary(result.usage_summary, panel_usage_summary)
                 if ai_cards:
@@ -182,6 +192,13 @@ async def send_message(
 
         # Update session metadata (preview + title)
         try:
+            if result.usage_summary.get("requests", 0) > 0:
+                session_usage.add_request(
+                    build_request_usage(
+                        model=settings.CLAUDE_MODEL,
+                        usage_summary=result.usage_summary,
+                    )
+                )
             await update_session_metadata(
                 session=session,
                 deal_state=deal_state,
@@ -190,11 +207,14 @@ async def send_message(
                 response_text=result.full_text,
                 user_message=body.content,
                 db=db,
+                usage_recorder=session_usage.add_request,
             )
         except Exception:
             logger.exception(
                 "Session metadata update failed: session_id=%s", session_id
             )
+
+        session.usage = session_usage.to_dict()
 
         # Update session timestamp
         session.updated_at = datetime.now(timezone.utc)
@@ -207,7 +227,7 @@ async def send_message(
             yield f"event: error\ndata: {json.dumps({'message': 'Failed to save response. Please try again.'})}\n\n"
             return
 
-        yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary)})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary), 'sessionUsage': session_usage_payload(session.usage)})}\n\n"
 
         logger.info(
             "Chat response complete: session_id=%s, text_length=%d, tool_calls=%d",

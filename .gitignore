@@ -10,4 +10,5 @@ __pycache__/
 node_modules/
 dist/
 .expo/
+.vscode/settings.json
 docs/ai-harness-improvements.md

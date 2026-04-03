@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from app.core.config import settings
 from app.models.enums import (
@@ -10,8 +11,13 @@ from app.models.enums import (
     RedFlagSeverity,
     ScoreStatus,
 )
-from app.services.claude import create_anthropic_client
+from app.services.claude import create_anthropic_client, summarize_usage
 from app.services.panel import _build_conversation_context
+from app.services.usage_tracking import (
+    UsageRecorder,
+    build_request_usage,
+    log_request_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +191,9 @@ async def analyze_deal(
     deal_state_dict: dict,
     messages: list[dict],
     assistant_text: str,
+    *,
+    usage_recorder: UsageRecorder | None = None,
+    session_id: str | None = None,
 ) -> dict:
     """Standalone deal analysis for re-assessment (e.g., after inline corrections).
 
@@ -195,6 +204,7 @@ async def analyze_deal(
     conversation_context = _build_conversation_context(messages, assistant_text)
 
     try:
+        started_at = time.monotonic()
         response = await client.messages.create(  # type: ignore[call-overload]
             model=settings.CLAUDE_MODEL,
             max_tokens=1536,
@@ -224,6 +234,19 @@ async def analyze_deal(
             getattr(usage, "cache_read_input_tokens", 0) or 0,
             usage.input_tokens,
         )
+        request_usage = build_request_usage(
+            model=settings.CLAUDE_MODEL,
+            usage_summary=summarize_usage(usage),
+            latency_ms=int((time.monotonic() - started_at) * 1000),
+        )
+        log_request_usage(
+            logger,
+            request_usage,
+            context="deal_analysis",
+            session_id=session_id,
+        )
+        if usage_recorder:
+            usage_recorder(request_usage)
 
         for block in response.content:
             if block.type == "tool_use" and block.name == "analyze_deal":
