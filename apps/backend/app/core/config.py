@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"
     CLAUDE_MAX_TOKENS: int = 4096
     CLAUDE_MAX_HISTORY: int = 20  # messages to include in context
+    CLAUDE_MAX_TOKENS_RETRIES: int = 1  # retries after stop_reason=max_tokens
+    CLAUDE_MAX_TOKENS_ESCALATION_FACTOR: int = 2  # per-retry budget multiplier
+    CLAUDE_MAX_TOKENS_CAP: int = 8192  # hard cap for escalated budgets
 
     # Streaming resilience
     CLAUDE_STREAM_IDLE_TIMEOUT: int = 30  # seconds before stream considered stalled

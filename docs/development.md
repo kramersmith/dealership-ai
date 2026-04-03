@@ -84,6 +84,9 @@ make dev-frontend
 | `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for quick actions, titles, deal assessment |
 | `CLAUDE_MAX_TOKENS` | `4096` | Max tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages to include in context |
+| `CLAUDE_MAX_TOKENS_RETRIES` | `1` | Retry count when Claude stops at `max_tokens` |
+| `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR` | `2` | Multiplier for each truncation retry budget |
+| `CLAUDE_MAX_TOKENS_CAP` | `8192` | Hard cap for escalated retry budgets |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `NHTSA_VPIC_BASE_URL` | `https://vpic.nhtsa.dot.gov/api/vehicles` | NHTSA vPIC API base URL |
 | `VINAUDIT_API_KEY` | `` | VinAudit API key (required for history/valuation) |

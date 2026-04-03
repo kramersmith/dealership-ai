@@ -95,7 +95,7 @@ dealership-ai/
 
 **chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, timestamps). Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
 
-**messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, created_at)
+**messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, created_at)
 
 **vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
 
@@ -170,7 +170,7 @@ These are used with the quick sign-in buttons on the login screen (visible only 
 ## FastAPI Routes
 
 ```
-POST   /chat/{session_id}/message    # Send message → SSE stream (text + tool_result events)
+POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/done)
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
 GET    /chat/{session_id}/messages    # Message history
 
@@ -197,7 +197,7 @@ POST   /simulations/{id}/complete     # End + score
 
 ---
 
-## Core Architecture: Two-Pass Extraction → AI Panel Cards
+## Core Architecture: Step Loop → AI Panel Cards
 
 **Extraction architecture:** The backend uses a two-pass extraction approach with parallel subagents:
 1. **Factual extractor** — extracts structured data (vehicle, deal numbers, scorecard, phase, buyer context, checklist, quick actions) from conversation
@@ -211,18 +211,19 @@ POST   /simulations/{id}/complete     # End + score
 - `build_deal_assessment_dict()` — builds a dict from a Deal + its vehicles for Haiku re-assessment
 
 **Streaming flow:**
-1. Client POSTs message
-2. Backend loads message history BEFORE saving the user message (avoids duplicate user messages in Claude context), then saves the user message
-3. Backend loads deal state + linked session context, calls Claude with tools (system prompt includes a context-aware preamble based on the session's `buyer_context`)
-4. Claude streams text + tool_use blocks
-5. Backend streams SSE events: `event: text` (chat chunks) + `event: tool_result` (structured data including `create_deal` for backend-created deals)
-6. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a lightweight second call (no tools) generates the conversational response, streamed as `event: text` chunks with `event: followup_done` at completion
-7. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event
-8. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context
-9. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events
-10. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true
-11. Frontend `useChat` hook uses event-based SSE parsing to dispatch tool results to Zustand store → InsightsPanel re-renders with AI-generated cards. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
-12. On send failure, optimistic messages are rolled back from the chat store
+1. Client POSTs message.
+2. Backend loads message history BEFORE saving the user message (avoids duplicate user messages in Claude context), then saves the user message.
+3. Backend loads deal state + linked session context and starts the Claude chat step loop with tools.
+4. Each step streams `text` chunks and accumulates `tool_use` blocks. If the transport stalls or the model hits `stop_reason == "max_tokens"`, the backend emits a `retry` SSE event and replays the step with a reset signal for the client.
+5. When a step finishes with tool calls, the backend executes them, emits `tool_result` SSE events, appends tool results back into the Claude transcript, and continues the loop.
+6. When the step loop reaches a text-only completion, or exhausts its retry or step budget, the backend generates AI panel cards in a separate Claude call and merges that request's usage into the turn summary.
+7. Backend persists the assistant message with its tool calls and aggregated usage summary, then emits the terminal `done` SSE event with the final text and usage payload.
+8. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
+9. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.
+10. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events.
+11. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
+12. Frontend `useChat` uses event-based SSE parsing to dispatch tool results, retry resets, and final usage metadata into Zustand state. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
+13. On send failure, optimistic messages are rolled back from the chat store.
 
 **New session flow (buyer):**
 1. Buyer lands on the chats list (`/(app)/chats`), the buyer home screen. If no sessions exist, ContextPicker shows as an empty state with three situation cards: "Researching", "Have a deal to review", "At the dealership".

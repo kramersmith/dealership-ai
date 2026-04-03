@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   BuyerContext,
   Message,
+  MessageUsage,
   QuickAction,
   QuotedCard,
   Session,
@@ -330,7 +331,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // (the "done" SSE event), so the StreamingBubble is replaced by a
       // permanent ChatBubble immediately — not seconds later on the first
       // tool_result.
-      const handleTextDone = (finalText: string) => {
+      const handleTextDone = (finalText: string, usage?: MessageUsage) => {
         if (messageFinalized) return
         messageFinalized = true
         if (finalText.trim()) {
@@ -339,6 +340,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             sessionId: activeSessionId,
             role: 'assistant',
             content: finalText,
+            usage,
             createdAt: new Date().toISOString(),
           }
           set((state) => ({

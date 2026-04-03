@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-03-31**
+**Last updated: 2026-04-03**
 
 ---
 
@@ -98,18 +98,21 @@ graph TB
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
 4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, negotiation context summary, and linked session context.
-5. Backend opens a streaming connection to the Claude API (Sonnet) with 10 tool definitions.
+5. Backend opens a streaming connection to the Claude API (Sonnet) with the current tool set.
 6. Claude streams back text chunks and tool calls.
-7. Backend relays each chunk as an SSE event to the client:
-  - `event: text` -- conversation text chunks
-  - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
-  - `event: done` -- final payload with full text and all tool calls
-8. **Two-pass follow-up:** If Claude responded with only tool calls and no text, a second lightweight call (no tools) generates the conversational response, streamed as additional `event: text` chunks with `event: followup_done` at completion.
+7. Backend relays SSE events to the client as the turn progresses:
+    - `event: text` -- conversation text chunks
+    - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
+    - `event: retry` -- stream recovery or `max_tokens` replay signal, including `reset_text` when the client should discard partial text
+    - `event: step` -- step-loop progress for multi-step turns
+    - `event: done` -- final payload with full text and aggregated usage for the entire assistant turn
+8. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
 10. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku. The analyst calls `analyze_deal()` to generate health status, red flags, AI panel cards, and recommendations. The situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage).
-11. On stream completion, backend persists the assistant message (including any follow-up text) and applies tool call results to `deal_states`.
-12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
-13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+11. After the step loop completes, the backend generates AI panel cards in a separate Claude call and merges that request's usage into the same assistant-turn summary.
+12. On stream completion, backend persists the assistant message, including tool calls and aggregated usage metadata, and applies tool call results to `deal_states`.
+13. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
+14. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
 
 ---
 
@@ -210,14 +213,14 @@ data: {"chunk": "Here's what I think about..."}
 event: tool_result
 data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "listing_price": 33500}}
 
-event: done
-data: {"text": "Full response text...", "tool_calls": [{"name": "update_deal_numbers", "args": {...}}]}
+event: retry
+data: {"attempt": 1, "reason": "max_tokens", "reset_text": true, "max_tokens": 8192}
 
-event: followup_done
-data: {"text": "Full follow-up text..."}
+event: done
+data: {"text": "Full response text...", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
 ```
 
-The `followup_done` event only appears when the primary response had tool calls but no text (two-pass architecture). The follow-up text chunks are streamed as regular `text` events before the `followup_done` event.
+The `done` event is the terminal SSE event. Its `usage` payload aggregates all model requests that contributed to that assistant turn, including the separate AI panel generation call.
 
 For detailed endpoint schemas (request/response bodies, status codes), see the Pydantic schemas in `apps/backend/app/schemas/`.
 
@@ -334,6 +337,7 @@ erDiagram
         text content
         string image_url
         json tool_calls
+        json usage
         datetime created_at
     }
 
@@ -458,6 +462,7 @@ erDiagram
 | `content`    | Text     | Not Null                                  |                                  |
 | `image_url`  | String   | Nullable                                  | URL for image analysis           |
 | `tool_calls` | JSON     | Nullable                                  | Array of {name, args} objects    |
+| `usage`      | JSON     | Nullable                                  | Aggregated token usage for assistant messages |
 | `created_at` | DateTime | default now(UTC)                          |                                  |
 
 
@@ -588,7 +593,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The `done` event aggregates the full response for persistence. A two-pass architecture handles tool-only responses: if the primary call returns tools but no text, a follow-up text-only call generates the conversational response. After the primary response, a two-pass extraction runs factual extractor, analyst, and situation assessor subagents in parallel via the async Anthropic client with the fast model (Haiku). The factual extractor pulls structured data (vehicle, numbers, scorecard, phase), the analyst generates health assessment, red flags, AI panel cards, and recommendations via `analyze_deal()`, and the situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage). Quick action generation and session title generation also use the async client with Haiku.
+The primary integration uses the synchronous Anthropic client with `.messages.stream()`. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. The terminal `done` event aggregates the full assistant-turn usage, including the separate AI panel generation call. After the primary response, a two-pass extraction runs factual extractor, analyst, and situation assessor subagents in parallel via the async Anthropic client with the fast model (Haiku). The factual extractor pulls structured data (vehicle, numbers, scorecard, phase), the analyst generates health assessment, red flags, AI panel cards, and recommendations via `analyze_deal()`, and the situation assessor maintains negotiation context (stance, situation, key numbers, scripts, pending actions, leverage). Quick action generation and session title generation also use the async client with Haiku.
 
 ### No Other External Integrations (v1)
 
@@ -649,7 +654,7 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 - **Markdown rendering**: Assistant chat bubbles render content as Markdown via `react-native-markdown-display`, supporting bold, italic, lists, code blocks, blockquotes, and links. User messages render as plain text.
 - **Optimistic message rollback**: When sending a chat message, the user message is added to the store optimistically. If the backend request fails, the message is removed from the store.
 - **Duplicate user message prevention**: Message history is loaded BEFORE the user message is saved to the database, so the current message is not duplicated in the Claude context.
-- **Event-based SSE parsing**: The `useChat` hook uses an event-based approach to parse SSE streams, dispatching `text`, `tool_result`, `followup_done`, and `done` events to the appropriate store handlers.
+- **Event-based SSE parsing**: The `useChat` hook uses an event-based approach to parse SSE streams, dispatching `text`, `tool_result`, `retry`, `step`, and `done` events to the appropriate store handlers.
 - **Error handling in stores and auth screens**: All Zustand stores and auth screens include try/catch error handling with user-facing error state.
 - **Chats list as buyer home screen**: The `/(app)/chats` screen is the buyer's landing page, showing sessions in Active/Past sections with search, pull-to-refresh, and SessionCard components displaying phase dot, message preview, and deal summary line.
 - **Auto-generated session titles**: Sessions receive automatic titles — deterministic vehicle titles when a vehicle is set, LLM-generated via Haiku as a fallback. Manual renames via PATCH set `auto_title=false`, preventing further auto-updates.

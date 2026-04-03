@@ -7,6 +7,7 @@ import type {
   RedFlag,
   Scenario,
   ToolCall,
+  MessageUsage,
 } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
@@ -362,6 +363,7 @@ class ApiClient implements ApiService {
         name: tc.name as ToolCall['name'],
         args: tc.args,
       })),
+      usage: m.usage,
       createdAt: m.created_at,
     }))
   }
@@ -372,7 +374,7 @@ class ApiClient implements ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string) => void,
+    onTextDone?: (finalText: string, usage?: MessageUsage) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void
   ): Promise<Message> {
@@ -387,6 +389,7 @@ class ApiClient implements ApiService {
       xhr.timeout = 150000 // 150s — slightly above backend's 120s API timeout
 
       let fullText = ''
+      let messageUsage: MessageUsage | undefined
       const toolCalls: ToolCall[] = []
       let processed = 0
       let buffer = ''
@@ -426,11 +429,16 @@ class ApiClient implements ApiService {
               // Text streaming is complete — finalize immediately
               // (don't wait for onload which blocks on Stages 2+3)
               fullText = data.text ?? fullText
-              onTextDone?.(fullText)
+              messageUsage = data.usage
+              onTextDone?.(fullText, messageUsage)
             } else if (eventType === 'error') {
               console.error('[apiClient] SSE error event:', data.message ?? data)
               sseError = data.message ?? 'An error occurred'
             } else if (eventType === 'retry') {
+              if (data.reset_text) {
+                fullText = ''
+                onChunk?.('')
+              }
               onRetry?.(data)
             } else if (eventType === 'step') {
               onStep?.(data)
@@ -462,6 +470,7 @@ class ApiClient implements ApiService {
             role: 'assistant',
             content: fullText,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            usage: messageUsage,
             createdAt: new Date().toISOString(),
           })
         } else {

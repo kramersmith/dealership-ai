@@ -5,7 +5,13 @@ import logging
 
 from app.core.config import settings
 from app.models.enums import AiCardPriority, AiCardType
-from app.services.claude import create_anthropic_client
+from app.services.claude import (
+    _get_escalated_max_tokens,
+    create_anthropic_client,
+    empty_usage_summary,
+    merge_usage_summary,
+    summarize_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +25,56 @@ PANEL_ASSISTANT_TRUNCATION = 500
 # Valid card types and priorities for AI panel validation
 VALID_PANEL_CARD_TYPES = {t.value for t in AiCardType}
 VALID_PANEL_CARD_PRIORITIES = {p.value for p in AiCardPriority}
+
+
+async def _create_panel_message_with_retry(
+    client,
+    *,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+):
+    current_max_tokens = max_tokens
+
+    for attempt in range(settings.CLAUDE_MAX_TOKENS_RETRIES + 1):
+        response = await client.messages.create(
+            model=model,
+            max_tokens=current_max_tokens,
+            messages=messages,
+        )
+        stop_reason = getattr(response, "stop_reason", None)
+        usage = response.usage
+        logger.info(
+            "Cache [panel]: creation=%d read=%d uncached=%d stop=%s max_tokens=%d",
+            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            getattr(usage, "cache_read_input_tokens", 0) or 0,
+            usage.input_tokens,
+            stop_reason,
+            current_max_tokens,
+        )
+
+        if stop_reason != "max_tokens":
+            return response
+
+        next_max_tokens = _get_escalated_max_tokens(current_max_tokens)
+        if (
+            attempt >= settings.CLAUDE_MAX_TOKENS_RETRIES
+            or next_max_tokens <= current_max_tokens
+        ):
+            logger.warning(
+                "AI panel generation exhausted max_tokens retries at budget=%d",
+                current_max_tokens,
+            )
+            return response
+
+        logger.warning(
+            "AI panel generation hit max_tokens at %d, retrying with %d (%d/%d)",
+            current_max_tokens,
+            next_max_tokens,
+            attempt + 1,
+            settings.CLAUDE_MAX_TOKENS_RETRIES,
+        )
+        current_max_tokens = next_max_tokens
 
 
 def _build_conversation_context(
@@ -182,6 +238,19 @@ async def generate_ai_panel_cards(
     assistant_text: str,
     messages: list[dict],
 ) -> list[dict]:
+    cards, _usage_summary = await generate_ai_panel_cards_with_usage(
+        deal_state_dict,
+        assistant_text,
+        messages,
+    )
+    return cards
+
+
+async def generate_ai_panel_cards_with_usage(
+    deal_state_dict: dict,
+    assistant_text: str,
+    messages: list[dict],
+) -> tuple[list[dict], dict[str, int]]:
     """Generate AI panel cards based on deal state and conversation context.
 
     Called after the main Claude response to populate the AI-driven panel.
@@ -189,6 +258,7 @@ async def generate_ai_panel_cards(
     is cached across calls, making subsequent calls fast and cheap.
     """
     client = create_anthropic_client()
+    usage_summary = empty_usage_summary()
 
     state_json = json.dumps(deal_state_dict, indent=2, default=str)
     conversation_context = _build_conversation_context(
@@ -200,7 +270,8 @@ async def generate_ai_panel_cards(
     )
 
     try:
-        response = await client.messages.create(
+        response = await _create_panel_message_with_retry(
+            client,
             model=settings.CLAUDE_MODEL,
             max_tokens=PANEL_GENERATOR_MAX_TOKENS,
             messages=[
@@ -223,14 +294,7 @@ async def generate_ai_panel_cards(
                 }
             ],
         )
-        # Log cache usage
-        usage = response.usage
-        logger.info(
-            "Cache [panel]: creation=%d read=%d uncached=%d",
-            getattr(usage, "cache_creation_input_tokens", 0) or 0,
-            getattr(usage, "cache_read_input_tokens", 0) or 0,
-            usage.input_tokens,
-        )
+        merge_usage_summary(usage_summary, summarize_usage(response.usage))
 
         text = ""
         for block in response.content:
@@ -241,7 +305,7 @@ async def generate_ai_panel_cards(
         logger.debug("AI panel raw response: %s", text[:200] if text else "(empty)")
 
         if not text:
-            return []
+            return [], usage_summary
 
         # Strip markdown code fences if present
         if text.startswith("```"):
@@ -250,7 +314,7 @@ async def generate_ai_panel_cards(
         cards = json.loads(text)
         if not isinstance(cards, list):
             logger.warning("AI panel response is not a list: %s", type(cards).__name__)
-            return []
+            return [], usage_summary
 
         # Validate card structure
         validated = []
@@ -273,8 +337,8 @@ async def generate_ai_panel_cards(
             len(validated),
             [c["type"] for c in validated],
         )
-        return validated
+        return validated, usage_summary
 
     except Exception:
         logger.exception("Failed to generate AI panel cards")
-        return []
+        return [], usage_summary

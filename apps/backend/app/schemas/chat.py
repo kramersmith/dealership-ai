@@ -17,6 +17,7 @@ class MessageResponse(BaseModel):
     content: str
     image_url: str | None
     tool_calls: list[dict] | None
+    usage: dict[str, int] | None
     created_at: datetime
 
     class Config:

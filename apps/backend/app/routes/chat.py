@@ -20,15 +20,27 @@ from app.services.claude import (
     build_context_message,
     build_messages,
     build_system_prompt,
+    merge_usage_summary,
     stream_chat_loop,
 )
 from app.services.deal_state import deal_state_to_dict
-from app.services.panel import generate_ai_panel_cards
+from app.services.panel import generate_ai_panel_cards_with_usage
 from app.services.post_chat_processing import update_session_metadata
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _message_usage_payload(summary: dict[str, int]) -> dict[str, int]:
+    return {
+        "requests": summary.get("requests", 0),
+        "inputTokens": summary.get("input_tokens", 0),
+        "outputTokens": summary.get("output_tokens", 0),
+        "cacheCreationInputTokens": summary.get("cache_creation_input_tokens", 0),
+        "cacheReadInputTokens": summary.get("cache_read_input_tokens", 0),
+        "totalTokens": summary.get("total_tokens", 0),
+    }
 
 
 @router.post("/{session_id}/message")
@@ -133,9 +145,13 @@ async def send_message(
             try:
                 await db.refresh(deal_state)
                 updated_state_dict = await deal_state_to_dict(deal_state, db)
-                ai_cards = await generate_ai_panel_cards(
+                (
+                    ai_cards,
+                    panel_usage_summary,
+                ) = await generate_ai_panel_cards_with_usage(
                     updated_state_dict, result.full_text, all_messages
                 )
+                merge_usage_summary(result.usage_summary, panel_usage_summary)
                 if ai_cards:
                     deal_state.ai_panel_cards = ai_cards
                     panel_tool_call = {
@@ -160,6 +176,7 @@ async def send_message(
             role=MessageRole.ASSISTANT,
             content=result.full_text,
             tool_calls=result.tool_calls if result.tool_calls else None,
+            usage=_message_usage_payload(result.usage_summary),
         )
         db.add(assistant_msg)
 
@@ -190,7 +207,7 @@ async def send_message(
             yield f"event: error\ndata: {json.dumps({'message': 'Failed to save response. Please try again.'})}\n\n"
             return
 
-        yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary)})}\n\n"
 
         logger.info(
             "Chat response complete: session_id=%s, text_length=%d, tool_calls=%d",

@@ -310,6 +310,15 @@ export interface QuotedCard {
   content: Record<string, any>
 }
 
+export interface MessageUsage {
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationInputTokens: number
+  cacheReadInputTokens: number
+  totalTokens: number
+}
+
 export interface Message {
   id: string
   sessionId: string
@@ -317,6 +326,7 @@ export interface Message {
   content: string
   imageUri?: string
   toolCalls?: ToolCall[]
+  usage?: MessageUsage
   quotedCard?: QuotedCard
   createdAt: string
   status?: 'sending' | 'failed'
@@ -413,7 +423,7 @@ export interface ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string) => void,
+    onTextDone?: (finalText: string, usage?: MessageUsage) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void
   ): Promise<Message>

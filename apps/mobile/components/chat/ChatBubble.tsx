@@ -17,6 +17,14 @@ interface ChatBubbleProps {
   skipAnimation?: boolean
 }
 
+function formatUsageCount(value: number) {
+  if (value >= 1000) {
+    const compact = value / 1000
+    return `${compact >= 10 ? Math.round(compact) : compact.toFixed(1)}k`
+  }
+  return String(value)
+}
+
 export const ChatBubble = memo(function ChatBubble({
   message,
   skipAnimation = false,
@@ -25,6 +33,10 @@ export const ChatBubble = memo(function ChatBubble({
   const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
   const theme = useTheme()
   const assistantColors = getAssistantMarkdownColors(theme)
+  const usageLabel =
+    !isUser && message.usage
+      ? `${message.usage.requests} req · ${formatUsageCount(message.usage.inputTokens)} in · ${formatUsageCount(message.usage.outputTokens)} out`
+      : null
 
   // User bubbles use white-on-brand; assistant bubbles use theme-derived colors
   const markdownStyles = buildMarkdownStyles(
@@ -99,7 +111,7 @@ export const ChatBubble = memo(function ChatBubble({
           )}
           {isUser && message.quotedCard && <QuotedCardPreview card={message.quotedCard} />}
           {isUser ? (
-            <Text fontSize={15} lineHeight={22} color="white">
+            <Text fontSize={15} lineHeight={22} color="$white">
               {message.content}
             </Text>
           ) : (
@@ -118,7 +130,7 @@ export const ChatBubble = memo(function ChatBubble({
           )}
           <Text
             fontSize={10}
-            color={isUser ? 'white' : '$placeholderColor'}
+            color={isUser ? '$white' : '$placeholderColor'}
             opacity={isUser ? 0.6 : 1}
             marginTop="$1"
             textAlign={isUser ? 'right' : 'left'}
@@ -127,6 +139,7 @@ export const ChatBubble = memo(function ChatBubble({
               hour: 'numeric',
               minute: '2-digit',
             })}
+            {usageLabel ? ` · ${usageLabel}` : ''}
           </Text>
         </YStack>
         {message.status === 'failed' && <FailedIndicator messageId={message.id} />}

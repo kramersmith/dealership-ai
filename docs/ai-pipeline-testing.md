@@ -65,6 +65,8 @@ This covers:
 
 These tests are fast and should be the first line of defense.
 
+They now also cover truncation recovery: when a step ends with `stop_reason == "max_tokens"`, the harness retries with a larger token budget and emits a retry event that tells the client to clear the partial streamed text before rendering the replacement attempt.
+
 ### Layer 2: Snapshot tests
 
 These tests compare structured outputs against committed files so accidental drift is obvious in diff review.
@@ -102,6 +104,7 @@ Current route coverage includes:
 - `text` events before panel updates
 - `tool_result` events before terminal `done`
 - failure short-circuiting without persisting an empty assistant message
+- retry/reset behavior for replayed attempts after truncation or stream recovery
 
 ---
 

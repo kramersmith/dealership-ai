@@ -3,25 +3,18 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from inline_snapshot import snapshot
-from sqlalchemy import select
-
 from app.core.config import settings
 from app.core.deps import get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.deal import Deal
-from app.models.deal_state import DealState
 from app.models.message import Message
-from app.models.session import ChatSession
 from app.services.claude import (
     CHAT_TOOLS,
     ChatLoopResult,
@@ -30,10 +23,16 @@ from app.services.claude import (
     _SyntheticToolJsonEvent,
     _SyntheticToolStartEvent,
     build_system_prompt,
+    merge_usage_summary,
     stream_chat_loop,
+    summarize_usage,
 )
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import generate_ai_panel_cards
+from httpx import ASGITransport, AsyncClient
+from inline_snapshot import snapshot
+from sqlalchemy import select
+
 from tests.conftest import (
     TestingAsyncSessionLocal,
     async_create_deal,
@@ -132,9 +131,7 @@ class FakeClaudeResponse:
         self._items = items
 
     @classmethod
-    def text(
-        cls, *chunks: str, stop_reason: str = "end_turn"
-    ) -> "FakeClaudeResponse":
+    def text(cls, *chunks: str, stop_reason: str = "end_turn") -> "FakeClaudeResponse":
         items: list[tuple[str, object]] = [
             ("stream_event", _SyntheticTextEvent(chunk)) for chunk in chunks
         ]
@@ -211,7 +208,9 @@ def _scripted_stream_factory(*step_scripts: list[tuple[str, object]]):
 
 
 async def _create_active_deal(adb, async_buyer_user):
-    session, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
     vehicle = await async_create_vehicle(adb, session.id)
     deal = await async_create_deal(adb, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
@@ -241,6 +240,7 @@ async def test_chat_tools_schema_snapshot():
 @patch("app.services.panel.create_anthropic_client")
 async def test_generate_ai_panel_cards_snapshot(mock_create_client):
     mock_response = AsyncMock()
+    mock_response.stop_reason = "end_turn"
     mock_response.usage = SimpleNamespace(
         cache_creation_input_tokens=0,
         cache_read_input_tokens=0,
@@ -304,10 +304,70 @@ async def test_generate_ai_panel_cards_snapshot(mock_create_client):
     _assert_json_snapshot("panel_cards.json", actual)
 
 
+@patch("app.services.panel.create_anthropic_client")
+async def test_generate_ai_panel_cards_retries_after_max_tokens(mock_create_client):
+    truncated_response = AsyncMock()
+    truncated_response.stop_reason = "max_tokens"
+    truncated_response.usage = SimpleNamespace(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=0,
+    )
+    truncated_response.content = [SimpleNamespace(text='[{"type": "briefing"')]
+
+    recovered_response = AsyncMock()
+    recovered_response.stop_reason = "end_turn"
+    recovered_response.usage = SimpleNamespace(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=0,
+    )
+    recovered_response.content = [
+        SimpleNamespace(
+            text=json.dumps(
+                [
+                    {
+                        "type": "briefing",
+                        "title": "Recovered",
+                        "content": {"body": "The second attempt completed cleanly."},
+                        "priority": "high",
+                    }
+                ]
+            )
+        )
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(
+        side_effect=[truncated_response, recovered_response]
+    )
+    mock_create_client.return_value = mock_client
+
+    actual = await generate_ai_panel_cards(
+        {"buyer_context": "researching", "vehicles": [], "deals": []},
+        "We should retry that panel generation.",
+        [{"role": "user", "content": "Show me the latest panel"}],
+    )
+
+    assert actual == [
+        {
+            "type": "briefing",
+            "title": "Recovered",
+            "content": {"body": "The second attempt completed cleanly."},
+            "priority": "high",
+        }
+    ]
+    assert mock_client.messages.create.await_count == 2
+    assert mock_client.messages.create.await_args_list[0].kwargs["max_tokens"] == 2048
+    assert mock_client.messages.create.await_args_list[1].kwargs["max_tokens"] == 4096
+
+
 async def test_stream_chat_loop_applies_multi_tool_chain_and_snapshots_state(
     adb, async_buyer_user
 ):
-    session, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
     await adb.commit()
     await adb.refresh(deal_state)
     messages = [{"role": "user", "content": "I found a 2024 Honda Civic for $25,000."}]
@@ -359,7 +419,9 @@ async def test_stream_chat_loop_applies_multi_tool_chain_and_snapshots_state(
 
     await adb.refresh(deal_state)
     state_dict = await deal_state_to_dict(deal_state, adb)
-    deal_result = await adb.execute(select(Deal).where(Deal.id == deal_state.active_deal_id))
+    deal_result = await adb.execute(
+        select(Deal).where(Deal.id == deal_state.active_deal_id)
+    )
     deal = deal_result.scalar_one()
 
     assert deal.listing_price == 25000
@@ -518,7 +580,9 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
     )
 
 
-async def test_stream_chat_loop_emits_retry_event_before_recovery(adb, async_buyer_user):
+async def test_stream_chat_loop_emits_retry_event_before_recovery(
+    adb, async_buyer_user
+):
     _, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
     result = ChatLoopResult()
 
@@ -550,7 +614,10 @@ async def test_stream_chat_loop_emits_retry_event_before_recovery(adb, async_buy
 
     assert events == snapshot(
         [
-            ("retry", {"attempt": 1, "reason": "stream_stall"}),
+            (
+                "retry",
+                {"attempt": 1, "reason": "stream_stall", "reset_text": True},
+            ),
             ("text", {"chunk": "Recovered after a transient stream stall."}),
             (
                 "done",
@@ -558,6 +625,55 @@ async def test_stream_chat_loop_emits_retry_event_before_recovery(adb, async_buy
             ),
         ]
     )
+
+
+async def test_stream_chat_loop_retries_after_max_tokens(adb, async_buyer_user):
+    _, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
+    result = ChatLoopResult()
+
+    truncated_attempt = FakeClaudeResponse.text(
+        "This partial response was truncated.",
+        stop_reason="max_tokens",
+    ).to_items()
+    recovered_attempt = FakeClaudeResponse.text(
+        "This retried response completed successfully.",
+        stop_reason="end_turn",
+    ).to_items()
+
+    with (
+        patch("app.services.claude.create_anthropic_client", return_value=object()),
+        patch(
+            "app.services.claude._stream_step_with_retry",
+            new=_scripted_stream_factory(truncated_attempt, recovered_attempt),
+        ),
+    ):
+        events = await _collect_generator_events(
+            stream_chat_loop(
+                build_system_prompt(),
+                [{"role": "user", "content": "Help me."}],
+                CHAT_TOOLS,
+                deal_state,
+                adb,
+                result,
+                session_factory=TestingAsyncSessionLocal,
+            )
+        )
+
+    assert events == [
+        ("text", {"chunk": "This partial response was truncated."}),
+        (
+            "retry",
+            {
+                "attempt": 1,
+                "reason": "max_tokens",
+                "reset_text": True,
+                "max_tokens": 8192,
+            },
+        ),
+        ("text", {"chunk": "This retried response completed successfully."}),
+        ("done", {"text": "This retried response completed successfully."}),
+    ]
+    assert result.full_text == "This retried response completed successfully."
 
 
 async def test_stream_chat_loop_emits_partial_done_when_max_steps_reached(
@@ -573,7 +689,10 @@ async def test_stream_chat_loop_emits_partial_done_when_max_steps_reached(
                 "name": "update_quick_actions",
                 "input": {
                     "actions": [
-                        {"label": "Ask OTD", "prompt": "What is the out-the-door price?"}
+                        {
+                            "label": "Ask OTD",
+                            "prompt": "What is the out-the-door price?",
+                        }
                     ]
                 },
             }
@@ -621,7 +740,9 @@ async def test_stream_chat_loop_emits_partial_done_when_max_steps_reached(
 async def test_send_message_sse_orders_panel_updates_before_done(
     async_client, adb, async_buyer_user
 ):
-    session, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
     await adb.commit()
     await adb.refresh(session)
     await adb.refresh(deal_state)
@@ -630,6 +751,17 @@ async def test_send_message_sse_orders_panel_updates_before_done(
     async def fake_stream_chat_loop(*args, **kwargs):
         result = args[5]
         result.full_text = "Hold at $28,500 and get the out-the-door total in writing."
+        merge_usage_summary(
+            result.usage_summary,
+            summarize_usage(
+                SimpleNamespace(
+                    input_tokens=240,
+                    output_tokens=96,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=180,
+                )
+            ),
+        )
         result.tool_calls.append(
             {
                 "name": "update_quick_actions",
@@ -646,28 +778,38 @@ async def test_send_message_sse_orders_panel_updates_before_done(
         result.completed = True
         yield (
             "event: text\n"
-            "data: {\"chunk\": \"Hold at $28,500 and get the out-the-door total in writing.\"}\n\n"
+            'data: {"chunk": "Hold at $28,500 and get the out-the-door total in writing."}\n\n'
         )
         yield (
             "event: tool_result\n"
-            "data: {\"tool\": \"update_quick_actions\", \"data\": {\"actions\": [{\"label\": \"Ask OTD\", \"prompt\": \"What is the out-the-door price?\"}]}}\n\n"
+            'data: {"tool": "update_quick_actions", "data": {"actions": [{"label": "Ask OTD", "prompt": "What is the out-the-door price?"}]}}\n\n'
         )
 
     with (
         patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
         patch(
-            "app.routes.chat.generate_ai_panel_cards",
+            "app.routes.chat.generate_ai_panel_cards_with_usage",
             new=AsyncMock(
-                return_value=[
+                return_value=(
+                    [
+                        {
+                            "type": "briefing",
+                            "title": "Hold Firm",
+                            "content": {
+                                "body": "Their latest counter is still above your target."
+                            },
+                            "priority": "high",
+                        }
+                    ],
                     {
-                        "type": "briefing",
-                        "title": "Hold Firm",
-                        "content": {
-                            "body": "Their latest counter is still above your target."
-                        },
-                        "priority": "high",
-                    }
-                ]
+                        "requests": 1,
+                        "input_tokens": 120,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 60,
+                        "total_tokens": 160,
+                    },
+                )
             ),
         ),
         patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
@@ -687,6 +829,20 @@ async def test_send_message_sse_orders_panel_updates_before_done(
         "tool_result",
         "done",
     ]
+    assert events[-1] == (
+        "done",
+        {
+            "text": "Hold at $28,500 and get the out-the-door total in writing.",
+            "usage": {
+                "requests": 2,
+                "inputTokens": 360,
+                "outputTokens": 136,
+                "cacheCreationInputTokens": 0,
+                "cacheReadInputTokens": 240,
+                "totalTokens": 496,
+            },
+        },
+    )
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(
@@ -702,6 +858,14 @@ async def test_send_message_sse_orders_panel_updates_before_done(
         assert persisted_messages[-1].content == (
             "Hold at $28,500 and get the out-the-door total in writing."
         )
+        assert persisted_messages[-1].usage == {
+            "requests": 2,
+            "inputTokens": 360,
+            "outputTokens": 136,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 240,
+            "totalTokens": 496,
+        }
         assert _normalize_tool_calls(persisted_messages[-1].tool_calls) == snapshot(
             [
                 {
@@ -733,8 +897,25 @@ async def test_send_message_sse_orders_panel_updates_before_done(
             ]
         )
 
+    history_response = await async_client.get(
+        f"/api/chat/{session.id}/messages",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert history_response.status_code == 200
+    history_payload = history_response.json()
+    assert history_payload[-1]["usage"] == {
+        "requests": 2,
+        "inputTokens": 360,
+        "outputTokens": 136,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 240,
+        "totalTokens": 496,
+    }
 
-async def test_send_message_stops_after_stream_failure(async_client, adb, async_buyer_user):
+
+async def test_send_message_stops_after_stream_failure(
+    async_client, adb, async_buyer_user
+):
     session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
     await adb.commit()
     await adb.refresh(session)
@@ -745,12 +926,27 @@ async def test_send_message_stops_after_stream_failure(async_client, adb, async_
         result.failed = True
         yield (
             "event: error\n"
-            "data: {\"message\": \"AI response failed. Please try again.\"}\n\n"
+            'data: {"message": "AI response failed. Please try again."}\n\n'
         )
 
     with (
         patch("app.routes.chat.stream_chat_loop", new=failing_stream_chat_loop),
-        patch("app.routes.chat.generate_ai_panel_cards", new=AsyncMock(return_value=[])),
+        patch(
+            "app.routes.chat.generate_ai_panel_cards_with_usage",
+            new=AsyncMock(
+                return_value=(
+                    [],
+                    {
+                        "requests": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                )
+            ),
+        ),
         patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
     ):
         async with async_client.stream(
@@ -762,9 +958,7 @@ async def test_send_message_stops_after_stream_failure(async_client, adb, async_
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
-    assert events == [
-        ("error", {"message": "AI response failed. Please try again."})
-    ]
+    assert events == [("error", {"message": "AI response failed. Please try again."})]
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(
@@ -779,7 +973,9 @@ async def test_send_message_stops_after_stream_failure(async_client, adb, async_
 @pytest.mark.vcr
 async def test_generate_ai_panel_cards_vcr_smoke():
     if not VCR_CASSETTE.exists() and not settings.ANTHROPIC_API_KEY:
-        pytest.skip("Record the initial cassette with ANTHROPIC_API_KEY before enabling replay")
+        pytest.skip(
+            "Record the initial cassette with ANTHROPIC_API_KEY before enabling replay"
+        )
 
     cards = await generate_ai_panel_cards(
         {
@@ -799,7 +995,11 @@ async def test_generate_ai_panel_cards_vcr_smoke():
                     "identity_confirmation_status": "pending",
                     "identity_confirmed_at": None,
                     "identity_confirmation_source": None,
-                    "intelligence": {"decode": None, "history": None, "valuation": None},
+                    "intelligence": {
+                        "decode": None,
+                        "history": None,
+                        "valuation": None,
+                    },
                 }
             ],
             "deals": [

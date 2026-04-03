@@ -357,7 +357,7 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events with three event types:
+The response is a stream of Server-Sent Events. The core events are `text`, `tool_result`, and terminal `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`.
 
 **`text` event** — Incremental text chunks from the AI:
 ```
@@ -380,19 +380,13 @@ data: {"tool": "update_scorecard", "data": {"score_price": "green", "score_overa
 **`done` event** — Final event with complete response:
 ```
 event: done
-data: {"text": "Based on the numbers you've shared, this is a fair deal.", "tool_calls": [{"name": "update_deal_numbers", "args": {"msrp": 35000, "listing_price": 33500}}]}
-```
-
-**`followup_done` event** — Follow-up text when primary response had tools but no conversational text (two-pass):
-```
-event: followup_done
-data: {"text": "Full follow-up text..."}
+data: {"text": "Based on the numbers you've shared, this is a fair deal.", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
 ```
 
 **Side effects:**
 - Message history is loaded before the user message is saved (prevents duplicate user messages in Claude context)
 - User message is persisted before streaming begins
-- If Claude responds with only tool calls and no text, a follow-up text-only call generates conversational text (two-pass architecture)
+- The step loop may execute multiple model requests before the terminal `done` event; the `usage` payload reflects the full assistant response, not just the final step
 - If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
 - Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
 - Tool call results are applied to the session's deal state
@@ -444,6 +438,14 @@ Get the full message history for a session, ordered by creation time.
         "args": {"year": 2024, "make": "Toyota", "model": "Camry"}
       }
     ],
+    "usage": {
+      "requests": 2,
+      "inputTokens": 1240,
+      "outputTokens": 188,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 620,
+      "totalTokens": 1428
+    },
     "created_at": "2026-03-24T12:00:01Z"
   }
 ]

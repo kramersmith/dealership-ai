@@ -16,11 +16,11 @@ The communication pattern is inherently unidirectional for each request: the cli
 
 ## Decision
 
-Use Server-Sent Events (SSE) for streaming Claude responses from backend to frontend. The client sends a standard HTTP POST to `/api/chat/{session_id}/message`, and the backend returns an SSE stream with three event types:
+Use Server-Sent Events (SSE) for streaming Claude responses from backend to frontend. The client sends a standard HTTP POST to `/api/chat/{session_id}/message`, and the backend returns an SSE stream with core events for text, tool results, and completion.
 
 - `event: text` — conversational text chunks (partial tokens)
 - `event: tool_result` — structured JSON payloads from Claude tool calls (dashboard updates)
-- `event: done` — signals the response is complete
+- `event: done` — signals the response is complete and carries final response metadata such as aggregated token usage for that assistant message
 
 The frontend's `useChat` hook processes these events via `EventSource`-compatible parsing and dispatches tool results to the appropriate Zustand stores.
 

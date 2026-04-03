@@ -599,10 +599,57 @@ class ChatLoopResult:
         self.tool_calls: list[dict] = []
         self.completed: bool = False
         self.failed: bool = False
+        self.usage_summary: dict[str, int] = empty_usage_summary()
 
 
 # Maximum steps (LLM call → tool execution cycles) per turn
 CHAT_LOOP_MAX_STEPS = 5
+
+
+def empty_usage_summary() -> dict[str, int]:
+    return {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def summarize_usage(usage: Any) -> dict[str, int]:
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
+    cache_creation_input_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    cache_read_input_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+    return {
+        "requests": 1,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+
+def merge_usage_summary(total: dict[str, int], delta: dict[str, int]) -> None:
+    for key in (
+        "requests",
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ):
+        total[key] += delta.get(key, 0)
+    total["total_tokens"] = total["input_tokens"] + total["output_tokens"]
+
+
+def _get_escalated_max_tokens(current_max_tokens: int) -> int:
+    """Return the next bounded max_tokens budget for truncation retries."""
+    factor = max(settings.CLAUDE_MAX_TOKENS_ESCALATION_FACTOR, 1)
+    proposed = max(current_max_tokens + 1, current_max_tokens * factor)
+    cap = max(settings.CLAUDE_MAX_TOKENS_CAP, current_max_tokens)
+    return min(proposed, cap)
 
 
 async def _stream_step_with_retry(  # noqa: C901
@@ -863,114 +910,164 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         if step > 0:
             yield f"event: step\ndata: {json.dumps({'step': step})}\n\n"
 
-        step_text = ""
-        tool_use_blocks: list[dict] = []  # {id, name, input}
-        assistant_content_blocks: list[dict] = []  # raw content blocks for messages
+        current_max_tokens = settings.CLAUDE_MAX_TOKENS
+        truncation_retry_count = 0
 
-        # Track streaming state for tool_use accumulation
-        current_tool_id: str | None = None
-        current_tool_name: str | None = None
-        current_tool_input_json = ""
-        json_error_blocks: list[dict] = []  # tool_use blocks with malformed JSON
+        while True:
+            step_text = ""
+            tool_use_blocks: list[dict] = []  # {id, name, input}
+            assistant_content_blocks: list[dict] = []  # raw content blocks for messages
 
-        try:
-            stop_reason = None
-            async for event_type, event_data in _stream_step_with_retry(
-                client,
-                model=settings.CLAUDE_MODEL,
-                max_tokens=settings.CLAUDE_MAX_TOKENS,
-                system=system_prompt,
-                messages=messages,
-                tools=cached_tools,
-                tool_choice={"type": "auto"},
-            ):
-                if event_type == "retry":
-                    yield f"event: retry\ndata: {json.dumps(event_data)}\n\n"
-                    # Reset step accumulators — partial data from stalled stream is unreliable
-                    step_text = ""
-                    tool_use_blocks = []
-                    assistant_content_blocks = []
-                    current_tool_id = None
-                    current_tool_name = None
-                    current_tool_input_json = ""
-                    json_error_blocks = []
-                    continue
+            # Track streaming state for tool_use accumulation
+            current_tool_id: str | None = None
+            current_tool_name: str | None = None
+            current_tool_input_json = ""
+            json_error_blocks: list[dict] = []  # tool_use blocks with malformed JSON
 
-                if event_type == "final_message":
-                    usage = event_data.usage
-                    stop_reason = event_data.stop_reason
-                    logger.info(
-                        "Cache [chat_loop step=%d]: creation=%d read=%d uncached=%d stop=%s",
-                        step,
-                        getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                        getattr(usage, "cache_read_input_tokens", 0) or 0,
-                        usage.input_tokens,
-                        stop_reason,
-                    )
-                    continue
-
-                # event_type == "stream_event"
-                event = event_data
-                if event.type == "content_block_start":
-                    if hasattr(event.content_block, "type"):
-                        if event.content_block.type == "text":
-                            pass  # text accumulates via deltas
-                        elif event.content_block.type == "tool_use":
-                            current_tool_id = event.content_block.id
-                            current_tool_name = event.content_block.name
-                            current_tool_input_json = ""
-
-                elif event.type == "content_block_delta":
-                    if hasattr(event.delta, "type"):
-                        if event.delta.type == "text_delta":
-                            chunk = event.delta.text
-                            step_text += chunk
-                            yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
-                        elif event.delta.type == "input_json_delta":
-                            current_tool_input_json += event.delta.partial_json
-
-                elif event.type == "content_block_stop":
-                    if current_tool_name and current_tool_input_json:
-                        try:
-                            tool_input = json.loads(current_tool_input_json)
-                            if isinstance(tool_input, dict):
-                                tool_use_blocks.append(
-                                    {
-                                        "id": current_tool_id,
-                                        "name": current_tool_name,
-                                        "input": tool_input,
-                                    }
-                                )
-                                assistant_content_blocks.append(
-                                    {
-                                        "type": "tool_use",
-                                        "id": current_tool_id,
-                                        "name": current_tool_name,
-                                        "input": tool_input,
-                                    }
-                                )
-                        except json.JSONDecodeError:
-                            logger.warning(
-                                "Step %d: tool [%s] returned invalid JSON",
-                                step,
-                                current_tool_name,
-                            )
-                            json_error_blocks.append(
-                                {"id": current_tool_id, "name": current_tool_name}
-                            )
+            try:
+                stop_reason = None
+                async for event_type, event_data in _stream_step_with_retry(
+                    client,
+                    model=settings.CLAUDE_MODEL,
+                    max_tokens=current_max_tokens,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=cached_tools,
+                    tool_choice={"type": "auto"},
+                ):
+                    if event_type == "retry":
+                        retry_payload = dict(event_data)
+                        retry_payload.setdefault("reset_text", True)
+                        yield f"event: retry\ndata: {json.dumps(retry_payload)}\n\n"
+                        # Reset step accumulators — partial data from retried streams is unreliable
+                        step_text = ""
+                        tool_use_blocks = []
+                        assistant_content_blocks = []
                         current_tool_id = None
                         current_tool_name = None
                         current_tool_input_json = ""
+                        json_error_blocks = []
+                        continue
 
-            # Capture text as a content block if present
-            if step_text:
-                assistant_content_blocks.insert(0, {"type": "text", "text": step_text})
+                    if event_type == "final_message":
+                        usage = event_data.usage
+                        stop_reason = event_data.stop_reason
+                        merge_usage_summary(
+                            result.usage_summary, summarize_usage(usage)
+                        )
+                        logger.info(
+                            "Cache [chat_loop step=%d]: creation=%d read=%d uncached=%d stop=%s max_tokens=%d",
+                            step,
+                            getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                            getattr(usage, "cache_read_input_tokens", 0) or 0,
+                            usage.input_tokens,
+                            stop_reason,
+                            current_max_tokens,
+                        )
+                        continue
 
-        except Exception:
-            logger.exception("Chat loop step %d failed", step)
-            result.failed = True
-            yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
-            return
+                    # event_type == "stream_event"
+                    event = event_data
+                    if event.type == "content_block_start":
+                        if hasattr(event.content_block, "type"):
+                            if event.content_block.type == "text":
+                                pass  # text accumulates via deltas
+                            elif event.content_block.type == "tool_use":
+                                current_tool_id = event.content_block.id
+                                current_tool_name = event.content_block.name
+                                current_tool_input_json = ""
+
+                    elif event.type == "content_block_delta":
+                        if hasattr(event.delta, "type"):
+                            if event.delta.type == "text_delta":
+                                chunk = event.delta.text
+                                step_text += chunk
+                                yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
+                            elif event.delta.type == "input_json_delta":
+                                current_tool_input_json += event.delta.partial_json
+
+                    elif event.type == "content_block_stop":
+                        if current_tool_name and current_tool_input_json:
+                            try:
+                                tool_input = json.loads(current_tool_input_json)
+                                if isinstance(tool_input, dict):
+                                    tool_use_blocks.append(
+                                        {
+                                            "id": current_tool_id,
+                                            "name": current_tool_name,
+                                            "input": tool_input,
+                                        }
+                                    )
+                                    assistant_content_blocks.append(
+                                        {
+                                            "type": "tool_use",
+                                            "id": current_tool_id,
+                                            "name": current_tool_name,
+                                            "input": tool_input,
+                                        }
+                                    )
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    "Step %d: tool [%s] returned invalid JSON",
+                                    step,
+                                    current_tool_name,
+                                )
+                                json_error_blocks.append(
+                                    {"id": current_tool_id, "name": current_tool_name}
+                                )
+                            current_tool_id = None
+                            current_tool_name = None
+                            current_tool_input_json = ""
+
+                if stop_reason == "max_tokens" and current_tool_name:
+                    logger.warning(
+                        "Step %d: tool [%s] was truncated at max_tokens=%d",
+                        step,
+                        current_tool_name,
+                        current_max_tokens,
+                    )
+                    json_error_blocks.append(
+                        {"id": current_tool_id, "name": current_tool_name}
+                    )
+
+                # Capture text as a content block if present
+                if step_text:
+                    assistant_content_blocks.insert(
+                        0, {"type": "text", "text": step_text}
+                    )
+
+            except Exception:
+                logger.exception("Chat loop step %d failed", step)
+                result.failed = True
+                yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
+                return
+
+            if stop_reason == "max_tokens":
+                next_max_tokens = _get_escalated_max_tokens(current_max_tokens)
+                if (
+                    truncation_retry_count < settings.CLAUDE_MAX_TOKENS_RETRIES
+                    and next_max_tokens > current_max_tokens
+                ):
+                    truncation_retry_count += 1
+                    logger.warning(
+                        "Chat loop step %d hit max_tokens at %d, retrying with %d (%d/%d)",
+                        step,
+                        current_max_tokens,
+                        next_max_tokens,
+                        truncation_retry_count,
+                        settings.CLAUDE_MAX_TOKENS_RETRIES,
+                    )
+                    yield f"event: retry\ndata: {json.dumps({'attempt': truncation_retry_count, 'reason': 'max_tokens', 'reset_text': True, 'max_tokens': next_max_tokens})}\n\n"
+                    current_max_tokens = next_max_tokens
+                    continue
+
+                logger.warning(
+                    "Chat loop step %d exhausted max_tokens retries at budget=%d",
+                    step,
+                    current_max_tokens,
+                )
+
+            break
 
         # Accumulate text across steps — add paragraph break between steps
         # so multi-step text (step 0 text + tool execution + step 1 text)
@@ -984,9 +1081,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         result.full_text += step_text
 
         # If no tool calls, we're done — emit done event
-        if stop_reason == "end_turn" or (
-            not tool_use_blocks and not json_error_blocks
-        ):
+        if stop_reason == "end_turn" or (not tool_use_blocks and not json_error_blocks):
             result.completed = True
             if emit_done_event:
                 yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
