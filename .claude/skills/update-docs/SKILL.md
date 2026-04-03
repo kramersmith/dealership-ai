@@ -22,7 +22,7 @@ Note: Not all changes will affect every doc. Only update docs that are impacted.
 9. **Be accurate** — only document what the code does. Verify against the relevant files.
 10. **Update "Last updated"** at the top (current month, e.g. `2026-03`).
 11. **TOC maintenance** — For any large doc (100+ lines) that was edited, verify it has a Table of Contents and that the TOC reflects the current section structure.
-12. **Edit ADRs** when making a major architectural decision — add a new ADR and update `docs/adr/README.md` index.
+12. **ADR evaluation (required)** — Read `docs/adr/README.md` to see existing ADRs. Explicitly evaluate whether the changes involve a significant architectural decision. ADR-worthy changes include: new integration patterns, new data models or storage strategies, major refactors (replacing one architecture with another), new resilience/retry strategies, new external API integrations, new real-time communication patterns, new AI pipeline architectures. If an ADR is needed, create it using `docs/adr/0000-template.md` (increment the number) and add it to the `docs/adr/README.md` index. If no ADR is needed, state why in your summary.
 
 ## Section mapping — TRD
 

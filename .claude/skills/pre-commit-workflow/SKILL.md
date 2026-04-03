@@ -47,13 +47,14 @@ If any subagent makes fixes, re-run any other checks that may be affected by tho
 
 ---
 
-### Check 1: User Intent / Plan Compliance
+### Check 1: User Intent / Plan Compliance + ADR Check
 
-**Goal:** Find the plan that was used (if any) and ensure the changes adhere to it.
+**Goal:** Find the plan that was used (if any) and ensure the changes adhere to it. Also determine if an ADR is needed.
 
 - Check `docs/plans/` for plan files whose scope matches the changes.
 - If a plan exists: compare implemented changes against it. Identify gaps.
 - If no plan: fall back to the user's original request. Identify gaps.
+- **ADR check:** Read `docs/adr/README.md` for context on existing ADRs. Evaluate whether the changes introduce a significant architectural decision that warrants a new ADR. ADR-worthy changes include: new integration patterns, new data models or storage strategies, major refactors (e.g. replacing a pipeline with a different architecture), new resilience/retry strategies, new external API integrations, new real-time communication patterns. If an ADR is needed, write it using `docs/adr/0000-template.md` and update `docs/adr/README.md`.
 - Fix violations. **Loop until clean.**
 
 ---
@@ -281,7 +282,7 @@ These run **one at a time, in order**. Each must pass before the next starts.
 Pre-Commit Workflow:
 
 Stage 1 — Parallel Review (no tests):
-- [ ] Check 1: User intent / plan compliance
+- [ ] Check 1: User intent / plan compliance + ADR check
 - [ ] Check 2: First-version quality
 - [ ] Check 3: UI design principles
 - [ ] Check 4: Code quality (DRY, maintainable, Enums)

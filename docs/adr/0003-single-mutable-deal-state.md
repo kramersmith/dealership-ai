@@ -1,6 +1,6 @@
 # ADR-0003: Single Mutable Deal State Row
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0010](0010-multi-vehicle-deal-architecture.md)
 **Date:** 2026-03
 **Deciders:** Kramer Smith
 

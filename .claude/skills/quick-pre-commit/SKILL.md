@@ -97,12 +97,13 @@ List violations with `file:line`. Fix them. **Loop until clean.**
 
 ### Agent D: Architecture & Coverage
 
-**Covers:** Plan Compliance, First-Version Quality, Tests Exist, Logging
+**Covers:** Plan Compliance, First-Version Quality, Tests Exist, Logging, ADR Check
 
 - Check `docs/plans/` for a matching plan. Compare changes against plan or user request — identify gaps.
 - Read `docs/first-version-quality.md` — no quick fixes, no patches, clean architecture, no tech debt
 - Every new/changed behavior has corresponding tests; tests assert real behavior (DO NOT RUN tests)
 - Read `docs/logging-guidelines.md` — correct log levels, `logger.exception()` in except blocks, PII safe, `logging.getLogger(__name__)`, format args not f-strings
+- **ADR check:** Read `docs/adr/README.md` for existing ADRs. Evaluate whether the changes introduce a significant architectural decision (new integration patterns, data model changes, major refactors, new resilience strategies, new external APIs, new communication patterns). If so, write an ADR using `docs/adr/0000-template.md` and update the README index.
 
 Write missing tests. List violations with `file:line`. Fix them. **Loop until clean.**
 
@@ -174,7 +175,7 @@ Stage 1 — Parallel Review (no tests):
 - [ ] Agent A: Logic & Safety (correctness, errors, security)
 - [ ] Agent B: Structure & Style (quality, DRY, names, enums)
 - [ ] Agent C: Frontend Quality (UI principles, theme) [skip if no frontend changes]
-- [ ] Agent D: Architecture & Coverage (plan, first-version quality, tests, logging)
+- [ ] Agent D: Architecture & Coverage (plan, first-version quality, tests, logging, ADR check)
 
 Stage 2 — Sequential Gates:
 - [ ] Gate 1: Static checks (make check-static + tsc)
