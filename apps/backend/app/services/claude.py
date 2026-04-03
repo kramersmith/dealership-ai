@@ -597,6 +597,8 @@ class ChatLoopResult:
     def __init__(self) -> None:
         self.full_text: str = ""
         self.tool_calls: list[dict] = []
+        self.completed: bool = False
+        self.failed: bool = False
 
 
 # Maximum steps (LLM call → tool execution cycles) per turn
@@ -832,6 +834,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     result: ChatLoopResult,
     max_steps: int = CHAT_LOOP_MAX_STEPS,
     session_factory=None,
+    emit_done_event: bool = True,
 ) -> AsyncGenerator[str, None]:
     """Step loop: call Claude with tools, execute tool calls, repeat until text response.
 
@@ -965,6 +968,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
         except Exception:
             logger.exception("Chat loop step %d failed", step)
+            result.failed = True
             yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
             return
 
@@ -980,8 +984,12 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         result.full_text += step_text
 
         # If no tool calls, we're done — emit done event
-        if stop_reason == "end_turn" or not tool_use_blocks:
-            yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+        if stop_reason == "end_turn" or (
+            not tool_use_blocks and not json_error_blocks
+        ):
+            result.completed = True
+            if emit_done_event:
+                yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
             logger.info(
                 "Chat loop complete: steps=%d, text_length=%d, tool_calls=%d",
                 step + 1,
@@ -1080,7 +1088,9 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
     # Max steps exceeded — emit whatever we have
     logger.warning("Chat loop hit max steps (%d), emitting partial response", max_steps)
-    yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+    result.completed = True
+    if emit_done_event:
+        yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
 
 
 def build_system_prompt() -> list[dict]:

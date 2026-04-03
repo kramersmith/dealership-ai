@@ -31,6 +31,15 @@ TestingAsyncSessionLocal = async_sessionmaker(
 )
 
 
+@pytest.fixture(scope="module")
+def vcr_config():
+    return {
+        "ignore_localhost": True,
+        "filter_headers": ["authorization", "x-api-key", "anthropic-version"],
+        "decode_compressed_response": True,
+    }
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=sync_engine)

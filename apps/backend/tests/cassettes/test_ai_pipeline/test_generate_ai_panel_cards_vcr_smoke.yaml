@@ -1,0 +1,303 @@
+interactions:
+- request:
+    body: "{\"max_tokens\":2048,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You
+      are an AI insights panel generator for a car buying advisor app. Given the current
+      deal state and the assistant's latest response, generate a set of cards for
+      the buyer's insights panel.\\n\\nThe panel is a live dashboard the buyer glances
+      at \u2014 show the most important information RIGHT NOW.\\n\\nCRITICAL RULES:\\n-
+      NEVER contradict the assistant's advice. The panel structures and supplements
+      the chat response \u2014 it does not give independent opinions or alternative
+      strategies.\\n- Body text must be 1-2 SENTENCES max. Not paragraphs. The chat
+      has the detail \u2014 the panel is a glanceable summary.\\n- Cards must not
+      repeat each other. Each card should convey a distinct piece of information.\\n\\nReturn
+      ONLY a JSON array of card objects. Each card has:\\n- \\\"type\\\": one of \\\"briefing\\\",
+      \\\"numbers\\\", \\\"vehicle\\\", \\\"warning\\\", \\\"tip\\\", \\\"checklist\\\",
+      \\\"success\\\", \\\"comparison\\\"\\n- \\\"title\\\": short card title (2-5
+      words)\\n- \\\"content\\\": card-type-specific content object (schemas below)\\n-
+      \\\"priority\\\": \\\"critical\\\", \\\"high\\\", \\\"normal\\\", or \\\"low\\\"\\n\\nCARD
+      TYPES \u2014 each renders with a distinct visual template:\\n\\nbriefing \u2014
+      Status updates, assessments, next steps, strategy advice.\\n  Visual: Blue left
+      accent border (high/critical) or plain card (normal/low). NEVER red.\\n  Use
+      for: \\\"where we are\\\", \\\"what's happening\\\", \\\"what to do next\\\"\\n
+      \ Schema: {\\\"body\\\": \\\"1-2 sentences. Supports **markdown**.\\\"}\\n\\nwarning
+      \u2014 Genuine problems or dealer tactics that could hurt the buyer.\\n  Visual:
+      Red border + AlertCircle (critical), Yellow border + AlertTriangle (warning).\\n
+      \ Use for: Suspicious charges, scam tactics, hidden fees, missing info creating
+      financial risk, pressure tactics (\\\"let me talk to my manager\\\"), monthly
+      payment misdirection, F&I upsells.\\n  NOT for: Status updates, negotiation
+      progress, next steps, general advice.\\n  Test: \\\"Could this hurt the buyer
+      \u2014 financially, tactically, or informationally?\\\" If no, use briefing.\\n
+      \ Schema: {\\\"severity\\\": \\\"critical|warning\\\", \\\"message\\\": \\\"The
+      concern\\\", \\\"action\\\": \\\"Optional \u2014 what to do\\\"}\\n\\nnumbers
+      \u2014 Financial data display with labeled rows.\\n  Visual: Uppercase section
+      label, label-value rows. Values highlighted good (green), bad (red), or neutral.\\n
+      \ Labels must be SHORT (2-4 words max). Good: \\\"Listing Price\\\", \\\"Your
+      Target\\\", \\\"Gap\\\". Bad: \\\"Fair Range (Gas, 2017-2020, 80-140k mi)\\\"
+      \u2014 too long, will wrap on mobile.\\n  Schema: {\\\"rows\\\": [{\\\"label\\\":
+      \\\"Field\\\", \\\"value\\\": \\\"$32,000\\\", \\\"field\\\": \\\"current_offer\\\",
+      \\\"highlight\\\": \\\"good|bad|neutral\\\"}]}\\n  Editable fields (include
+      \\\"field\\\"): msrp, invoice_price, listing_price, your_target, walk_away_price,
+      current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value\\n
+      \ Groups: {\\\"groups\\\": [{\\\"key\\\": \\\"pricing\\\", \\\"rows\\\": [...]},
+      {\\\"key\\\": \\\"financing\\\", \\\"rows\\\": [...]}]}\\n  IMPORTANT: Use the
+      actual numbers from the deal state. Do NOT confuse listing_price (advertised
+      price before taxes/fees) with financed totals (price + taxes + fees). Labels
+      must accurately describe what the number represents.\\n\\nvehicle \u2014 Vehicle
+      information with specs and risk flags.\\n  Visual: Uppercase contextual label
+      (title), bold vehicle name, specs, danger-colored risk flags.\\n  Title should
+      be a short contextual label (2-4 words) that matches the buyer's situation:\\n
+      \ - Researching/shopping: \\\"Target Vehicle\\\", \\\"Searching For\\\"\\n  -
+      Evaluating a specific vehicle: \\\"Under Consideration\\\", \\\"Candidate\\\"\\n
+      \ - Found a specific listing: \\\"At [Dealer Name]\\\", \\\"[City] Listing\\\"\\n
+      \ - Actively negotiating/bought: \\\"Your Vehicle\\\", \\\"Your Deal\\\"\\n
+      \ - Trade-in: \\\"Trade-In\\\"\\n  - Comparing multiple: \\\"Option A\\\", \\\"Option
+      B\\\"\\n  NEVER use \\\"Your Vehicle\\\" when the buyer is still searching \u2014
+      that implies ownership. NOT the vehicle name (that's in content).\\n  risk_flags
+      should be genuine concerns about the vehicle \u2014 not open preferences. If
+      the buyer says \\\"I'm open to diesel or gas\\\", that is NOT a risk flag. Risk
+      flags are for actual problems: high mileage, accident history, missing records,
+      mechanical concerns.\\n  Schema: {\\\"vehicle\\\": {\\\"year\\\": 2024, \\\"make\\\":
+      \\\"Ford\\\", \\\"model\\\": \\\"F-250\\\", \\\"trim\\\": \\\"XLT\\\", \\\"engine\\\":
+      \\\"7.3L V8\\\", \\\"mileage\\\": 15000, \\\"color\\\": \\\"White\\\", \\\"vin\\\":
+      \\\"1FT...\\\", \\\"role\\\": \\\"primary|trade_in\\\"}, \\\"risk_flags\\\":
+      [\\\"High Mileage\\\"]}\\n\\ntip \u2014 Tactical advice and helpful context.\\n
+      \ Visual: Lightbulb icon in blue, title + body.\\n  Schema: {\\\"body\\\": \\\"Helpful
+      advice. Supports **markdown**.\\\"}\\n\\nchecklist \u2014 Action items with
+      checkboxes.\\n  Visual: Uppercase section label, progress counter, checkbox
+      rows.\\n  Schema: {\\\"items\\\": [{\\\"label\\\": \\\"Item description\\\",
+      \\\"done\\\": false}]}\\n\\nsuccess \u2014 Celebrate a win: savings achieved,
+      deal closed, milestone reached.\\n  Visual: Green left border + CheckCircle
+      icon in green. The \\\"referral screenshot\\\" card.\\n  Use sparingly \u2014
+      only for genuine, measurable wins.\\n  Schema: {\\\"body\\\": \\\"You saved
+      an estimated **$2,400** compared to the dealer's first offer.\\\"}\\n\\ncomparison
+      \u2014 Side-by-side deal comparison when 2+ deals exist.\\n  Visual: Uppercase
+      section label, summary, highlight rows with winner in green, recommendation
+      at bottom.\\n  Use when: Buyer is comparing the same vehicle at different dealers
+      or different vehicles.\\n  Schema: {\\\"summary\\\": \\\"Brief comparison\\\",
+      \\\"recommendation\\\": \\\"Which to choose\\\", \\\"best_deal_id\\\": \\\"id\\\",
+      \\\"highlights\\\": [{\\\"label\\\": \\\"Price\\\", \\\"values\\\": [{\\\"deal_id\\\":
+      \\\"id\\\", \\\"value\\\": \\\"$28,500\\\", \\\"is_winner\\\": true}], \\\"note\\\":
+      \\\"Optional\\\"}]}\\n\\nPRIORITY \u2014 controls emphasis within a card's template:\\n-
+      \\\"critical\\\": Red styling ONLY on warning cards. All other types treat this
+      as \\\"high\\\" (blue).\\n- \\\"high\\\": Important \u2014 next steps, key insights.
+      Blue accent on briefings.\\n- \\\"normal\\\": Supplementary context. No accent.\\n-
+      \\\"low\\\": Nice-to-know background details.\\n\\nPHASE-AWARE COMPOSITION:\\n-
+      Research (at home): 4-6 cards, thorough. Vehicle + briefing + numbers + tip
+      + checklist.\\n- At dealership (negotiation): 3-4 cards MAX. Short text. Briefing
+      (with script) + numbers + warning (if applicable).\\n- Financing/F&I: Warnings
+      dominate (flag upsells). Numbers show total cost impact. 3-4 cards.\\n- Closing:
+      Success card (if savings), numbers (final summary), checklist (post-purchase).
+      2-4 cards.\\n\\nCARD STABILITY \u2014 maintain continuity for data cards:\\n-
+      Vehicle, numbers, checklist: keep the same structure across exchanges, update
+      values.\\n- Briefing, warning, tip, success: regenerate based on latest context.\\n\\nEXAMPLES:\\n\\nEarly
+      research panel:\\n[\\n  {\\\"type\\\": \\\"vehicle\\\", \\\"title\\\": \\\"Target
+      Vehicle\\\", \\\"content\\\": {\\\"vehicle\\\": {\\\"year\\\": 2024, \\\"make\\\":
+      \\\"Toyota\\\", \\\"model\\\": \\\"Camry\\\", \\\"trim\\\": \\\"SE\\\"}, \\\"risk_flags\\\":
+      []}, \\\"priority\\\": \\\"normal\\\"},\\n  {\\\"type\\\": \\\"briefing\\\",
+      \\\"title\\\": \\\"Getting Started\\\", \\\"content\\\": {\\\"body\\\": \\\"Good
+      choice on the Camry SE. Next step: get pre-approved from your bank before visiting
+      dealers.\\\"}, \\\"priority\\\": \\\"high\\\"},\\n  {\\\"type\\\": \\\"tip\\\",
+      \\\"title\\\": \\\"Pre-Approval Advantage\\\", \\\"content\\\": {\\\"body\\\":
+      \\\"A bank pre-approval forces the dealer to compete on price alone and gives
+      you a rate floor.\\\"}, \\\"priority\\\": \\\"normal\\\"},\\n  {\\\"type\\\":
+      \\\"checklist\\\", \\\"title\\\": \\\"Research Checklist\\\", \\\"content\\\":
+      {\\\"items\\\": [{\\\"label\\\": \\\"Get pre-approved financing\\\", \\\"done\\\":
+      false}, {\\\"label\\\": \\\"Check KBB/Edmunds fair purchase price\\\", \\\"done\\\":
+      false}]}, \\\"priority\\\": \\\"normal\\\"}\\n]\\n\\nActive negotiation at dealership:\\n[\\n
+      \ {\\\"type\\\": \\\"warning\\\", \\\"title\\\": \\\"Monthly Payment Misdirection\\\",
+      \\\"content\\\": {\\\"severity\\\": \\\"warning\\\", \\\"message\\\": \\\"Dealer
+      switched from total price to monthly payment. They may be stretching the term
+      to hide the real cost.\\\", \\\"action\\\": \\\"Redirect: 'What's the out-the-door
+      price? I'll worry about monthly later.'\\\"}, \\\"priority\\\": \\\"critical\\\"},\\n
+      \ {\\\"type\\\": \\\"briefing\\\", \\\"title\\\": \\\"Hold at $28,500\\\", \\\"content\\\":
+      {\\\"body\\\": \\\"Their counter of $30,200 is $1,700 above your target. You
+      have leverage \u2014 the car has been listed 45 days.\\\"}, \\\"priority\\\":
+      \\\"high\\\"},\\n  {\\\"type\\\": \\\"numbers\\\", \\\"title\\\": \\\"Price
+      Gap\\\", \\\"content\\\": {\\\"rows\\\": [{\\\"label\\\": \\\"Your Offer\\\",
+      \\\"value\\\": \\\"$28,500\\\", \\\"highlight\\\": \\\"good\\\"}, {\\\"label\\\":
+      \\\"Their Counter\\\", \\\"value\\\": \\\"$30,200\\\", \\\"highlight\\\": \\\"bad\\\"},
+      {\\\"label\\\": \\\"Gap\\\", \\\"value\\\": \\\"$1,700\\\", \\\"highlight\\\":
+      \\\"bad\\\"}]}, \\\"priority\\\": \\\"high\\\"}\\n]\\n\\nDON'T DO THIS:\\n-
+      {\\\"type\\\": \\\"warning\\\", \\\"title\\\": \\\"Price Negotiation in Progress\\\"}
+      \u2014 This is a status update, not a warning. Use briefing.\\n- {\\\"type\\\":
+      \\\"briefing\\\", \\\"priority\\\": \\\"critical\\\"} \u2014 Critical on a briefing
+      renders as blue (same as high), not red. If you need red, use warning.\\n- {\\\"type\\\":
+      \\\"warning\\\", \\\"title\\\": \\\"Next Steps\\\"} \u2014 Next steps are advice,
+      not a problem. Use briefing or tip.\\n\\nNEGOTIATION CONTEXT:\\nIf the deal
+      state contains a \\\"negotiation_context\\\" object, it represents the AI advisor's
+      maintained understanding of the buyer's current situation. This context PERSISTS
+      across conversation turns \u2014 it is the ground truth for where things stand.\\n\\nCRITICAL:
+      Your cards must ALWAYS reflect the negotiation context when present:\\n- The
+      briefing card should reflect the \\\"situation\\\" field \u2014 what is happening
+      right now\\n- If \\\"scripts\\\" are present, include a dedicated briefing card
+      (title: the script label) with the script text in a blockquote-style body. Scripts
+      are word-for-word things the buyer should say.\\n- If \\\"pending_actions\\\"
+      are present, include them as a checklist card\\n- If \\\"key_numbers\\\" are
+      present, use them to build the numbers card (they represent what matters NOW,
+      not all deal numbers)\\n- If \\\"leverage\\\" points are present, include a
+      tip card surfacing the buyer's advantages\\n\\nThe negotiation context takes
+      PRECEDENCE over your own interpretation of the truncated conversation. Do NOT
+      generate cards that ignore or contradict it. If the context says the buyer is
+      waiting for a callback with specific scripts, those scripts MUST appear in the
+      panel even if the latest message was about something else.\\n\\nRULES:\\n- ALWAYS
+      include a vehicle card if a vehicle has been identified\\n- ALWAYS include a
+      briefing card with your current assessment\\n- Include numbers when financial
+      data exists\\n- Body text: 1-2 sentences max. The chat has the detail.\\n- Order:
+      warnings > success > briefings > numbers > comparison > vehicle > tips > checklist\\n-
+      Do NOT repeat the chat response \u2014 supplement with structured data\\n- Checklist
+      items MUST have text labels\\n\\nReturn ONLY the JSON array, no other text.\",\"cache_control\":{\"type\":\"ephemeral\"}},{\"type\":\"text\",\"text\":\"Deal
+      state:\\n```json\\n{\\n  \\\"buyer_context\\\": \\\"reviewing_deal\\\",\\n  \\\"vehicles\\\":
+      [\\n    {\\n      \\\"id\\\": \\\"vehicle-1\\\",\\n      \\\"role\\\": \\\"primary\\\",\\n
+      \     \\\"year\\\": 2024,\\n      \\\"make\\\": \\\"Honda\\\",\\n      \\\"model\\\":
+      \\\"Civic\\\",\\n      \\\"trim\\\": \\\"Sport\\\",\\n      \\\"vin\\\": null,\\n
+      \     \\\"mileage\\\": 1200,\\n      \\\"color\\\": null,\\n      \\\"engine\\\":
+      null,\\n      \\\"identity_confirmation_status\\\": \\\"pending\\\",\\n      \\\"identity_confirmed_at\\\":
+      null,\\n      \\\"identity_confirmation_source\\\": null,\\n      \\\"intelligence\\\":
+      {\\n        \\\"decode\\\": null,\\n        \\\"history\\\": null,\\n        \\\"valuation\\\":
+      null\\n      }\\n    }\\n  ],\\n  \\\"deals\\\": [\\n    {\\n      \\\"id\\\":
+      \\\"deal-1\\\",\\n      \\\"vehicle_id\\\": \\\"vehicle-1\\\",\\n      \\\"dealer_name\\\":
+      \\\"Metro Honda\\\",\\n      \\\"phase\\\": \\\"negotiation\\\",\\n      \\\"numbers\\\":
+      {\\n        \\\"listing_price\\\": 30200,\\n        \\\"your_target\\\": 28500,\\n
+      \       \\\"current_offer\\\": 30000\\n      },\\n      \\\"scorecard\\\": {},\\n
+      \     \\\"health\\\": {},\\n      \\\"red_flags\\\": [],\\n      \\\"information_gaps\\\":
+      []\\n    }\\n  ],\\n  \\\"session_red_flags\\\": [],\\n  \\\"session_information_gaps\\\":
+      [],\\n  \\\"checklist\\\": [],\\n  \\\"ai_panel_cards\\\": [],\\n  \\\"negotiation_context\\\":
+      {\\n    \\\"situation\\\": \\\"Dealer countered at $30,000 and says it is final.\\\",\\n
+      \   \\\"key_numbers\\\": {\\n      \\\"your_target\\\": 28500,\\n      \\\"current_offer\\\":
+      30000\\n    }\\n  }\\n}\\n```\\n\\nRecent conversation:\\n[user]: They came
+      back at 30,000 and say it's final.\\n[assistant]: Hold your target and ask for
+      the out-the-door number before discussing monthly payment.\\n[assistant]: Their
+      latest number is still too high. Hold your target and ask for the out-the-door
+      total before discussing financing.\"}]}],\"model\":\"claude-sonnet-4-6\"}"
+    headers:
+      Accept:
+      - application/json
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '12498'
+      Content-Type:
+      - application/json
+      Host:
+      - api.anthropic.com
+      User-Agent:
+      - AsyncAnthropic/Python 0.86.0
+      X-Stainless-Arch:
+      - arm64
+      X-Stainless-Async:
+      - async:asyncio
+      X-Stainless-Lang:
+      - python
+      X-Stainless-OS:
+      - MacOS
+      X-Stainless-Package-Version:
+      - 0.86.0
+      X-Stainless-Runtime:
+      - CPython
+      X-Stainless-Runtime-Version:
+      - 3.14.3
+      x-stainless-read-timeout:
+      - '120'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-timeout:
+      - NOT_GIVEN
+    method: POST
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    body:
+      string: "{\"model\":\"claude-sonnet-4-6\",\"id\":\"msg_01HoqXiV8XefivPLXoQmvAcB\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"```json\\n[\\n
+        \ {\\n    \\\"type\\\": \\\"warning\\\",\\n    \\\"title\\\": \\\"\\\\\\\"Final
+        Offer\\\\\\\" Pressure\\\",\\n    \\\"content\\\": {\\n      \\\"severity\\\":
+        \\\"warning\\\",\\n      \\\"message\\\": \\\"Dealers often claim an offer
+        is 'final' as a pressure tactic \u2014 it rarely is.\\\",\\n      \\\"action\\\":
+        \\\"Stay calm, hold your target, and ask for the out-the-door number.\\\"\\n
+        \   },\\n    \\\"priority\\\": \\\"critical\\\"\\n  },\\n  {\\n    \\\"type\\\":
+        \\\"briefing\\\",\\n    \\\"title\\\": \\\"Hold at $28,500\\\",\\n    \\\"content\\\":
+        {\\n      \\\"body\\\": \\\"Their $30,000 counter is $1,500 above your target.
+        Don't move on price until you have the full out-the-door total in writing.\\\"\\n
+        \   },\\n    \\\"priority\\\": \\\"high\\\"\\n  },\\n  {\\n    \\\"type\\\":
+        \\\"numbers\\\",\\n    \\\"title\\\": \\\"Price Snapshot\\\",\\n    \\\"content\\\":
+        {\\n      \\\"rows\\\": [\\n        {\\\"label\\\": \\\"Listing Price\\\",
+        \\\"value\\\": \\\"$30,200\\\", \\\"field\\\": \\\"listing_price\\\", \\\"highlight\\\":
+        \\\"neutral\\\"},\\n        {\\\"label\\\": \\\"Their Offer\\\", \\\"value\\\":
+        \\\"$30,000\\\", \\\"field\\\": \\\"current_offer\\\", \\\"highlight\\\":
+        \\\"bad\\\"},\\n        {\\\"label\\\": \\\"Your Target\\\", \\\"value\\\":
+        \\\"$28,500\\\", \\\"field\\\": \\\"your_target\\\", \\\"highlight\\\": \\\"good\\\"},\\n
+        \       {\\\"label\\\": \\\"Gap\\\", \\\"value\\\": \\\"$1,500\\\", \\\"highlight\\\":
+        \\\"bad\\\"}\\n      ]\\n    },\\n    \\\"priority\\\": \\\"high\\\"\\n  },\\n
+        \ {\\n    \\\"type\\\": \\\"vehicle\\\",\\n    \\\"title\\\": \\\"Under Consideration\\\",\\n
+        \   \\\"content\\\": {\\n      \\\"vehicle\\\": {\\n        \\\"year\\\":
+        2024,\\n        \\\"make\\\": \\\"Honda\\\",\\n        \\\"model\\\": \\\"Civic\\\",\\n
+        \       \\\"trim\\\": \\\"Sport\\\",\\n        \\\"mileage\\\": 1200,\\n        \\\"role\\\":
+        \\\"primary\\\"\\n      },\\n      \\\"risk_flags\\\": []\\n    },\\n    \\\"priority\\\":
+        \\\"normal\\\"\\n  },\\n  {\\n    \\\"type\\\": \\\"tip\\\",\\n    \\\"title\\\":
+        \\\"Ask Out-the-Door First\\\",\\n    \\\"content\\\": {\\n      \\\"body\\\":
+        \\\"Before any financing talk, say: **\\\\\\\"Can you show me the full out-the-door
+        price in writing?\\\\\\\"** This prevents payment stretching and keeps the
+        focus on total cost.\\\"\\n    },\\n    \\\"priority\\\": \\\"normal\\\"\\n
+        \ }\\n]\\n```\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":495,\"cache_creation_input_tokens\":2716,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":2716,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":570,\"service_tier\":\"standard\",\"inference_geo\":\"global\"}}"
+    headers:
+      CF-RAY:
+      - 9e6ad0837a52b6f4-DFW
+      Connection:
+      - keep-alive
+      Content-Security-Policy:
+      - default-src 'none'; frame-ancestors 'none'
+      Content-Type:
+      - application/json
+      Date:
+      - Fri, 03 Apr 2026 20:27:40 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Robots-Tag:
+      - none
+      anthropic-organization-id:
+      - 1f80c408-8295-4e62-8068-9686b1fa2511
+      anthropic-ratelimit-input-tokens-limit:
+      - '30000'
+      anthropic-ratelimit-input-tokens-remaining:
+      - '27000'
+      anthropic-ratelimit-input-tokens-reset:
+      - '2026-04-03T20:27:38Z'
+      anthropic-ratelimit-output-tokens-limit:
+      - '8000'
+      anthropic-ratelimit-output-tokens-remaining:
+      - '7000'
+      anthropic-ratelimit-output-tokens-reset:
+      - '2026-04-03T20:27:44Z'
+      anthropic-ratelimit-requests-limit:
+      - '50'
+      anthropic-ratelimit-requests-remaining:
+      - '49'
+      anthropic-ratelimit-requests-reset:
+      - '2026-04-03T20:27:33Z'
+      anthropic-ratelimit-tokens-limit:
+      - '38000'
+      anthropic-ratelimit-tokens-remaining:
+      - '34000'
+      anthropic-ratelimit-tokens-reset:
+      - '2026-04-03T20:27:38Z'
+      cf-cache-status:
+      - DYNAMIC
+      content-length:
+      - '2412'
+      request-id:
+      - req_011CZhU5aXpe2x4L3p438Dyo
+      server-timing:
+      - x-originResponse;dur=8878
+      set-cookie:
+      - _cfuvid=uxy9AJ4dfa7NC9cHo8MU1gQyCD.SLnt5mmDOLi0uwdw-1775248051.7596805-1.0.1.1-178TgBm7OE0YYdbnO2KE__c7Ou2Vijg9vZPuaodG7Ek;
+        HttpOnly; SameSite=None; Secure; Path=/; Domain=api.anthropic.com
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-envoy-upstream-service-time:
+      - '8876'
+    status:
+      code: 200
+      message: OK
+version: 1

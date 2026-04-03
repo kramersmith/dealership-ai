@@ -1,6 +1,6 @@
 # Development Guide
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-03
 
 ---
 
@@ -166,6 +166,22 @@ make test-backend-watch
 ```
 
 Tests use an in-memory SQLite database with table recreation between tests.
+
+AI pipeline testing has its own guide covering fake-model tests, snapshots, SSE coverage, and VCR cassette recording/replay:
+
+- `docs/ai-pipeline-testing.md`
+
+Useful commands for that workflow:
+
+```bash
+# Replay the recorded Claude cassette without network access
+cd apps/backend
+../../.venv/bin/pytest tests/test_ai_pipeline.py --record-mode=none
+
+# Re-record the Claude cassette after a prompt/model change
+cd apps/backend
+../../.venv/bin/pytest tests/test_ai_pipeline.py -k test_generate_ai_panel_cards_vcr_smoke --record-mode=rewrite
+```
 
 ## 8. Linting & Formatting
 

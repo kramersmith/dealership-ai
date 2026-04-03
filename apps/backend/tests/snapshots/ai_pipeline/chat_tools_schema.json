@@ -1,0 +1,668 @@
+[
+  {
+    "description": "Create or update a vehicle. Include vehicle_id to update existing, omit to create new. Only extract from user messages \u2014 never from assistant suggestions.",
+    "input_schema": {
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "engine": {
+          "type": "string"
+        },
+        "make": {
+          "type": "string"
+        },
+        "mileage": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "role": {
+          "description": "Required for new vehicles.",
+          "enum": [
+            "primary",
+            "trade_in"
+          ],
+          "type": "string"
+        },
+        "trim": {
+          "type": "string"
+        },
+        "vehicle_id": {
+          "description": "Existing vehicle ID to update. Omit to add new.",
+          "type": "string"
+        },
+        "vin": {
+          "type": "string"
+        },
+        "year": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "set_vehicle"
+  },
+  {
+    "description": "Create or update a deal. Only use when same vehicle is discussed at a DIFFERENT dealer.",
+    "input_schema": {
+      "properties": {
+        "deal_id": {
+          "description": "Existing deal ID to update. Omit to create new.",
+          "type": "string"
+        },
+        "dealer_name": {
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "research",
+            "initial_contact",
+            "test_drive",
+            "negotiation",
+            "financing",
+            "closing"
+          ],
+          "type": "string"
+        },
+        "vehicle_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "create_deal"
+  },
+  {
+    "description": "Update financial figures on the active deal (or specified deal_id). Only include fields that changed.",
+    "input_schema": {
+      "properties": {
+        "apr": {
+          "type": "number"
+        },
+        "current_offer": {
+          "description": "Current negotiated price BEFORE taxes/fees. NOT the financed total.",
+          "type": "number"
+        },
+        "deal_id": {
+          "description": "Defaults to active deal if omitted.",
+          "type": "string"
+        },
+        "down_payment": {
+          "type": "number"
+        },
+        "invoice_price": {
+          "type": "number"
+        },
+        "listing_price": {
+          "description": "Advertised price BEFORE taxes/fees. NOT the financed total.",
+          "type": "number"
+        },
+        "loan_term_months": {
+          "type": "integer"
+        },
+        "monthly_payment": {
+          "type": "number"
+        },
+        "msrp": {
+          "type": "number"
+        },
+        "trade_in_value": {
+          "type": "number"
+        },
+        "walk_away_price": {
+          "description": "Max the buyer will pay.",
+          "type": "number"
+        },
+        "your_target": {
+          "description": "Buyer's ideal purchase price.",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_deal_numbers"
+  },
+  {
+    "description": "Update the deal phase when it has progressed.",
+    "input_schema": {
+      "properties": {
+        "phase": {
+          "enum": [
+            "research",
+            "initial_contact",
+            "test_drive",
+            "negotiation",
+            "financing",
+            "closing"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "type": "object"
+    },
+    "name": "update_deal_phase"
+  },
+  {
+    "description": "Update deal quality scores. Only include scores that changed.",
+    "input_schema": {
+      "properties": {
+        "deal_id": {
+          "type": "string"
+        },
+        "score_fees": {
+          "enum": [
+            "red",
+            "yellow",
+            "green"
+          ],
+          "type": "string"
+        },
+        "score_financing": {
+          "enum": [
+            "red",
+            "yellow",
+            "green"
+          ],
+          "type": "string"
+        },
+        "score_overall": {
+          "enum": [
+            "red",
+            "yellow",
+            "green"
+          ],
+          "type": "string"
+        },
+        "score_price": {
+          "enum": [
+            "red",
+            "yellow",
+            "green"
+          ],
+          "type": "string"
+        },
+        "score_trade_in": {
+          "enum": [
+            "red",
+            "yellow",
+            "green"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_scorecard"
+  },
+  {
+    "description": "Update the overall deal health assessment. Health summary must reference actual data, recommendation must be specific.",
+    "input_schema": {
+      "properties": {
+        "deal_id": {
+          "description": "Defaults to active deal if omitted.",
+          "type": "string"
+        },
+        "recommendation": {
+          "description": "One specific, actionable next step.",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "good",
+            "fair",
+            "concerning",
+            "bad"
+          ],
+          "type": "string"
+        },
+        "summary": {
+          "description": "1-2 sentence assessment grounded in the buyer's actual data.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "summary",
+        "recommendation"
+      ],
+      "type": "object"
+    },
+    "name": "update_deal_health"
+  },
+  {
+    "description": "Replace the full list of deal-specific red flags. Missing info is NEVER a red flag \u2014 use information gaps for that.",
+    "input_schema": {
+      "properties": {
+        "deal_id": {
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "warning",
+                  "critical"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "severity",
+              "message"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_deal_red_flags"
+  },
+  {
+    "description": "Replace the full list of session/buyer-level red flags.",
+    "input_schema": {
+      "properties": {
+        "flags": {
+          "items": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "warning",
+                  "critical"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "severity",
+              "message"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_session_red_flags"
+  },
+  {
+    "description": "Replace the full list of deal-specific missing information.",
+    "input_schema": {
+      "properties": {
+        "deal_id": {
+          "type": "string"
+        },
+        "gaps": {
+          "items": {
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "priority": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "reason",
+              "priority"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_deal_information_gaps"
+  },
+  {
+    "description": "Replace the full list of session-level missing information.",
+    "input_schema": {
+      "properties": {
+        "gaps": {
+          "items": {
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "priority": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "reason",
+              "priority"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_session_information_gaps"
+  },
+  {
+    "description": "Update deal comparison when 2+ deals exist and comparison has materially changed.",
+    "input_schema": {
+      "properties": {
+        "best_deal_id": {
+          "type": "string"
+        },
+        "highlights": {
+          "items": {
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "values": {
+                "items": {
+                  "properties": {
+                    "deal_id": {
+                      "type": "string"
+                    },
+                    "is_winner": {
+                      "type": "boolean"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "deal_id",
+                    "value",
+                    "is_winner"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "label",
+              "values"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "update_deal_comparison"
+  },
+  {
+    "description": "Update the buyer's negotiation context. Only call when the situation has meaningfully changed (new offer, arrived at dealership, walked out, etc.). Preserve information from previous context that is still relevant.",
+    "input_schema": {
+      "properties": {
+        "key_numbers": {
+          "description": "The 2-4 most important numbers for the current moment.",
+          "items": {
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "leverage": {
+          "description": "Concrete advantages the buyer has. Max 3.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "pending_actions": {
+          "description": "What the buyer should do or wait for. Max 5.",
+          "items": {
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "done": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "maxItems": 5,
+          "type": "array"
+        },
+        "scripts": {
+          "description": "Word-for-word things the buyer should say. Max 3.",
+          "items": {
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "text"
+            ],
+            "type": "object"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "situation": {
+          "description": "ONE short sentence (max 15 words) of what is happening RIGHT NOW.",
+          "type": "string"
+        },
+        "stance": {
+          "description": "The buyer's current negotiation stance.",
+          "enum": [
+            "researching",
+            "preparing",
+            "engaging",
+            "negotiating",
+            "holding",
+            "walking",
+            "waiting",
+            "financing",
+            "closing",
+            "post_purchase"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "situation",
+        "stance"
+      ],
+      "type": "object"
+    },
+    "name": "update_negotiation_context"
+  },
+  {
+    "description": "Update the buyer's action item checklist.",
+    "input_schema": {
+      "properties": {
+        "items": {
+          "items": {
+            "properties": {
+              "done": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "done"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "name": "update_checklist"
+  },
+  {
+    "description": "Update the buyer's situation context when it changes.",
+    "input_schema": {
+      "properties": {
+        "buyer_context": {
+          "enum": [
+            "researching",
+            "reviewing_deal",
+            "at_dealership"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "buyer_context"
+      ],
+      "type": "object"
+    },
+    "name": "update_buyer_context"
+  },
+  {
+    "description": "Switch which deal is active. Only when user wants to discuss a different deal.",
+    "input_schema": {
+      "properties": {
+        "deal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deal_id"
+      ],
+      "type": "object"
+    },
+    "name": "switch_active_deal"
+  },
+  {
+    "description": "Remove a vehicle and its associated deals. Only when user explicitly asks to remove a vehicle.",
+    "input_schema": {
+      "properties": {
+        "vehicle_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "vehicle_id"
+      ],
+      "type": "object"
+    },
+    "name": "remove_vehicle"
+  },
+  {
+    "description": "Update quick action button suggestions. Always call this with 2-3 contextually relevant suggestions.",
+    "input_schema": {
+      "properties": {
+        "actions": {
+          "items": {
+            "properties": {
+              "label": {
+                "description": "2-5 word button text.",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "Full message sent when tapped.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "prompt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "actions"
+      ],
+      "type": "object"
+    },
+    "name": "update_quick_actions"
+  }
+]

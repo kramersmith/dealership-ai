@@ -1,0 +1,54 @@
+{
+  "buyer_context": "researching",
+  "deals": [
+    {
+      "numbers": {
+        "apr": null,
+        "current_offer": null,
+        "down_payment": null,
+        "invoice_price": null,
+        "listing_price": 25000.0,
+        "loan_term_months": null,
+        "monthly_payment": null,
+        "msrp": null,
+        "trade_in_value": null,
+        "walk_away_price": null,
+        "your_target": null
+      },
+      "phase": "research"
+    }
+  ],
+  "tool_calls": [
+    {
+      "args": {
+        "deal_id": "<deal_id>",
+        "vehicle_id": "<vehicle_id>"
+      },
+      "name": "create_deal"
+    },
+    {
+      "args": {
+        "make": "Honda",
+        "model": "Civic",
+        "role": "primary",
+        "vehicle_id": "<vehicle_id>",
+        "year": 2024
+      },
+      "name": "set_vehicle"
+    },
+    {
+      "args": {
+        "listing_price": 25000
+      },
+      "name": "update_deal_numbers"
+    }
+  ],
+  "vehicles": [
+    {
+      "make": null,
+      "model": null,
+      "role": "primary",
+      "year": null
+    }
+  ]
+}

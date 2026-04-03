@@ -1,0 +1,31 @@
+[
+  {
+    "content": {
+      "body": "Their counter is still above your target. Hold your number and push for the out-the-door total."
+    },
+    "priority": "high",
+    "title": "Stand Firm",
+    "type": "briefing"
+  },
+  {
+    "content": {
+      "rows": [
+        {
+          "field": "your_target",
+          "highlight": "good",
+          "label": "Your Target",
+          "value": "$28,500"
+        },
+        {
+          "field": "current_offer",
+          "highlight": "bad",
+          "label": "Their Offer",
+          "value": "$30,200"
+        }
+      ]
+    },
+    "priority": "high",
+    "title": "Price Gap",
+    "type": "numbers"
+  }
+]

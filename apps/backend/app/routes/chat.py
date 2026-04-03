@@ -101,9 +101,19 @@ async def send_message(
 
         # ── Step loop: stream text + execute tools until done ──
         async for sse_event in stream_chat_loop(
-            system_prompt, messages, CHAT_TOOLS, deal_state, db, result
+            system_prompt,
+            messages,
+            CHAT_TOOLS,
+            deal_state,
+            db,
+            result,
+            emit_done_event=False,
         ):
             yield sse_event
+
+        if result.failed:
+            logger.warning("Step loop failed: session_id=%s", session_id)
+            return
 
         logger.debug(
             "Step loop complete: text_length=%d, tool_calls=%d, session_id=%s",
@@ -179,6 +189,8 @@ async def send_message(
             await db.rollback()
             yield f"event: error\ndata: {json.dumps({'message': 'Failed to save response. Please try again.'})}\n\n"
             return
+
+        yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
 
         logger.info(
             "Chat response complete: session_id=%s, text_length=%d, tool_calls=%d",
