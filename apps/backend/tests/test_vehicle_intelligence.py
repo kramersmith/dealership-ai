@@ -4,12 +4,6 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from app.core.security import create_access_token, hash_password
-from app.models.deal_state import DealState
-from app.models.enums import UserRole, VehicleRole
-from app.models.session import ChatSession
-from app.models.user import User
-from app.models.vehicle import Vehicle
 from app.models.vehicle_decode import VehicleDecode
 from app.models.vehicle_history_report import VehicleHistoryReport
 from app.models.vehicle_valuation import VehicleValuation
@@ -30,45 +24,15 @@ from app.services.vehicle_intelligence import (
     normalize_vin,
 )
 
-# ─── Helpers ───
-
-
-def _create_user_and_token(db) -> tuple[User, str]:
-    user = User(
-        email="test@example.com",
-        hashed_password=hash_password("password"),
-        role=UserRole.BUYER,
-        display_name="Test User",
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    token = create_access_token({"sub": user.id})
-    return user, token
-
-
-def _auth_header(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def _create_session_with_deal_state(db, user) -> tuple[ChatSession, DealState]:
-    session = ChatSession(user_id=user.id, title="Test Deal")
-    db.add(session)
-    db.flush()
-    deal_state = DealState(session_id=session.id)
-    db.add(deal_state)
-    db.flush()
-    return session, deal_state
-
-
-def _create_vehicle(
-    db, session_id: str, role: str = VehicleRole.PRIMARY, **kwargs
-) -> Vehicle:
-    vehicle = Vehicle(session_id=session_id, role=role, **kwargs)
-    db.add(vehicle)
-    db.flush()
-    return vehicle
-
+from tests.conftest import (
+    async_create_session_with_deal_state,
+    async_create_user_and_token,
+    async_create_vehicle,
+    auth_header,
+    create_session_with_deal_state,
+    create_user_and_token,
+    create_vehicle,
+)
 
 # ─── normalize_vin ───
 
@@ -289,9 +253,9 @@ def test_extract_amount_invalid_string():
 
 def test_merge_decoded_fields_fills_blanks(db):
     """Decoded fields are merged into vehicle when vehicle fields are empty."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, _ = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     decode = VehicleDecode(
         vehicle_id=vehicle.id,
         provider="nhtsa_vpic",
@@ -315,9 +279,9 @@ def test_merge_decoded_fields_fills_blanks(db):
 
 def test_merge_decoded_fields_does_not_overwrite_existing(db):
     """Existing vehicle fields are not overwritten by decoded fields."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(
+    user, _ = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(
         db, session.id, vin="1HGCM82633A004352", make="HONDA", model="CIVIC"
     )
     decode = VehicleDecode(
@@ -341,26 +305,26 @@ def test_merge_decoded_fields_does_not_overwrite_existing(db):
 # ─── build_vehicle_intelligence_response ───
 
 
-def test_build_vehicle_intelligence_response_empty(db):
+async def test_build_vehicle_intelligence_response_empty(adb):
     """Returns empty response when no intelligence records exist."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
-    db.commit()
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+    await adb.commit()
 
-    result = build_vehicle_intelligence_response(vehicle.id, db)
+    result = await build_vehicle_intelligence_response(vehicle.id, adb)
 
     assert result.decode is None
     assert result.history_report is None
     assert result.valuation is None
 
 
-def test_build_vehicle_intelligence_response_with_records(db):
+async def test_build_vehicle_intelligence_response_with_records(adb):
     """Returns populated response when intelligence records exist."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
-    db.add(
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+    adb.add(
         VehicleDecode(
             vehicle_id=vehicle.id,
             provider="nhtsa_vpic",
@@ -369,7 +333,7 @@ def test_build_vehicle_intelligence_response_with_records(db):
             make="Honda",
         )
     )
-    db.add(
+    adb.add(
         VehicleHistoryReport(
             vehicle_id=vehicle.id,
             provider="vinaudit",
@@ -377,7 +341,7 @@ def test_build_vehicle_intelligence_response_with_records(db):
             vin="1HGCM82633A004352",
         )
     )
-    db.add(
+    adb.add(
         VehicleValuation(
             vehicle_id=vehicle.id,
             provider="vinaudit",
@@ -386,9 +350,9 @@ def test_build_vehicle_intelligence_response_with_records(db):
             amount=20000,
         )
     )
-    db.commit()
+    await adb.commit()
 
-    result = build_vehicle_intelligence_response(vehicle.id, db)
+    result = await build_vehicle_intelligence_response(vehicle.id, adb)
 
     assert result.decode is not None
     assert result.decode.provider == "nhtsa_vpic"
@@ -401,12 +365,11 @@ def test_build_vehicle_intelligence_response_with_records(db):
 # ─── decode_vin (service function) ───
 
 
-@pytest.mark.asyncio
-async def test_decode_vin_returns_cached_when_fresh(db):
+async def test_decode_vin_returns_cached_when_fresh(adb):
     """decode_vin returns an existing VehicleDecode when it is still fresh."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
     existing = VehicleDecode(
         vehicle_id=vehicle.id,
         provider="nhtsa_vpic",
@@ -418,22 +381,21 @@ async def test_decode_vin_returns_cached_when_fresh(db):
         fetched_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=90),
     )
-    db.add(existing)
-    db.commit()
-    db.refresh(existing)
+    adb.add(existing)
+    await adb.commit()
+    await adb.refresh(existing)
 
-    result = await decode_vin(vehicle, db, vin="1HGCM82633A004352")
+    result = await decode_vin(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.id == existing.id
     assert vehicle.make == "Honda"
 
 
-@pytest.mark.asyncio
-async def test_decode_vin_fetches_when_expired(db):
+async def test_decode_vin_fetches_when_expired(adb):
     """decode_vin calls the NHTSA API when the cached decode is expired."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
     expired = VehicleDecode(
         vehicle_id=vehicle.id,
         provider="nhtsa_vpic",
@@ -442,8 +404,8 @@ async def test_decode_vin_fetches_when_expired(db):
         fetched_at=datetime.now(timezone.utc) - timedelta(days=200),
         expires_at=datetime.now(timezone.utc) - timedelta(days=1),
     )
-    db.add(expired)
-    db.commit()
+    adb.add(expired)
+    await adb.commit()
 
     fake_payload = {
         "Make": "Honda",
@@ -462,7 +424,7 @@ async def test_decode_vin_fetches_when_expired(db):
         "app.services.vehicle_intelligence.fetch_vpic_decode",
         new=AsyncMock(return_value=fake_payload),
     ):
-        result = await decode_vin(vehicle, db, vin="1HGCM82633A004352")
+        result = await decode_vin(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.id != expired.id
     assert result.make == "Honda"
@@ -471,12 +433,11 @@ async def test_decode_vin_fetches_when_expired(db):
     assert vehicle.make == "Honda"
 
 
-@pytest.mark.asyncio
-async def test_decode_vin_force_refresh_bypasses_cache(db):
+async def test_decode_vin_force_refresh_bypasses_cache(adb):
     """decode_vin fetches fresh data when force_refresh=True even if cache is valid."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
     fresh = VehicleDecode(
         vehicle_id=vehicle.id,
         provider="nhtsa_vpic",
@@ -486,9 +447,9 @@ async def test_decode_vin_force_refresh_bypasses_cache(db):
         fetched_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=90),
     )
-    db.add(fresh)
-    db.commit()
-    db.refresh(fresh)
+    adb.add(fresh)
+    await adb.commit()
+    await adb.refresh(fresh)
 
     fake_payload = {"Make": "Honda", "Model": "Civic", "ModelYear": "2022"}
     with patch(
@@ -496,7 +457,7 @@ async def test_decode_vin_force_refresh_bypasses_cache(db):
         new=AsyncMock(return_value=fake_payload),
     ) as mock_fetch:
         result = await decode_vin(
-            vehicle, db, vin="1HGCM82633A004352", force_refresh=True
+            vehicle, adb, vin="1HGCM82633A004352", force_refresh=True
         )
 
     mock_fetch.assert_called_once_with("1HGCM82633A004352")
@@ -506,12 +467,11 @@ async def test_decode_vin_force_refresh_bypasses_cache(db):
 # ─── check_history (service function) ───
 
 
-@pytest.mark.asyncio
-async def test_check_history_returns_cached_when_fresh(db):
+async def test_check_history_returns_cached_when_fresh(adb):
     """check_history returns an existing report when it is still fresh."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
     existing = VehicleHistoryReport(
         vehicle_id=vehicle.id,
         provider="vinaudit",
@@ -521,22 +481,21 @@ async def test_check_history_returns_cached_when_fresh(db):
         fetched_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=15),
     )
-    db.add(existing)
-    db.commit()
-    db.refresh(existing)
+    adb.add(existing)
+    await adb.commit()
+    await adb.refresh(existing)
 
-    result = await check_history(vehicle, db, vin="1HGCM82633A004352")
+    result = await check_history(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.id == existing.id
 
 
-@pytest.mark.asyncio
-async def test_check_history_fetches_when_no_cache(db):
+async def test_check_history_fetches_when_no_cache(adb):
     """check_history calls VinAudit API when no cached report exists."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
-    db.commit()
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+    await adb.commit()
 
     fake_payload = {
         "titleBrands": ["Clean"],
@@ -549,7 +508,7 @@ async def test_check_history_fetches_when_no_cache(db):
         "app.services.vehicle_intelligence.fetch_vinaudit_history",
         new=AsyncMock(return_value=fake_payload),
     ):
-        result = await check_history(vehicle, db, vin="1HGCM82633A004352")
+        result = await check_history(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.provider == "vinaudit"
     assert result.status == "success"
@@ -557,30 +516,28 @@ async def test_check_history_fetches_when_no_cache(db):
     assert result.has_salvage is False
 
 
-@pytest.mark.asyncio
-async def test_check_history_raises_when_no_api_key(db):
+async def test_check_history_raises_when_no_api_key(adb):
     """check_history raises ProviderConfigurationError when VINAUDIT_API_KEY is empty."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
-    db.commit()
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+    await adb.commit()
 
     with patch("app.services.vehicle_intelligence.settings") as mock_settings:
         mock_settings.VINAUDIT_API_KEY = ""
         mock_settings.VINAUDIT_HISTORY_URL = "https://example.com"
         with pytest.raises(ProviderConfigurationError, match="VINAUDIT_API_KEY"):
-            await check_history(vehicle, db, vin="1HGCM82633A004352")
+            await check_history(vehicle, adb, vin="1HGCM82633A004352")
 
 
 # ─── get_valuation (service function) ───
 
 
-@pytest.mark.asyncio
-async def test_get_valuation_returns_cached_when_fresh(db):
+async def test_get_valuation_returns_cached_when_fresh(adb):
     """get_valuation returns an existing valuation when it is still fresh."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
     existing = VehicleValuation(
         vehicle_id=vehicle.id,
         provider="vinaudit",
@@ -590,30 +547,29 @@ async def test_get_valuation_returns_cached_when_fresh(db):
         fetched_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=1),
     )
-    db.add(existing)
-    db.commit()
-    db.refresh(existing)
+    adb.add(existing)
+    await adb.commit()
+    await adb.refresh(existing)
 
-    result = await get_valuation(vehicle, db, vin="1HGCM82633A004352")
+    result = await get_valuation(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.id == existing.id
     assert result.amount == 25000
 
 
-@pytest.mark.asyncio
-async def test_get_valuation_fetches_when_no_cache(db):
+async def test_get_valuation_fetches_when_no_cache(adb):
     """get_valuation calls VinAudit API when no cached valuation exists."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
-    db.commit()
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+    await adb.commit()
 
     fake_payload = {"market_value": 22500, "currency": "USD"}
     with patch(
         "app.services.vehicle_intelligence.fetch_vinaudit_valuation",
         new=AsyncMock(return_value=fake_payload),
     ):
-        result = await get_valuation(vehicle, db, vin="1HGCM82633A004352")
+        result = await get_valuation(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.provider == "vinaudit"
     assert result.status == "success"
@@ -621,20 +577,19 @@ async def test_get_valuation_fetches_when_no_cache(db):
     assert result.currency == "USD"
 
 
-@pytest.mark.asyncio
-async def test_get_valuation_partial_when_no_amount(db):
+async def test_get_valuation_partial_when_no_amount(adb):
     """get_valuation sets status to 'partial' when the payload has no recognizable amount."""
-    user, _ = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
-    db.commit()
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+    await adb.commit()
 
     fake_payload = {"error": "insufficient data"}
     with patch(
         "app.services.vehicle_intelligence.fetch_vinaudit_valuation",
         new=AsyncMock(return_value=fake_payload),
     ):
-        result = await get_valuation(vehicle, db, vin="1HGCM82633A004352")
+        result = await get_valuation(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.status == "partial"
     assert result.amount is None
@@ -645,9 +600,9 @@ async def test_get_valuation_partial_when_no_amount(db):
 
 def test_check_history_route_returns_intelligence(client, db):
     """POST check-history endpoint calls service and returns intelligence response."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     db.commit()
 
     async def fake_check_history(vehicle_arg, db_arg, vin=None):
@@ -668,7 +623,7 @@ def test_check_history_route_returns_intelligence(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/check-history",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"vin": "1HGCM82633A004352"},
         )
 
@@ -679,9 +634,9 @@ def test_check_history_route_returns_intelligence(client, db):
 
 def test_check_history_route_503_on_provider_error(client, db):
     """POST check-history returns 503 when provider is not configured."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     db.commit()
 
     with patch(
@@ -692,7 +647,7 @@ def test_check_history_route_503_on_provider_error(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/check-history",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"vin": "1HGCM82633A004352"},
         )
 
@@ -704,9 +659,9 @@ def test_check_history_route_503_on_provider_error(client, db):
 
 def test_get_valuation_route_returns_intelligence(client, db):
     """POST get-valuation endpoint calls service and returns intelligence response."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     db.commit()
 
     async def fake_get_valuation(vehicle_arg, db_arg, vin=None):
@@ -726,7 +681,7 @@ def test_get_valuation_route_returns_intelligence(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/get-valuation",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"vin": "1HGCM82633A004352"},
         )
 
@@ -737,9 +692,9 @@ def test_get_valuation_route_returns_intelligence(client, db):
 
 def test_get_valuation_route_503_on_provider_error(client, db):
     """POST get-valuation returns 503 when provider is not configured."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     db.commit()
 
     with patch(
@@ -750,7 +705,7 @@ def test_get_valuation_route_503_on_provider_error(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/get-valuation",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"vin": "1HGCM82633A004352"},
         )
 
@@ -762,13 +717,13 @@ def test_get_valuation_route_503_on_provider_error(client, db):
 
 def test_upsert_vehicle_from_vin_invalid_vin(client, db):
     """POST upsert-from-vin returns 400 for an invalid VIN."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
     db.commit()
 
     response = client.post(
         f"/api/deal/{session.id}/vehicles/upsert-from-vin",
-        headers=_auth_header(token),
+        headers=auth_header(token),
         json={"vin": "ABC12"},
     )
 
@@ -777,9 +732,9 @@ def test_upsert_vehicle_from_vin_invalid_vin(client, db):
 
 def test_upsert_vehicle_from_vin_returns_existing_when_same_vin(client, db):
     """POST upsert-from-vin returns existing vehicle when VIN already exists in session."""
-    user, token = _create_user_and_token(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, deal_state = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     from app.models.deal import Deal
 
     deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
@@ -790,7 +745,7 @@ def test_upsert_vehicle_from_vin_returns_existing_when_same_vin(client, db):
 
     response = client.post(
         f"/api/deal/{session.id}/vehicles/upsert-from-vin",
-        headers=_auth_header(token),
+        headers=auth_header(token),
         json={"vin": "1HGCM82633A004352"},
     )
 
@@ -804,9 +759,9 @@ def test_upsert_vehicle_from_vin_returns_existing_when_same_vin(client, db):
 
 def test_decode_vin_route_400_on_intelligence_error(client, db):
     """POST decode-vin returns 400 when the service raises VehicleIntelligenceError."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     db.commit()
 
     with patch(
@@ -815,7 +770,7 @@ def test_decode_vin_route_400_on_intelligence_error(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/decode-vin",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"vin": "1HGCM82633A004352"},
         )
 
@@ -824,9 +779,9 @@ def test_decode_vin_route_400_on_intelligence_error(client, db):
 
 def test_decode_vin_route_503_on_provider_error(client, db):
     """POST decode-vin returns 503 when the provider is not configured."""
-    user, token = _create_user_and_token(db)
-    session, _ = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1HGCM82633A004352")
     db.commit()
 
     with patch(
@@ -835,7 +790,7 @@ def test_decode_vin_route_503_on_provider_error(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/decode-vin",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"vin": "1HGCM82633A004352"},
         )
 
@@ -847,9 +802,9 @@ def test_decode_vin_route_503_on_provider_error(client, db):
 
 def test_confirm_vehicle_identity_rejected_clears_fields(client, db):
     """POST confirm-identity with status=rejected clears confirmation fields."""
-    user, token = _create_user_and_token(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(
+    user, token = create_user_and_token(db)
+    session, deal_state = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(
         db,
         session.id,
         vin="1HGCM82633A004352",
@@ -878,7 +833,7 @@ def test_confirm_vehicle_identity_rejected_clears_fields(client, db):
     ):
         response = client.post(
             f"/api/deal/{session.id}/vehicles/{vehicle.id}/confirm-identity",
-            headers=_auth_header(token),
+            headers=auth_header(token),
             json={"status": "rejected"},
         )
 

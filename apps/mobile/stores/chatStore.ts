@@ -69,6 +69,8 @@ interface ChatState {
   streamingText: string
   /** True when the backend is retrying a stalled/failed stream. */
   isRetrying: boolean
+  /** True when the agent is processing tools between steps (no text streaming). */
+  isThinking: boolean
   vinAssistItems: VinAssistItem[]
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
@@ -103,6 +105,7 @@ interface ChatState {
   rejectVinAssist: (vinAssistId: string) => Promise<void>
   /** Submit a VIN from the insights panel — skips the "Decode?" prompt and auto-decodes. */
   submitVinFromPanel: (vin: string) => Promise<void>
+  retrySend: (messageId: string) => Promise<void>
   clearSendError: () => void
 }
 
@@ -119,6 +122,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   quickActionsUpdatedAtResponse: 0,
   streamingText: '',
   isRetrying: false,
+  isThinking: false,
   vinAssistItems: [],
   _sessionJustCreated: false,
   _pendingSend: null,
@@ -342,6 +346,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isSending: false,
             streamingText: '',
             isRetrying: false,
+            isThinking: false,
             aiResponseCount: newResponseCount,
           }))
         } else {
@@ -349,6 +354,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isSending: false,
             streamingText: '',
             isRetrying: false,
+            isThinking: false,
             aiResponseCount: newResponseCount,
           })
         }
@@ -377,10 +383,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId,
         apiContent,
         imageUri,
-        (text) => set({ streamingText: text, isRetrying: false }),
+        (text) => set({ streamingText: text, isRetrying: false, isThinking: false }),
         handleToolResult,
         handleTextDone,
-        () => set({ isRetrying: true })
+        () => set({ isRetrying: true }),
+        () => set({ isThinking: true })
       )
 
       // If no tool results arrived (rare), finalize from onload
@@ -404,14 +411,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
       console.error('[chatStore] sendMessage failed:', message)
-      // Remove the optimistic user message on failure (if we added one)
+      // Keep the optimistic user message but mark it as failed
       set((state) => ({
         messages: optimisticMessageId
-          ? state.messages.filter((msg) => msg.id !== optimisticMessageId)
+          ? state.messages.map((msg) =>
+              msg.id === optimisticMessageId ? { ...msg, status: 'failed' as const } : msg
+            )
           : state.messages,
         isSending: false,
         streamingText: '',
         isRetrying: false,
+        isThinking: false,
         sendError: message,
       }))
     }
@@ -644,6 +654,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Auto-trigger decode — this updates the vinAssistItem to 'decoded'
     // and the VinAssistCard in chat will show the confirm step
     await get().decodeVinAssistForVehicle(vin)
+  },
+
+  retrySend: async (messageId: string) => {
+    const { messages, activeSessionId } = get()
+    const failedMessage = messages.find((m) => m.id === messageId && m.status === 'failed')
+    if (!failedMessage || !activeSessionId) return
+
+    // Remove the failed message and re-send its content
+    set((state) => ({
+      messages: state.messages.filter((m) => m.id !== messageId),
+      sendError: null,
+    }))
+    await get().sendMessage(failedMessage.content, failedMessage.imageUri, failedMessage.quotedCard)
   },
 
   clearSendError: () => {

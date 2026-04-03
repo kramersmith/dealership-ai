@@ -10,7 +10,7 @@ import app.models as _models  # noqa: F401
 from app.core.config import settings
 from app.db.base import Base
 from app.db.seed import seed_users
-from app.db.session import SessionLocal, engine
+from app.db.session import AsyncSessionLocal, sync_engine
 from app.routes import api_router
 
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
@@ -26,14 +26,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     If the schema has changed and you have an existing dev database,
     delete it and restart to pick up the new columns.
     """
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=sync_engine)
     logger.info("Database tables ensured")
 
-    db = SessionLocal()
-    try:
-        seed_users(db)
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as db:
+        await seed_users(db)
 
     yield
 

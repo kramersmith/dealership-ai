@@ -373,7 +373,8 @@ class ApiClient implements ApiService {
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
     onTextDone?: (finalText: string) => void,
-    onRetry?: (data: { attempt: number; reason: string }) => void
+    onRetry?: (data: { attempt: number; reason: string }) => void,
+    onStep?: (data: { step: number }) => void
   ): Promise<Message> {
     // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
     // is buffered by React Native's polyfill and doesn't deliver chunks live.
@@ -431,6 +432,10 @@ class ApiClient implements ApiService {
               sseError = data.message ?? 'An error occurred'
             } else if (eventType === 'retry') {
               onRetry?.(data)
+            } else if (eventType === 'step') {
+              onStep?.(data)
+            } else if (eventType === 'tool_error') {
+              console.warn('[apiClient] Tool execution error:', data.tool, data.error)
             } else if (eventType === 'tool_result' && data.tool) {
               const toolCall: ToolCall = { name: data.tool as ToolCall['name'], args: data.data }
               toolCalls.push(toolCall)

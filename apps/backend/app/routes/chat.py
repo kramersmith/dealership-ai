@@ -3,7 +3,8 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
 from app.core.deps import get_current_user, get_db
@@ -35,14 +36,16 @@ async def send_message(
     session_id: str,
     body: ChatMessageRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     # Verify session belongs to user
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user.id)
-        .first()
+    session_result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
     )
+    session = session_result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -50,12 +53,12 @@ async def send_message(
 
     # Load message history BEFORE saving the new user message
     # (build_messages will append the current message separately)
-    history = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
+    history_result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session_id)
         .order_by(Message.created_at)
-        .all()
     )
+    history = list(history_result.scalars().all())
     history_dicts = [{"role": m.role, "content": m.content} for m in history]
 
     # Save user message
@@ -66,21 +69,24 @@ async def send_message(
         image_url=body.image_url,
     )
     db.add(user_msg)
-    db.commit()
+    await db.commit()
 
     # Load deal state
-    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
-    deal_state_dict = deal_state_to_dict(deal_state, db) if deal_state else None
+    deal_state_result = await db.execute(
+        select(DealState).where(DealState.session_id == session_id)
+    )
+    deal_state = deal_state_result.scalar_one_or_none()
+    deal_state_dict = await deal_state_to_dict(deal_state, db) if deal_state else None
 
     # Load linked session context (if any)
     linked_messages = None
     if session.linked_session_ids:
-        linked_msgs = (
-            db.query(Message)
-            .filter(Message.session_id.in_(session.linked_session_ids))
+        linked_result = await db.execute(
+            select(Message)
+            .where(Message.session_id.in_(session.linked_session_ids))
             .order_by(Message.created_at)
-            .all()
         )
+        linked_msgs = list(linked_result.scalars().all())
         linked_messages = [{"role": m.role, "content": m.content} for m in linked_msgs]
 
     # Build Claude request — system prompt is static, dynamic context goes in messages
@@ -115,7 +121,8 @@ async def send_message(
         if deal_state:
             logger.debug("Generating AI panel cards, session_id=%s", session_id)
             try:
-                updated_state_dict = deal_state_to_dict(deal_state, db)
+                await db.refresh(deal_state)
+                updated_state_dict = await deal_state_to_dict(deal_state, db)
                 ai_cards = await generate_ai_panel_cards(
                     updated_state_dict, result.full_text, all_messages
                 )
@@ -166,10 +173,10 @@ async def send_message(
         session.updated_at = datetime.now(timezone.utc)
 
         try:
-            db.commit()
+            await db.commit()
         except Exception:
             logger.exception("Final db.commit failed: session_id=%s", session_id)
-            db.rollback()
+            await db.rollback()
             yield f"event: error\ndata: {json.dumps({'message': 'Failed to save response. Please try again.'})}\n\n"
             return
 
@@ -184,23 +191,24 @@ async def send_message(
 
 
 @router.get("/{session_id}/messages", response_model=list[MessageResponse])
-def get_messages(
+async def get_messages(
     session_id: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user.id)
-        .first()
+    session_result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
     )
+    session = session_result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    messages = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
+    messages_result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session_id)
         .order_by(Message.created_at)
-        .all()
     )
-    return messages
+    return list(messages_result.scalars().all())

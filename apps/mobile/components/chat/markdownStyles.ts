@@ -11,6 +11,30 @@ interface MarkdownColorParams {
   hrColor: string
 }
 
+/**
+ * Extract assistant-bubble markdown colors from a Tamagui theme object.
+ * Shared by ChatBubble (for assistant messages) and StreamingBubble.
+ */
+export function getAssistantMarkdownColors(theme: {
+  color?: { val: string }
+  colorPress?: { val: string }
+  backgroundHover?: { val: string }
+  background?: { val: string }
+  borderColor?: { val: string }
+}): MarkdownColorParams {
+  const textColor = (theme.color?.val as string) ?? '#ffffff'
+  const bodyTextColor = (theme.colorPress?.val as string) ?? textColor
+  return {
+    textColor,
+    bodyTextColor,
+    codeBg: (theme.backgroundHover?.val as string) ?? '#333333',
+    subtleSurface: (theme.background?.val as string) ?? '#18191A',
+    tableBorderColor: (theme.borderColor?.val as string) ?? '#3E4042',
+    tableHeaderBg: (theme.backgroundHover?.val as string) ?? '#3A3B3C',
+    hrColor: (theme.backgroundHover?.val as string) ?? '#3A3B3C',
+  }
+}
+
 /** Build the react-native-markdown-display stylesheet for assistant bubbles. */
 export function buildMarkdownStyles({
   textColor,

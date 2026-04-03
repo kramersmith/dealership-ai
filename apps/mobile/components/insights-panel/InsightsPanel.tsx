@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, memo } from 'react'
+import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react'
 import { Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { BarChart3 } from '@tamagui/lucide-icons'
@@ -101,7 +101,7 @@ export const InsightsPanel = memo(function InsightsPanel({
 }) {
   const storeDealState = useDealStore((s) => s.dealState)
   const dealState = dealStateOverride ?? storeDealState
-  const cards = dealState?.aiPanelCards ?? []
+  const cards = useMemo(() => dealState?.aiPanelCards ?? [], [dealState])
   const isSending = useChatStore((s) => s.isSending)
 
   // ─── Thinking indicator: stays until cards actually update ───

@@ -62,13 +62,15 @@ FastAPI app with layered architecture:
 Key patterns:
 - Claude integration uses two models: `claude-sonnet-4-6` (`CLAUDE_MODEL`) for primary chat with 17 operational tools and AI panel generation, and `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) for lightweight tasks like session title generation
 - Turn/step terminology: a **turn** is the full outer exchange (user sends message → assistant delivers final response). A **step** is one inner cycle within a turn (LLM call → tool execution → result appended). `stream_chat_loop()` iterates steps (max 5 per turn via `CHAT_LOOP_MAX_STEPS`).
-- Step loop architecture: call Claude with tools → stream text + accumulate tool_use blocks → execute tools (apply to DB, emit SSE events) → append tool results as messages → call Claude again → repeat until text-only response or max steps reached. Implemented in `stream_chat_loop()` in `claude.py`.
+- Step loop architecture: call Claude with tools → stream text + accumulate tool_use blocks → execute tools concurrently (apply to DB, emit SSE events) → append tool results as messages → call Claude again → repeat until text-only response or max steps reached. Implemented in `stream_chat_loop()` in `claude.py`.
+- Concurrent tool execution: tools are classified by priority (`TOOL_PRIORITY` in `deal_state.py`) — structural tools (set_vehicle, remove_vehicle) run first, context switches (create_deal, switch_active_deal) next, then field updates (all others) run concurrently via `asyncio.gather()`. Each concurrent tool gets an isolated `AsyncSession` to avoid shared-session conflicts. Results are emitted as SSE events in original call order. Orchestrated by `build_execution_plan()` and `_execute_tool_batch()` in `claude.py`.
 - After the step loop, a separate panel generation call (`generate_ai_panel_cards()` in `panel.py`) produces AI insight cards using the updated deal state
 - Standalone deal analysis (`analyze_deal()` in `deal_analysis.py`) provides on-demand deal re-assessment outside the chat loop
 - Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (deal state updates from tool execution + panel cards), `done`
 - Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, NegotiationStance, AiCardType, AiCardPriority, IdentityConfirmationStatus, IntelligenceProvider, IntelligenceStatus (all `StrEnum`)
 - Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
 - Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)
+- Async SQLAlchemy (`AsyncSession`, `async_sessionmaker`, `create_async_engine`) for all application DB access. Sync engine retained only for DDL (`create_all`) at startup and Alembic migrations. SQLite uses `aiosqlite` driver; PostgreSQL uses `psycopg` async mode. All service functions and route handlers are `async def`. Session factory: `AsyncSessionLocal` in `app/db/session.py`. DB queries use `select()` / `await db.execute()` pattern (not legacy `db.query()`).
 - SQLite for local dev, PostgreSQL via Docker for production
 - JWT auth with Bearer tokens
 

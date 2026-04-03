@@ -2,13 +2,10 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from app.core.security import hash_password
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import UserRole, VehicleRole
+from app.models.enums import VehicleRole
 from app.models.session import ChatSession
-from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services.post_chat_processing import (
     DEFAULT_BUYER_TITLE,
@@ -19,47 +16,37 @@ from app.services.post_chat_processing import (
     update_session_metadata,
 )
 
-# ─── Helpers ───
+from tests.conftest import async_create_user
+
+# ─── Helpers (test-specific — these commit after each add, unlike conftest) ───
 
 
-def _create_user(db) -> User:
-    user = User(
-        email="test@example.com",
-        hashed_password=hash_password("password"),
-        role=UserRole.BUYER,
-        display_name="Test User",
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-
-def _create_session_with_deal_state(db, user) -> tuple[ChatSession, DealState]:
+async def _create_session_with_deal_state(adb, user) -> tuple[ChatSession, DealState]:
+    """Session with auto_title=True and DEFAULT_BUYER_TITLE (test-specific)."""
     session = ChatSession(user_id=user.id, title=DEFAULT_BUYER_TITLE, auto_title=True)
-    db.add(session)
-    db.flush()
+    adb.add(session)
+    await adb.flush()
     deal_state = DealState(session_id=session.id)
-    db.add(deal_state)
-    db.commit()
-    db.refresh(session)
-    db.refresh(deal_state)
+    adb.add(deal_state)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
     return session, deal_state
 
 
-def _create_vehicle(db, session_id: str, **kwargs) -> Vehicle:
+async def _create_vehicle(adb, session_id: str, **kwargs) -> Vehicle:
     vehicle = Vehicle(session_id=session_id, role=VehicleRole.PRIMARY, **kwargs)
-    db.add(vehicle)
-    db.commit()
-    db.refresh(vehicle)
+    adb.add(vehicle)
+    await adb.commit()
+    await adb.refresh(vehicle)
     return vehicle
 
 
-def _create_deal(db, session_id: str, vehicle_id: str, **kwargs) -> Deal:
+async def _create_deal(adb, session_id: str, vehicle_id: str, **kwargs) -> Deal:
     deal = Deal(session_id=session_id, vehicle_id=vehicle_id, **kwargs)
-    db.add(deal)
-    db.commit()
-    db.refresh(deal)
+    adb.add(deal)
+    await adb.commit()
+    await adb.refresh(deal)
     return deal
 
 
@@ -134,13 +121,12 @@ def test_update_preview_no_update_when_both_empty():
 # --- _update_title via update_session_metadata (with db parameter) ---
 
 
-@pytest.mark.asyncio
-async def test_title_updated_from_vehicle_tool_call(db):
+async def test_title_updated_from_vehicle_tool_call(adb):
     """When set_vehicle tool was called, title is set from Vehicle in DB."""
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(
-        db,
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
+    vehicle = await _create_vehicle(
+        adb,
         session.id,
         year=2024,
         make="Honda",
@@ -148,9 +134,9 @@ async def test_title_updated_from_vehicle_tool_call(db):
         trim="EX",
         identity_confirmation_status="confirmed",
     )
-    deal = _create_deal(db, session.id, vehicle.id)
+    deal = await _create_deal(adb, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
-    db.commit()
+    await adb.commit()
 
     tool_calls = [{"name": "set_vehicle", "args": {}}]
     messages = [{"role": "user", "content": "I want a Honda Civic"}]
@@ -162,23 +148,24 @@ async def test_title_updated_from_vehicle_tool_call(db):
         tool_calls=tool_calls,
         response_text="Great choice!",
         user_message="I want a Honda Civic",
-        db=db,
+        db=adb,
     )
 
     assert session.title == "2024 Honda Civic EX"
 
 
-@pytest.mark.asyncio
-async def test_title_not_updated_when_auto_title_false(db):
+async def test_title_not_updated_when_auto_title_false(adb):
     """When auto_title is False (user set manual title), title is not changed."""
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
     session.auto_title = False
     session.title = "My Custom Title"
-    vehicle = _create_vehicle(db, session.id, year=2024, make="Honda", model="Civic")
-    deal = _create_deal(db, session.id, vehicle.id)
+    vehicle = await _create_vehicle(
+        adb, session.id, year=2024, make="Honda", model="Civic"
+    )
+    deal = await _create_deal(adb, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
-    db.commit()
+    await adb.commit()
 
     tool_calls = [{"name": "set_vehicle", "args": {}}]
     messages = [{"role": "user", "content": "Honda Civic"}]
@@ -190,22 +177,21 @@ async def test_title_not_updated_when_auto_title_false(db):
         tool_calls=tool_calls,
         response_text="Sure!",
         user_message="Honda Civic",
-        db=db,
+        db=adb,
     )
 
     assert session.title == "My Custom Title"
 
 
-@pytest.mark.asyncio
 @patch(
     "app.services.post_chat_processing.generate_session_title", new_callable=AsyncMock
 )
-async def test_title_llm_fallback_when_still_default(mock_generate, db):
+async def test_title_llm_fallback_when_still_default(mock_generate, adb):
     """When title is still default and no vehicle tool called, LLM generates title."""
     mock_generate.return_value = "Financing Question"
 
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
 
     messages = [
         {"role": "user", "content": "How does financing work?"},
@@ -219,23 +205,22 @@ async def test_title_llm_fallback_when_still_default(mock_generate, db):
         tool_calls=[],
         response_text="Let me explain financing options.",
         user_message="How does financing work?",
-        db=db,
+        db=adb,
     )
 
     mock_generate.assert_called_once_with(messages)
     assert session.title == "Financing Question"
 
 
-@pytest.mark.asyncio
 @patch(
     "app.services.post_chat_processing.generate_session_title", new_callable=AsyncMock
 )
-async def test_title_not_regenerated_when_already_non_default(mock_generate, db):
+async def test_title_not_regenerated_when_already_non_default(mock_generate, adb):
     """LLM title generation is skipped when title is already non-default."""
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
     session.title = "2024 Honda Civic"  # Already set by vehicle tool
-    db.commit()
+    await adb.commit()
 
     messages = [{"role": "user", "content": "What about the trim levels?"}]
 
@@ -246,25 +231,24 @@ async def test_title_not_regenerated_when_already_non_default(mock_generate, db)
         tool_calls=[],
         response_text="There are several trims.",
         user_message="What about the trim levels?",
-        db=db,
+        db=adb,
     )
 
     mock_generate.assert_not_called()
     assert session.title == "2024 Honda Civic"
 
 
-@pytest.mark.asyncio
 @patch(
     "app.services.post_chat_processing.generate_session_title", new_callable=AsyncMock
 )
-async def test_dealer_sim_default_title_triggers_llm(mock_generate, db):
+async def test_dealer_sim_default_title_triggers_llm(mock_generate, adb):
     """Dealer simulation default title also triggers LLM fallback."""
     mock_generate.return_value = "Price Negotiation Sim"
 
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
     session.title = DEFAULT_DEALER_TITLE
-    db.commit()
+    await adb.commit()
 
     messages = [{"role": "user", "content": "I want to practice negotiating price"}]
 
@@ -275,29 +259,28 @@ async def test_dealer_sim_default_title_triggers_llm(mock_generate, db):
         tool_calls=[],
         response_text="Let's start the simulation.",
         user_message="I want to practice negotiating price",
-        db=db,
+        db=adb,
     )
 
     mock_generate.assert_called_once()
     assert session.title == "Price Negotiation Sim"
 
 
-@pytest.mark.asyncio
-async def test_title_from_vehicle_without_trim(db):
+async def test_title_from_vehicle_without_trim(adb):
     """Vehicle title without trim omits it (e.g., '2024 Honda Civic')."""
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
-    vehicle = _create_vehicle(
-        db,
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
+    vehicle = await _create_vehicle(
+        adb,
         session.id,
         year=2024,
         make="Honda",
         model="Civic",
         identity_confirmation_status="confirmed",
     )
-    deal = _create_deal(db, session.id, vehicle.id)
+    deal = await _create_deal(adb, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
-    db.commit()
+    await adb.commit()
 
     tool_calls = [{"name": "set_vehicle", "args": {}}]
     messages = [{"role": "user", "content": "Honda Civic"}]
@@ -309,29 +292,28 @@ async def test_title_from_vehicle_without_trim(db):
         tool_calls=tool_calls,
         response_text="Sure!",
         user_message="Honda Civic",
-        db=db,
+        db=adb,
     )
 
     assert session.title == "2024 Honda Civic"
 
 
-@pytest.mark.asyncio
 @patch(
     "app.services.post_chat_processing.generate_session_title", new_callable=AsyncMock
 )
 async def test_title_vehicle_tool_called_but_no_vehicle_make_falls_back_to_llm(
-    mock_generate, db
+    mock_generate, adb
 ):
     """When set_vehicle is called but vehicle has no make, falls back to LLM."""
     mock_generate.return_value = "Car Shopping Help"
 
-    user = _create_user(db)
-    session, deal_state = _create_session_with_deal_state(db, user)
+    user = await async_create_user(adb)
+    session, deal_state = await _create_session_with_deal_state(adb, user)
     # Vehicle with no make (incomplete data)
-    vehicle = _create_vehicle(db, session.id, year=2024)
-    deal = _create_deal(db, session.id, vehicle.id)
+    vehicle = await _create_vehicle(adb, session.id, year=2024)
+    deal = await _create_deal(adb, session.id, vehicle.id)
     deal_state.active_deal_id = deal.id
-    db.commit()
+    await adb.commit()
 
     tool_calls = [{"name": "set_vehicle", "args": {}}]
     messages = [{"role": "user", "content": "Help me buy a car"}]
@@ -343,21 +325,20 @@ async def test_title_vehicle_tool_called_but_no_vehicle_make_falls_back_to_llm(
         tool_calls=tool_calls,
         response_text="Sure!",
         user_message="Help me buy a car",
-        db=db,
+        db=adb,
     )
 
     mock_generate.assert_called_once()
     assert session.title == "Car Shopping Help"
 
 
-@pytest.mark.asyncio
-async def test_title_no_deal_state_skips_vehicle_title(db):
+async def test_title_no_deal_state_skips_vehicle_title(adb):
     """When deal_state is None, vehicle-based title is skipped."""
-    user = _create_user(db)
+    user = await async_create_user(adb)
     session = ChatSession(user_id=user.id, title=DEFAULT_BUYER_TITLE, auto_title=True)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+    adb.add(session)
+    await adb.commit()
+    await adb.refresh(session)
 
     tool_calls = [{"name": "set_vehicle", "args": {}}]
     messages = [{"role": "user", "content": "Honda Civic"}]
@@ -375,7 +356,7 @@ async def test_title_no_deal_state_skips_vehicle_title(db):
             tool_calls=tool_calls,
             response_text="Sure!",
             user_message="Honda Civic",
-            db=db,
+            db=adb,
         )
 
     assert session.title == "Honda Civic Discussion"

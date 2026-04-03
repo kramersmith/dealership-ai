@@ -319,6 +319,7 @@ export interface Message {
   toolCalls?: ToolCall[]
   quotedCard?: QuotedCard
   createdAt: string
+  status?: 'sending' | 'failed'
 }
 
 export interface VinAssistDecodedVehicle {
@@ -413,7 +414,8 @@ export interface ApiService {
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
     onTextDone?: (finalText: string) => void,
-    onRetry?: (data: { attempt: number; reason: string }) => void
+    onRetry?: (data: { attempt: number; reason: string }) => void,
+    onStep?: (data: { step: number }) => void
   ): Promise<Message>
 
   // Deal state

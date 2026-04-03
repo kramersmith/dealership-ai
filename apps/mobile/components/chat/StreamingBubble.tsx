@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import { YStack, XStack, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
 import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
-import { buildMarkdownStyles } from './markdownStyles'
+import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
 import { CopyableBlock } from './CopyableBlock'
 import { extractTextFromNode } from './markdownUtils'
 
@@ -14,16 +14,16 @@ interface StreamingBubbleProps {
 const CHARS_PER_TICK = 3
 /** Minimum ms between markdown re-renders to avoid layout thrash. */
 const RENDER_INTERVAL_MS = 50
+const CURSOR = '▍'
 
 export function StreamingBubble({ text }: StreamingBubbleProps) {
   const [visibleLength, setVisibleLength] = useState(0)
+  const [cursorVisible, setCursorVisible] = useState(true)
   const targetLength = useRef(0)
   const rafId = useRef<number>(0)
   const lastRender = useRef(0)
   const theme = useTheme()
-
-  const themeTextColor = (theme.color?.val as string) ?? '#ffffff'
-  const themeBodyColor = (theme.colorPress?.val as string) ?? themeTextColor
+  const colors = getAssistantMarkdownColors(theme)
 
   // Keep target in sync with incoming text
   useEffect(() => {
@@ -55,17 +55,15 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
     return () => cancelAnimationFrame(rafId.current)
   }, [])
 
-  const visibleText = text.slice(0, visibleLength)
+  // Blink cursor — toggles every 500ms
+  useEffect(() => {
+    const interval = setInterval(() => setCursorVisible((v) => !v), 500)
+    return () => clearInterval(interval)
+  }, [])
 
-  const markdownStyles = buildMarkdownStyles({
-    textColor: themeTextColor,
-    bodyTextColor: themeBodyColor,
-    codeBg: (theme.backgroundHover?.val as string) ?? '#333333',
-    subtleSurface: (theme.background?.val as string) ?? '#18191A',
-    tableBorderColor: (theme.borderColor?.val as string) ?? '#3E4042',
-    tableHeaderBg: (theme.backgroundHover?.val as string) ?? '#3A3B3C',
-    hrColor: (theme.backgroundHover?.val as string) ?? '#3A3B3C',
-  })
+  const visibleText = text.slice(0, visibleLength) + (cursorVisible ? CURSOR : '')
+
+  const markdownStyles = buildMarkdownStyles(colors)
 
   return (
     <XStack justifyContent="flex-start" paddingHorizontal="$4" paddingVertical="$0.5">

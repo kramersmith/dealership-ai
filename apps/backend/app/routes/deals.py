@@ -3,7 +3,8 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal import Deal
@@ -58,52 +59,68 @@ VEHICLE_CORRECTION_FIELDS = set(VEHICLE_FIELDS)
 DEAL_CORRECTION_FIELDS = set(DEAL_NUMBER_FIELDS) | {"dealer_name"}
 
 
-def _get_vehicle_or_404(session_id: str, vehicle_id: str, db: Session) -> Vehicle:
-    vehicle = (
-        db.query(Vehicle)
-        .filter(Vehicle.id == vehicle_id, Vehicle.session_id == session_id)
-        .first()
+async def _get_vehicle_or_404(
+    session_id: str, vehicle_id: str, db: AsyncSession
+) -> Vehicle:
+    result = await db.execute(
+        select(Vehicle).where(
+            Vehicle.id == vehicle_id, Vehicle.session_id == session_id
+        )
     )
+    vehicle = result.scalar_one_or_none()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found in this session")
     return vehicle
 
 
-def _serialize_vehicle(vehicle: Vehicle, db: Session) -> VehicleResponse:
+async def _serialize_vehicle(vehicle: Vehicle, db: AsyncSession) -> VehicleResponse:
     base = VehicleResponse.model_validate(vehicle)
-    base.intelligence = build_vehicle_intelligence_response(vehicle.id, db)
+    base.intelligence = await build_vehicle_intelligence_response(vehicle.id, db)
     return base
 
 
-def _get_deal_state_or_404(
-    session_id: str, user: User, db: Session
+async def _get_deal_state_or_404(
+    session_id: str, user: User, db: AsyncSession
 ) -> tuple[ChatSession, DealState]:
     """Verify session ownership and return deal state."""
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user.id)
-        .first()
+    session_result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id, ChatSession.user_id == user.id
+        )
     )
+    session = session_result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    deal_state = db.query(DealState).filter(DealState.session_id == session_id).first()
+    deal_state_result = await db.execute(
+        select(DealState).where(DealState.session_id == session_id)
+    )
+    deal_state = deal_state_result.scalar_one_or_none()
     if not deal_state:
         raise HTTPException(status_code=404, detail="Deal state not found")
 
     return session, deal_state
 
 
-async def _refresh_after_identity_resolution(
-    session: ChatSession, deal_state: DealState, db: Session
-) -> None:
-    updated_state = deal_state_to_dict(deal_state, db)
-    history = (
-        db.query(Message)
-        .filter(Message.session_id == session.id)
-        .order_by(Message.created_at)
-        .all()
+async def _get_deal_in_session(
+    session_id: str, deal_id: str, db: AsyncSession
+) -> Deal | None:
+    result = await db.execute(
+        select(Deal).where(Deal.id == deal_id, Deal.session_id == session_id)
     )
+    return result.scalar_one_or_none()
+
+
+async def _refresh_after_identity_resolution(
+    session: ChatSession, deal_state: DealState, db: AsyncSession
+) -> None:
+    updated_state = await deal_state_to_dict(deal_state, db)
+    history_result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session.id)
+        .order_by(Message.created_at)
+    )
+    history = list(history_result.scalars().all())
     latest_assistant = next(
         (m for m in reversed(history) if m.role == MessageRole.ASSISTANT), None
     )
@@ -119,7 +136,7 @@ async def _refresh_after_identity_resolution(
                 session.id,
             )
 
-    vehicle_dict = _get_primary_vehicle(deal_state, db)
+    vehicle_dict = await _get_primary_vehicle(deal_state, db)
     if vehicle_dict:
         title = build_vehicle_title(vehicle_dict)
         if title:
@@ -128,14 +145,18 @@ async def _refresh_after_identity_resolution(
 
 
 @router.get("/{session_id}", response_model=DealStateResponse)
-def get_deal_state(
+async def get_deal_state(
     session_id: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    _, deal_state = _get_deal_state_or_404(session_id, user, db)
-    vehicles = db.query(Vehicle).filter(Vehicle.session_id == session_id).all()
-    deals = db.query(Deal).filter(Deal.session_id == session_id).all()
+    _, deal_state = await _get_deal_state_or_404(session_id, user, db)
+    vehicles_result = await db.execute(
+        select(Vehicle).where(Vehicle.session_id == session_id)
+    )
+    vehicles = list(vehicles_result.scalars().all())
+    deals_result = await db.execute(select(Deal).where(Deal.session_id == session_id))
+    deals = list(deals_result.scalars().all())
 
     # Defensive: checklist may be stored as a JSON string instead of a list
     checklist = deal_state.checklist or []
@@ -153,7 +174,7 @@ def get_deal_state(
         session_id=deal_state.session_id,
         buyer_context=deal_state.buyer_context,
         active_deal_id=deal_state.active_deal_id,
-        vehicles=[_serialize_vehicle(v, db) for v in vehicles],
+        vehicles=[await _serialize_vehicle(vehicle, db) for vehicle in vehicles],
         deals=[DealResponse.model_validate(d) for d in deals],
         red_flags=deal_state.red_flags or [],
         information_gaps=deal_state.information_gaps or [],
@@ -171,10 +192,10 @@ async def correct_deal_state(
     session_id: str,
     body: DealCorrectionRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Apply user-initiated corrections to vehicles and/or deals, then re-assess."""
-    _get_deal_state_or_404(session_id, user, db)
+    await _get_deal_state_or_404(session_id, user, db)
 
     if not body.vehicle_corrections and not body.deal_corrections:
         raise HTTPException(status_code=400, detail="No corrections provided")
@@ -184,19 +205,9 @@ async def correct_deal_state(
     # Apply vehicle corrections
     if body.vehicle_corrections:
         for vehicle_correction in body.vehicle_corrections:
-            vehicle = (
-                db.query(Vehicle)
-                .filter(
-                    Vehicle.id == vehicle_correction.vehicle_id,
-                    Vehicle.session_id == session_id,
-                )
-                .first()
+            vehicle = await _get_vehicle_or_404(
+                session_id, vehicle_correction.vehicle_id, db
             )
-            if not vehicle:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Vehicle {vehicle_correction.vehicle_id} not found in this session",
-                )
 
             fields = vehicle_correction.model_dump(
                 exclude_unset=True, exclude={"vehicle_id"}
@@ -213,27 +224,21 @@ async def correct_deal_state(
             )
 
             # Mark any deals linked to this vehicle for re-assessment
-            linked_deals = (
-                db.query(Deal)
-                .filter(
+            linked_result = await db.execute(
+                select(Deal).where(
                     Deal.vehicle_id == vehicle_correction.vehicle_id,
                     Deal.session_id == session_id,
                 )
-                .all()
             )
+            linked_deals = list(linked_result.scalars().all())
             for deal in linked_deals:
                 corrected_deal_ids.add(deal.id)
 
     # Apply deal corrections
     if body.deal_corrections:
         for deal_correction in body.deal_corrections:
-            corrected_deal = (
-                db.query(Deal)
-                .filter(
-                    Deal.id == deal_correction.deal_id,
-                    Deal.session_id == session_id,
-                )
-                .first()
+            corrected_deal = await _get_deal_in_session(
+                session_id, deal_correction.deal_id, db
             )
             if not corrected_deal:
                 raise HTTPException(
@@ -264,10 +269,10 @@ async def correct_deal_state(
             )
 
     try:
-        db.commit()
+        await db.commit()
     except Exception:
         logger.exception("Failed to save corrections: session_id=%s", session_id)
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save corrections")
 
     # Re-assess the first corrected deal via Sonnet
@@ -276,10 +281,10 @@ async def correct_deal_state(
 
     if corrected_deal_ids:
         first_deal_id = next(iter(corrected_deal_ids))
-        assessment_deal = db.query(Deal).filter(Deal.id == first_deal_id).first()
+        assessment_deal = await _get_deal_in_session(session_id, first_deal_id, db)
 
     if assessment_deal:
-        deal_dict = build_deal_assessment_dict(assessment_deal, db)
+        deal_dict = await build_deal_assessment_dict(assessment_deal, db)
         # Use analyst to re-assess health + flags after corrections
         try:
             analysis = await analyze_deal(
@@ -322,10 +327,10 @@ async def correct_deal_state(
             assessment_deal.red_flags = flags
 
         try:
-            db.commit()
+            await db.commit()
         except Exception:
             logger.exception("Failed to save re-assessment: session_id=%s", session_id)
-            db.rollback()
+            await db.rollback()
             raise HTTPException(status_code=500, detail="Failed to save re-assessment")
 
         return DealCorrectionResponse(
@@ -350,86 +355,88 @@ async def correct_deal_state(
     "/{session_id}/vehicles/{vehicle_id}/intelligence",
     response_model=VehicleIntelligenceResponse,
 )
-def get_vehicle_intelligence(
+async def get_vehicle_intelligence(
     session_id: str,
     vehicle_id: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    _get_deal_state_or_404(session_id, user, db)
-    _get_vehicle_or_404(session_id, vehicle_id, db)
-    return build_vehicle_intelligence_response(vehicle_id, db)
+    await _get_deal_state_or_404(session_id, user, db)
+    await _get_vehicle_or_404(session_id, vehicle_id, db)
+    return await build_vehicle_intelligence_response(vehicle_id, db)
 
 
 @router.post("/{session_id}/vehicles/upsert-from-vin", response_model=VehicleResponse)
-def upsert_vehicle_from_vin(
+async def upsert_vehicle_from_vin(
     session_id: str,
     body: VehicleUpsertFromVinRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    session, deal_state = _get_deal_state_or_404(session_id, user, db)
+    session, deal_state = await _get_deal_state_or_404(session_id, user, db)
     try:
         normalized_vin = normalize_vin(body.vin)
     except VehicleIntelligenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if deal_state.active_deal_id:
-        active_deal = (
-            db.query(Deal).filter(Deal.id == deal_state.active_deal_id).first()
+        active_deal = await _get_deal_in_session(
+            session_id, deal_state.active_deal_id, db
         )
         if active_deal:
-            active_vehicle = _get_vehicle_or_404(session_id, active_deal.vehicle_id, db)
+            active_vehicle = await _get_vehicle_or_404(
+                session_id, active_deal.vehicle_id, db
+            )
             if active_vehicle.vin == normalized_vin:
-                return _serialize_vehicle(active_vehicle, db)
+                return await _serialize_vehicle(active_vehicle, db)
 
-    existing_vehicle = (
-        db.query(Vehicle)
-        .filter(
+    existing_vehicle_result = await db.execute(
+        select(Vehicle)
+        .where(
             Vehicle.session_id == session_id,
             Vehicle.role == VehicleRole.PRIMARY,
             Vehicle.vin == normalized_vin,
         )
         .order_by(Vehicle.created_at.desc())
-        .first()
     )
+    existing_vehicle = existing_vehicle_result.scalars().first()
     if existing_vehicle:
-        existing_deal = (
-            db.query(Deal)
-            .filter(
+        existing_deal_result = await db.execute(
+            select(Deal)
+            .where(
                 Deal.session_id == session_id, Deal.vehicle_id == existing_vehicle.id
             )
             .order_by(Deal.created_at.desc())
-            .first()
         )
+        existing_deal = existing_deal_result.scalars().first()
         if existing_deal:
             deal_state.active_deal_id = existing_deal.id
         session.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(existing_vehicle)
-        return _serialize_vehicle(existing_vehicle, db)
+        await db.commit()
+        await db.refresh(existing_vehicle)
+        return await _serialize_vehicle(existing_vehicle, db)
 
     vehicle = Vehicle(
         session_id=session_id, role=VehicleRole.PRIMARY, vin=normalized_vin
     )
     db.add(vehicle)
-    db.flush()
+    await db.flush()
 
     deal = Deal(session_id=session_id, vehicle_id=vehicle.id)
     db.add(deal)
-    db.flush()
+    await db.flush()
     deal_state.active_deal_id = deal.id
 
     session.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(vehicle)
-    return _serialize_vehicle(vehicle, db)
+    await db.commit()
+    await db.refresh(vehicle)
+    return await _serialize_vehicle(vehicle, db)
 
 
 async def _run_intelligence_action(
     action_fn,
     vehicle: Vehicle,
-    db: Session,
+    db: AsyncSession,
     session_id: str,
     vehicle_id: str,
     action_name: str,
@@ -445,15 +452,15 @@ async def _run_intelligence_action(
     )
     try:
         await action_fn(vehicle, db, vin=vin)
-        db.commit()
+        await db.commit()
     except ProviderConfigurationError as exc:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except VehicleIntelligenceError as exc:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         logger.exception(
             "vehicle_intelligence.%s.failed session_id=%s vehicle_id=%s",
             action_name,
@@ -462,8 +469,8 @@ async def _run_intelligence_action(
         )
         raise HTTPException(status_code=502, detail=failure_detail)
 
-    db.refresh(vehicle)
-    return build_vehicle_intelligence_response(vehicle_id, db)
+    await db.refresh(vehicle)
+    return await build_vehicle_intelligence_response(vehicle_id, db)
 
 
 @router.post(
@@ -475,10 +482,10 @@ async def decode_vehicle_vin(
     vehicle_id: str,
     body: VehicleIntelligenceRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    _get_deal_state_or_404(session_id, user, db)
-    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    await _get_deal_state_or_404(session_id, user, db)
+    vehicle = await _get_vehicle_or_404(session_id, vehicle_id, db)
     return await _run_intelligence_action(
         decode_vin,
         vehicle,
@@ -500,10 +507,10 @@ async def confirm_vehicle_identity(
     vehicle_id: str,
     body: VehicleIdentityConfirmationRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    session, deal_state = _get_deal_state_or_404(session_id, user, db)
-    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    session, deal_state = await _get_deal_state_or_404(session_id, user, db)
+    vehicle = await _get_vehicle_or_404(session_id, vehicle_id, db)
 
     if body.status == IdentityConfirmationStatus.CONFIRMED:
         vehicle.identity_confirmation_status = IdentityConfirmationStatus.CONFIRMED
@@ -515,9 +522,9 @@ async def confirm_vehicle_identity(
         vehicle.identity_confirmation_source = None
 
     await _refresh_after_identity_resolution(session, deal_state, db)
-    db.commit()
-    db.refresh(vehicle)
-    return _serialize_vehicle(vehicle, db)
+    await db.commit()
+    await db.refresh(vehicle)
+    return await _serialize_vehicle(vehicle, db)
 
 
 @router.post(
@@ -529,10 +536,10 @@ async def check_vehicle_history(
     vehicle_id: str,
     body: VehicleIntelligenceRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    _get_deal_state_or_404(session_id, user, db)
-    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    await _get_deal_state_or_404(session_id, user, db)
+    vehicle = await _get_vehicle_or_404(session_id, vehicle_id, db)
     return await _run_intelligence_action(
         check_history,
         vehicle,
@@ -554,10 +561,10 @@ async def get_vehicle_valuation(
     vehicle_id: str,
     body: VehicleIntelligenceRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    _get_deal_state_or_404(session_id, user, db)
-    vehicle = _get_vehicle_or_404(session_id, vehicle_id, db)
+    await _get_deal_state_or_404(session_id, user, db)
+    vehicle = await _get_vehicle_or_404(session_id, vehicle_id, db)
     return await _run_intelligence_action(
         get_valuation,
         vehicle,

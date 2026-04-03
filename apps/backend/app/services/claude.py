@@ -7,9 +7,10 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 import anthropic
+from sqlalchemy import select
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.deal_state import DealState
 
@@ -672,10 +673,26 @@ async def _stream_step_with_retry(  # noqa: C901
                 1 + max_retries,
                 exc,
             )
-        except anthropic.APIStatusError:
-            # SDK already retries 429/529 internally — if we get here, it's
-            # exhausted its retries or it's a non-retryable status. Don't retry.
-            raise
+        except anthropic.APIStatusError as exc:
+            # HTTP-level 429/529 are retried by the SDK before the stream opens.
+            # But transient errors (overloaded, rate_limit) can also arrive INSIDE
+            # an already-open SSE stream — the SDK can't retry those because the
+            # HTTP response was already 200. Retry them at the stream level.
+            body = getattr(exc, "body", None)
+            error_type = (
+                body.get("error", {}).get("type", "") if isinstance(body, dict) else ""
+            )
+            if error_type in ("overloaded_error", "rate_limit_error"):
+                last_error = exc
+                reason = "api_overloaded"
+                logger.warning(
+                    "Transient API error during stream (%s), attempt %d/%d",
+                    error_type,
+                    attempt + 1,
+                    1 + max_retries,
+                )
+            else:
+                raise
 
         # Emit retry event (unless this was the last attempt)
         if attempt < max_retries:
@@ -743,14 +760,78 @@ class _SyntheticBlockStopEvent:
     type = "content_block_stop"
 
 
+async def _execute_tool_batch(
+    batch: list[dict],
+    deal_state_id: str,
+    step: int,
+    session_factory,
+) -> AsyncGenerator[tuple[dict, list[dict] | Exception], None]:
+    """Execute a priority batch concurrently with isolated DB sessions.
+
+    Tools within a batch are classified as independent by build_execution_plan().
+    Each tool runs in its own session and transaction:
+    - On success, changes are committed immediately.
+    - On failure, only the failing tool rolls back; other tools' changes persist.
+
+    This is intentional — independent tools update disjoint state (e.g.,
+    update_deal_numbers and update_quick_actions). Partial commits on failure
+    match the pre-concurrency behavior where individual tool errors were already
+    reported back to Claude without rolling back other tools.
+
+    The caller (chat.py) refreshes the main session after all batches complete
+    to pick up committed changes via db.refresh(deal_state).
+
+    Results are yielded in original batch order regardless of completion order.
+    """
+    from app.models.deal_state import DealState
+    from app.services.deal_state import execute_tool
+
+    async def _run_one(
+        index: int, block: dict
+    ) -> tuple[int, dict, list[dict] | Exception]:
+        async with session_factory() as tool_db:
+            try:
+                result = await tool_db.execute(
+                    select(DealState).where(DealState.id == deal_state_id)
+                )
+                tool_deal_state = result.scalar_one_or_none()
+                if tool_deal_state is None:
+                    raise RuntimeError("Deal state no longer exists")
+                applied = await execute_tool(
+                    block["name"], block["input"], tool_deal_state, tool_db
+                )
+                await tool_db.commit()
+                return index, block, applied
+            except Exception as exc:
+                await tool_db.rollback()
+                logger.exception(
+                    "Step %d: tool [%s] execution failed", step, block["name"]
+                )
+                return index, block, exc
+
+    tasks = [
+        asyncio.create_task(_run_one(index, block)) for index, block in enumerate(batch)
+    ]
+    ready: dict[int, tuple[dict, list[dict] | Exception]] = {}
+    next_index = 0
+
+    for task in asyncio.as_completed(tasks):
+        index, block, outcome = await task
+        ready[index] = (block, outcome)
+        while next_index in ready:
+            yield ready.pop(next_index)
+            next_index += 1
+
+
 async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     system_prompt: list[dict],
     messages: list[dict],
     tools: list[dict],
     deal_state: DealState | None,
-    db: Session,
+    db: AsyncSession,
     result: ChatLoopResult,
     max_steps: int = CHAT_LOOP_MAX_STEPS,
+    session_factory=None,
 ) -> AsyncGenerator[str, None]:
     """Step loop: call Claude with tools, execute tool calls, repeat until text response.
 
@@ -761,7 +842,12 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
     Populates `result` with accumulated full_text and all tool_calls.
     """
-    from app.services.deal_state import execute_tool
+    from app.services.deal_state import build_execution_plan
+
+    if session_factory is None:
+        from app.db.session import AsyncSessionLocal
+
+        session_factory = AsyncSessionLocal
 
     client = create_anthropic_client()
 
@@ -769,6 +855,11 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
 
     for step in range(max_steps):
+        # Notify frontend that a new step is starting (after tool execution)
+        # so it can show a thinking indicator during multi-step loops.
+        if step > 0:
+            yield f"event: step\ndata: {json.dumps({'step': step})}\n\n"
+
         step_text = ""
         tool_use_blocks: list[dict] = []  # {id, name, input}
         assistant_content_blocks: list[dict] = []  # raw content blocks for messages
@@ -877,7 +968,15 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
             yield f"event: error\ndata: {json.dumps({'message': 'AI response failed. Please try again.'})}\n\n"
             return
 
-        # Accumulate text across steps
+        # Accumulate text across steps — add paragraph break between steps
+        # so multi-step text (step 0 text + tool execution + step 1 text)
+        # doesn't run together without whitespace.
+        if (
+            step_text
+            and result.full_text
+            and not result.full_text.endswith(("\n", " "))
+        ):
+            result.full_text += "\n\n"
         result.full_text += step_text
 
         # If no tool calls, we're done — emit done event
@@ -917,42 +1016,49 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
             )
             yield f"event: tool_error\ndata: {json.dumps({'tool': err_block['name'], 'error': 'Malformed tool input'})}\n\n"
 
-        for tool_block in tool_use_blocks:
-            tool_name = tool_block["name"]
-            tool_input = tool_block["input"]
-            tool_id = tool_block["id"]
+        if deal_state:
+            execution_plan = build_execution_plan(tool_use_blocks)
+            for batch in execution_plan:
+                async for tool_block, outcome in _execute_tool_batch(
+                    batch, deal_state.id, step, session_factory
+                ):
+                    tool_name = tool_block["name"]
+                    tool_id = tool_block["id"]
+                    logger.debug(
+                        "Step %d: completed tool [%s] keys=%s",
+                        step,
+                        tool_name,
+                        list(tool_block["input"].keys()),
+                    )
 
-            logger.debug(
-                "Step %d: executing tool [%s] keys=%s",
-                step,
-                tool_name,
-                list(tool_input.keys()),
-            )
+                    if isinstance(outcome, Exception):
+                        error_msg = f"Tool '{tool_name}' failed: {outcome}"
+                        tool_result_content.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "is_error": True,
+                                "content": error_msg,
+                            }
+                        )
+                        yield f"event: tool_error\ndata: {json.dumps({'tool': tool_name, 'error': str(outcome)})}\n\n"
+                        continue
 
-            # Execute the tool against deal state
-            if deal_state:
-                try:
-                    applied = execute_tool(tool_name, tool_input, deal_state, db)
+                    applied = outcome
                     result.tool_calls.extend(applied)
                     for tool_call in applied:
                         yield f"event: tool_result\ndata: {json.dumps({'tool': tool_call['name'], 'data': tool_call['args']})}\n\n"
-                except Exception as exc:
-                    logger.exception(
-                        "Step %d: tool [%s] execution failed", step, tool_name
-                    )
-                    # Send detailed error back to Claude so it can adapt
-                    error_msg = f"Tool '{tool_name}' failed: {exc}"
+
                     tool_result_content.append(
                         {
                             "type": "tool_result",
                             "tool_use_id": tool_id,
-                            "is_error": True,
-                            "content": error_msg,
+                            "content": json.dumps({"status": "ok"}),
                         }
                     )
-                    yield f"event: tool_error\ndata: {json.dumps({'tool': tool_name, 'error': str(exc)})}\n\n"
-                    continue
-            else:
+        else:
+            for tool_block in tool_use_blocks:
+                tool_name = tool_block["name"]
                 error_msg = f"Tool '{tool_name}' cannot execute: no deal state exists for this session"
                 logger.warning(
                     "Step %d: tool [%s] called but no deal_state", step, tool_name
@@ -960,22 +1066,12 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                 tool_result_content.append(
                     {
                         "type": "tool_result",
-                        "tool_use_id": tool_id,
+                        "tool_use_id": tool_block["id"],
                         "is_error": True,
                         "content": error_msg,
                     }
                 )
                 yield f"event: tool_error\ndata: {json.dumps({'tool': tool_name, 'error': 'No deal state available'})}\n\n"
-                continue
-
-            # Build success tool_result for Claude
-            tool_result_content.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tool_id,
-                    "content": json.dumps({"status": "ok"}),
-                }
-            )
 
         # Append assistant response + all tool results in a single user message
         messages.append({"role": "assistant", "content": assistant_content_blocks})

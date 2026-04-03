@@ -1,6 +1,7 @@
 import logging
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import hash_password
@@ -27,14 +28,17 @@ SEED_USERS = [
 ]
 
 
-def seed_users(db: Session) -> None:
+async def seed_users(db: AsyncSession) -> None:
     if settings.ENV != "development":
         logger.debug("Skipping user seeding (ENV=%s)", settings.ENV)
         return
 
     try:
         for user_data in SEED_USERS:
-            existing = db.query(User).filter(User.email == user_data["email"]).first()
+            result = await db.execute(
+                select(User).where(User.email == user_data["email"])
+            )
+            existing = result.scalar_one_or_none()
             if existing:
                 logger.debug("Seed user already exists: %s", user_data["email"])
                 continue
@@ -46,9 +50,9 @@ def seed_users(db: Session) -> None:
             )
             db.add(user)
             logger.info("Seeded user: %s (%s)", user_data["email"], user_data["role"])
-        db.commit()
+        await db.commit()
         logger.info("User seeding completed successfully")
     except Exception:
-        db.rollback()
+        await db.rollback()
         logger.exception("Failed to seed users")
         raise

@@ -1,7 +1,8 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
 from app.core.security import create_access_token, hash_password, verify_password
@@ -17,8 +18,9 @@ router = APIRouter()
 @router.post(
     "/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED
 )
-def signup(body: SignupRequest, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == body.email).first()
+async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == body.email))
+    existing = result.scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -29,8 +31,8 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
         display_name=body.display_name,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
 
     token = create_access_token(data={"sub": user.id})
     logger.info("User signed up: user_id=%s, role=%s", user.id, user.role)
@@ -38,8 +40,9 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == body.email).first()
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
         logger.warning("Failed login attempt for email: %s", body.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")

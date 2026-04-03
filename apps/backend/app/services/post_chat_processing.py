@@ -6,7 +6,8 @@ into a single function called after tool calls are applied.
 
 import logging
 
-from sqlalchemy.orm import Session as DbSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.deal import Deal
 from app.models.deal_state import DealState
@@ -29,16 +30,22 @@ def _truncate(text: str, max_length: int) -> str:
     return text[: max_length - 1] + "\u2026"
 
 
-def _get_primary_vehicle(deal_state: DealState, db: DbSession) -> dict | None:
+async def _get_primary_vehicle(deal_state: DealState, db: AsyncSession) -> dict | None:
     """Get the primary vehicle for the active deal as a dict for title generation."""
     if not deal_state.active_deal_id:
         return None
 
-    deal = db.query(Deal).filter(Deal.id == deal_state.active_deal_id).first()
+    deal_result = await db.execute(
+        select(Deal).where(Deal.id == deal_state.active_deal_id)
+    )
+    deal = deal_result.scalar_one_or_none()
     if not deal:
         return None
 
-    vehicle = db.query(Vehicle).filter(Vehicle.id == deal.vehicle_id).first()
+    vehicle_result = await db.execute(
+        select(Vehicle).where(Vehicle.id == deal.vehicle_id)
+    )
+    vehicle = vehicle_result.scalar_one_or_none()
     if (
         not vehicle
         or vehicle.identity_confirmation_status != IdentityConfirmationStatus.CONFIRMED
@@ -74,7 +81,7 @@ async def _update_title(
     deal_state: DealState | None,
     messages: list[dict],
     tool_calls: list[dict],
-    db: DbSession,
+    db: AsyncSession,
 ) -> None:
     """Update session title based on triggers. Only runs if auto_title is True."""
     if not session.auto_title:
@@ -84,7 +91,7 @@ async def _update_title(
 
     # Trigger 1: Vehicle was just set or updated — deterministic title
     if vehicle_tool_called and deal_state:
-        vehicle_dict = _get_primary_vehicle(deal_state, db)
+        vehicle_dict = await _get_primary_vehicle(deal_state, db)
         if vehicle_dict:
             title = build_vehicle_title(vehicle_dict)
             if title:
@@ -115,7 +122,7 @@ async def update_session_metadata(
     tool_calls: list[dict],
     response_text: str,
     user_message: str,
-    db: DbSession,
+    db: AsyncSession,
 ) -> None:
     """Update session preview and title after a chat exchange.
 

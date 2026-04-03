@@ -1,27 +1,25 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_access_token
-from app.db.session import SessionLocal
+from app.db.session import AsyncSessionLocal
 from app.models.user import User
 
 security_scheme = HTTPBearer()
 
 
-def get_db() -> Generator[Session]:
-    db = SessionLocal()
-    try:
+async def get_db() -> AsyncGenerator[AsyncSession]:
+    async with AsyncSessionLocal() as db:
         yield db
-    finally:
-        db.close()
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     payload = decode_access_token(credentials.credentials)
     if payload is None:
@@ -35,7 +33,8 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
         )
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

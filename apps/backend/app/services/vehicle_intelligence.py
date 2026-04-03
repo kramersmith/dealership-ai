@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.enums import IntelligenceProvider, IntelligenceStatus
@@ -25,6 +26,9 @@ DECODE_TTL = timedelta(days=180)
 HISTORY_TTL = timedelta(days=30)
 VALUATION_TTL = timedelta(days=2)
 
+VIN_LENGTH = 17
+VIN_INVALID_CHARS = ("I", "O", "Q")
+
 
 class VehicleIntelligenceError(Exception):
     pass
@@ -43,9 +47,9 @@ class LatestVehicleIntelligence:
 
 def normalize_vin(vin: str) -> str:
     normalized = "".join(ch for ch in vin.upper().strip() if ch.isalnum())
-    if len(normalized) != 17:
-        raise VehicleIntelligenceError("VIN must be 17 characters")
-    if any(ch in normalized for ch in ("I", "O", "Q")):
+    if len(normalized) != VIN_LENGTH:
+        raise VehicleIntelligenceError(f"VIN must be {VIN_LENGTH} characters")
+    if any(ch in normalized for ch in VIN_INVALID_CHARS):
         raise VehicleIntelligenceError("VIN contains invalid characters")
     return normalized
 
@@ -59,39 +63,35 @@ def _is_fresh(expires_at: datetime | None) -> bool:
     return expires_at > datetime.now(timezone.utc)
 
 
-def _latest(query, model_cls):
-    return query.order_by(
-        model_cls.fetched_at.desc().nullslast(), model_cls.created_at.desc()
-    ).first()
+async def _latest(db: AsyncSession, model_cls, *filters):
+    result = await db.execute(
+        select(model_cls)
+        .where(*filters)
+        .order_by(model_cls.fetched_at.desc().nullslast(), model_cls.created_at.desc())
+    )
+    return result.scalar_one_or_none()
 
 
-def get_latest_vehicle_intelligence(
-    vehicle_id: str, db: Session
+async def get_latest_vehicle_intelligence(
+    vehicle_id: str, db: AsyncSession
 ) -> LatestVehicleIntelligence:
     return LatestVehicleIntelligence(
-        decode=_latest(
-            db.query(VehicleDecode).filter(VehicleDecode.vehicle_id == vehicle_id),
-            VehicleDecode,
-        ),
-        history_report=_latest(
-            db.query(VehicleHistoryReport).filter(
-                VehicleHistoryReport.vehicle_id == vehicle_id
-            ),
+        decode=await _latest(db, VehicleDecode, VehicleDecode.vehicle_id == vehicle_id),
+        history_report=await _latest(
+            db,
             VehicleHistoryReport,
+            VehicleHistoryReport.vehicle_id == vehicle_id,
         ),
-        valuation=_latest(
-            db.query(VehicleValuation).filter(
-                VehicleValuation.vehicle_id == vehicle_id
-            ),
-            VehicleValuation,
+        valuation=await _latest(
+            db, VehicleValuation, VehicleValuation.vehicle_id == vehicle_id
         ),
     )
 
 
-def build_vehicle_intelligence_response(
-    vehicle_id: str, db: Session
+async def build_vehicle_intelligence_response(
+    vehicle_id: str, db: AsyncSession
 ) -> VehicleIntelligenceResponse:
-    latest = get_latest_vehicle_intelligence(vehicle_id, db)
+    latest = await get_latest_vehicle_intelligence(vehicle_id, db)
     return VehicleIntelligenceResponse(
         decode=VehicleDecodeResponse.model_validate(latest.decode)
         if latest.decode
@@ -193,16 +193,16 @@ async def fetch_vinaudit_valuation(vin: str) -> dict[str, Any]:
 
 async def decode_vin(
     vehicle: Vehicle,
-    db: Session,
+    db: AsyncSession,
     vin: str | None = None,
     force_refresh: bool = False,
 ) -> VehicleDecode:
     normalized_vin = normalize_vin(vin or vehicle.vin or "")
-    latest = _latest(
-        db.query(VehicleDecode).filter(
-            VehicleDecode.vehicle_id == vehicle.id, VehicleDecode.vin == normalized_vin
-        ),
+    latest = await _latest(
+        db,
         VehicleDecode,
+        VehicleDecode.vehicle_id == vehicle.id,
+        VehicleDecode.vin == normalized_vin,
     )
     if latest and not force_refresh and _is_fresh(latest.expires_at):
         _merge_decoded_fields(vehicle, latest)
@@ -298,17 +298,16 @@ def _extract_bool(payload: dict[str, Any], *keys: str) -> bool:
 
 async def check_history(
     vehicle: Vehicle,
-    db: Session,
+    db: AsyncSession,
     vin: str | None = None,
     force_refresh: bool = False,
 ) -> VehicleHistoryReport:
     normalized_vin = normalize_vin(vin or vehicle.vin or "")
-    latest = _latest(
-        db.query(VehicleHistoryReport).filter(
-            VehicleHistoryReport.vehicle_id == vehicle.id,
-            VehicleHistoryReport.vin == normalized_vin,
-        ),
+    latest = await _latest(
+        db,
         VehicleHistoryReport,
+        VehicleHistoryReport.vehicle_id == vehicle.id,
+        VehicleHistoryReport.vin == normalized_vin,
     )
     if latest and not force_refresh and _is_fresh(latest.expires_at):
         return latest
@@ -365,17 +364,16 @@ def _extract_amount(payload: dict[str, Any]) -> float | None:
 
 async def get_valuation(
     vehicle: Vehicle,
-    db: Session,
+    db: AsyncSession,
     vin: str | None = None,
     force_refresh: bool = False,
 ) -> VehicleValuation:
     normalized_vin = normalize_vin(vin or vehicle.vin or "")
-    latest = _latest(
-        db.query(VehicleValuation).filter(
-            VehicleValuation.vehicle_id == vehicle.id,
-            VehicleValuation.vin == normalized_vin,
-        ),
+    latest = await _latest(
+        db,
         VehicleValuation,
+        VehicleValuation.vehicle_id == vehicle.id,
+        VehicleValuation.vin == normalized_vin,
     )
     if latest and not force_refresh and _is_fresh(latest.expires_at):
         return latest

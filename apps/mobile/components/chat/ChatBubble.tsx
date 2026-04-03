@@ -1,12 +1,13 @@
 import { memo } from 'react'
-import { Animated, Platform } from 'react-native'
+import { Animated, Platform, Pressable } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
 import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
-import { buildMarkdownStyles } from './markdownStyles'
+import { useChatStore } from '@/stores/chatStore'
+import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
 import { CopyableBlock } from './CopyableBlock'
 import { extractTextFromNode } from './markdownUtils'
 import { QuotedCardPreview } from './QuotedCardPreview'
@@ -23,39 +24,22 @@ export const ChatBubble = memo(function ChatBubble({
   const isUser = message.role === 'user'
   const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
   const theme = useTheme()
-  const themeTextColor = (theme.color?.val as string) ?? '#ffffff'
-  const themeBodyColor = (theme.colorPress?.val as string) ?? themeTextColor
+  const assistantColors = getAssistantMarkdownColors(theme)
 
-  const textColor = isUser ? '#ffffff' : themeTextColor
-  // colorPress is a softer variant of the primary text — muted enough for body text
-  // while keeping headings/bold (textColor) visually prominent.
-  const bodyTextColor = isUser ? '#ffffff' : themeBodyColor
-  const codeBg = isUser
-    ? palette.brandPressed
-    : ((theme.backgroundHover?.val as string) ?? '#333333')
-  const subtleSurface = isUser
-    ? 'rgba(255,255,255,0.1)'
-    : ((theme.background?.val as string) ?? '#18191A')
-  const tableBorderColor = isUser
-    ? 'rgba(255,255,255,0.22)'
-    : ((theme.borderColor?.val as string) ?? '#3E4042')
-  const tableHeaderBg = isUser
-    ? 'rgba(255,255,255,0.12)'
-    : ((theme.backgroundHover?.val as string) ?? '#3A3B3C')
-  // Subtle HR divider color — use backgroundHover for a soft, theme-matched line
-  const hrColor = isUser
-    ? 'rgba(255,255,255,0.2)'
-    : ((theme.backgroundHover?.val as string) ?? '#3A3B3C')
-
-  const markdownStyles = buildMarkdownStyles({
-    textColor,
-    bodyTextColor,
-    codeBg,
-    subtleSurface,
-    tableBorderColor,
-    tableHeaderBg,
-    hrColor,
-  })
+  // User bubbles use white-on-brand; assistant bubbles use theme-derived colors
+  const markdownStyles = buildMarkdownStyles(
+    isUser
+      ? {
+          textColor: '#ffffff',
+          bodyTextColor: '#ffffff',
+          codeBg: palette.brandPressed,
+          subtleSurface: 'rgba(255,255,255,0.1)',
+          tableBorderColor: 'rgba(255,255,255,0.22)',
+          tableHeaderBg: 'rgba(255,255,255,0.12)',
+          hrColor: 'rgba(255,255,255,0.2)',
+        }
+      : assistantColors
+  )
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
@@ -145,7 +129,28 @@ export const ChatBubble = memo(function ChatBubble({
             })}
           </Text>
         </YStack>
+        {message.status === 'failed' && <FailedIndicator messageId={message.id} />}
       </XStack>
     </Animated.View>
   )
 })
+
+function FailedIndicator({ messageId }: { messageId: string }) {
+  const retrySend = useChatStore((s) => s.retrySend)
+  return (
+    <Pressable
+      onPress={() => retrySend(messageId)}
+      hitSlop={8}
+      style={{ minHeight: 44, justifyContent: 'center' }}
+    >
+      <XStack alignItems="center" gap="$1.5" paddingTop="$1">
+        <Text fontSize={11} color="$danger">
+          Failed to send
+        </Text>
+        <Text fontSize={11} color="$danger" fontWeight="600">
+          — Tap to retry
+        </Text>
+      </XStack>
+    </Pressable>
+  )
+}

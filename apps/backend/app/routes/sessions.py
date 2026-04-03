@@ -1,8 +1,9 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_user, get_db
 from app.models.deal import Deal
@@ -31,32 +32,41 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _build_deal_summary(
-    deal_state: DealState | None, db: Session
+async def _build_deal_summary(
+    deal_state: DealState | None, db: AsyncSession
 ) -> DealSummary | None:
     """Build a lightweight deal summary from a DealState, or None if absent."""
     if deal_state is None:
         return None
 
-    deal_count = db.query(Deal).filter(Deal.session_id == deal_state.session_id).count()
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(Deal)
+        .where(Deal.session_id == deal_state.session_id)
+    )
+    deal_count = count_result.scalar_one()
 
     # Get active deal or most recent
     active_deal = None
     if deal_state.active_deal_id:
-        active_deal = (
-            db.query(Deal).filter(Deal.id == deal_state.active_deal_id).first()
+        active_result = await db.execute(
+            select(Deal).where(Deal.id == deal_state.active_deal_id)
         )
+        active_deal = active_result.scalar_one_or_none()
     if not active_deal:
-        active_deal = (
-            db.query(Deal)
-            .filter(Deal.session_id == deal_state.session_id)
+        recent_result = await db.execute(
+            select(Deal)
+            .where(Deal.session_id == deal_state.session_id)
             .order_by(Deal.created_at.desc())
-            .first()
         )
+        active_deal = recent_result.scalars().first()
 
     vehicle = None
     if active_deal and active_deal.vehicle_id:
-        vehicle = db.query(Vehicle).filter(Vehicle.id == active_deal.vehicle_id).first()
+        vehicle_result = await db.execute(
+            select(Vehicle).where(Vehicle.id == active_deal.vehicle_id)
+        )
+        vehicle = vehicle_result.scalar_one_or_none()
 
     return DealSummary(
         phase=DealPhase(active_deal.phase)
@@ -75,7 +85,9 @@ def _build_deal_summary(
     )
 
 
-def _session_to_response(session: ChatSession, db: Session) -> SessionResponse:
+async def _session_to_response(
+    session: ChatSession, db: AsyncSession
+) -> SessionResponse:
     """Convert a ChatSession ORM instance to a SessionResponse with deal summary."""
     return SessionResponse(
         id=session.id,
@@ -83,24 +95,24 @@ def _session_to_response(session: ChatSession, db: Session) -> SessionResponse:
         session_type=SessionType(session.session_type),
         linked_session_ids=session.linked_session_ids or [],
         last_message_preview=session.last_message_preview,
-        deal_summary=_build_deal_summary(session.deal_state, db),
+        deal_summary=await _build_deal_summary(session.deal_state, db),
         created_at=session.created_at,
         updated_at=session.updated_at,
     )
 
 
 @router.get("", response_model=list[SessionResponse])
-def list_sessions(
+async def list_sessions(
     q: str | None = Query(
         default=None, description="Search sessions by title or message content"
     ),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     query = (
-        db.query(ChatSession)
-        .options(joinedload(ChatSession.deal_state))
-        .filter(ChatSession.user_id == user.id)
+        select(ChatSession)
+        .options(selectinload(ChatSession.deal_state))
+        .where(ChatSession.user_id == user.id)
     )
 
     if q:
@@ -109,8 +121,8 @@ def list_sessions(
         escaped = q.replace("%", r"\%").replace("_", r"\_")
         search_term = f"%{escaped}%"
         matching_session_ids = (
-            db.query(Message.session_id)
-            .filter(Message.content.ilike(search_term))
+            select(Message.session_id)
+            .where(Message.content.ilike(search_term))
             .distinct()
             .scalar_subquery()
         )
@@ -121,15 +133,16 @@ def list_sessions(
             )
         )
 
-    sessions = query.order_by(ChatSession.updated_at.desc()).all()
-    return [_session_to_response(s, db) for s in sessions]
+    result = await db.execute(query.order_by(ChatSession.updated_at.desc()))
+    sessions = list(result.scalars().all())
+    return [await _session_to_response(session, db) for session in sessions]
 
 
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-def create_session(
+async def create_session(
     body: SessionCreate,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     allowed_role = _SESSION_TYPE_ROLE.get(SessionType(body.session_type))
     if allowed_role and user.role != allowed_role:
@@ -150,7 +163,7 @@ def create_session(
         session_type=body.session_type,
     )
     db.add(session)
-    db.flush()
+    await db.flush()
 
     # Create deal state for this session with optional buyer context
     deal_state = DealState(
@@ -158,47 +171,54 @@ def create_session(
         **({"buyer_context": body.buyer_context} if body.buyer_context else {}),
     )
     db.add(deal_state)
-    db.commit()
-    db.refresh(session)
+    await db.commit()
+
+    # Reload with eager relationship — async sessions cannot lazy-load
+    result = await db.execute(
+        select(ChatSession)
+        .options(selectinload(ChatSession.deal_state))
+        .where(ChatSession.id == session.id)
+    )
+    session = result.scalar_one()
     logger.info(
         "Session created: session_id=%s, user_id=%s, type=%s",
         session.id,
         user.id,
         body.session_type,
     )
-    return _session_to_response(session, db)
+    return await _session_to_response(session, db)
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
-def get_session(
+async def get_session(
     session_id: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    session = (
-        db.query(ChatSession)
-        .options(joinedload(ChatSession.deal_state))
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user.id)
-        .first()
+    result = await db.execute(
+        select(ChatSession)
+        .options(selectinload(ChatSession.deal_state))
+        .where(ChatSession.id == session_id, ChatSession.user_id == user.id)
     )
+    session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return _session_to_response(session, db)
+    return await _session_to_response(session, db)
 
 
 @router.patch("/{session_id}", response_model=SessionResponse)
-def update_session(
+async def update_session(
     session_id: str,
     body: SessionUpdate,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    session = (
-        db.query(ChatSession)
-        .options(joinedload(ChatSession.deal_state))
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user.id)
-        .first()
+    result = await db.execute(
+        select(ChatSession)
+        .options(selectinload(ChatSession.deal_state))
+        .where(ChatSession.id == session_id, ChatSession.user_id == user.id)
     )
+    session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -210,14 +230,15 @@ def update_session(
         # reading another user's chat history via the linked-context feature.
         if body.linked_session_ids:
             unique_ids = set(body.linked_session_ids)
-            owned_count = (
-                db.query(ChatSession)
-                .filter(
+            count_result = await db.execute(
+                select(func.count())
+                .select_from(ChatSession)
+                .where(
                     ChatSession.id.in_(unique_ids),
                     ChatSession.user_id == user.id,
                 )
-                .count()
             )
+            owned_count = count_result.scalar_one()
             if owned_count != len(unique_ids):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -225,38 +246,47 @@ def update_session(
                 )
         session.linked_session_ids = body.linked_session_ids
 
-    db.commit()
-    db.refresh(session)
-    return _session_to_response(session, db)
+    await db.commit()
+    # Reload with eager relationship — refresh alone doesn't reload relationships
+    result = await db.execute(
+        select(ChatSession)
+        .options(selectinload(ChatSession.deal_state))
+        .where(ChatSession.id == session.id)
+    )
+    session = result.scalar_one()
+    return await _session_to_response(session, db)
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_session(
+async def delete_session(
     session_id: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user.id)
-        .first()
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
     )
+    session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
         # Null out active_deal_id before cascade delete — the FK from
         # deal_states → deals has no DB-level ON DELETE SET NULL, so
         # SQLAlchemy would try to delete deals while the reference exists.
-        deal_state = (
-            db.query(DealState).filter(DealState.session_id == session_id).first()
+        deal_state_result = await db.execute(
+            select(DealState).where(DealState.session_id == session_id)
         )
+        deal_state = deal_state_result.scalar_one_or_none()
         if deal_state and deal_state.active_deal_id:
             deal_state.active_deal_id = None
-            db.flush()
-        db.delete(session)
-        db.commit()
+            await db.flush()
+        await db.delete(session)
+        await db.commit()
     except Exception:
-        db.rollback()
+        await db.rollback()
         logger.exception(
             "Failed to delete session: session_id=%s, user_id=%s",
             session_id,
