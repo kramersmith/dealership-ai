@@ -1,7 +1,8 @@
-import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react'
-import { Animated } from 'react-native'
+import { useRef, useEffect, useCallback, useMemo, memo, useState } from 'react'
+import { Animated, Easing } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { BarChart3 } from '@tamagui/lucide-icons'
+import Reanimated, { FadeInLeft, LinearTransition, SlideOutRight } from 'react-native-reanimated'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import type { AiPanelCard, DealState, QuotedCard } from '@/lib/types'
@@ -13,10 +14,27 @@ import { ThinkingIndicator } from './ThinkingIndicator'
 
 // ─── Timing ───
 
-const EXIT_DURATION = 250
-const ENTRANCE_DURATION = 300
-const ENTRANCE_STAGGER = 80
-const SLIDE_DISTANCE = 30
+const ENTRANCE_DURATION = 200
+const ENTRANCE_STAGGER = 22
+const EXIT_DURATION = 170
+const UPDATE_FADE_OUT_MS = 90
+const UPDATE_FADE_IN_MS = 140
+
+function stableCardSignature(card: AiPanelCard): string {
+  return `${card.type}|${card.title}|${card.priority}|${JSON.stringify(card.content ?? {})}`
+}
+
+function buildIdentityKey(cardType: AiPanelCard['type'], occurrence: number): string {
+  // Identity should ignore mutable card content/title so replacements animate in-place.
+  return `${cardType}#${occurrence}`
+}
+
+interface RenderCard {
+  id: string
+  identity: string
+  signature: string
+  card: AiPanelCard
+}
 // ─── Panel Header ───
 
 function PanelHeader({ thinking }: { thinking: boolean }) {
@@ -52,45 +70,134 @@ function EmptyState() {
   )
 }
 
-// ─── Staggered Card ───
+// ─── Animated Card ───
 
-function StaggeredCard({
+function AnimatedCard({
+  cardId,
   card,
   index,
+  signature,
+  isGrowthActive,
+  onGrowthDone,
   onSendReply,
 }: {
+  cardId: string
   card: AiPanelCard
   index: number
+  signature: string
+  isGrowthActive: boolean
+  onGrowthDone: (cardId: string) => void
   onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
 }) {
-  const opacity = useRef(new Animated.Value(0)).current
-  const translateX = useRef(new Animated.Value(-SLIDE_DISTANCE)).current
+  const [visibleCard, setVisibleCard] = useState(card)
+  const [outgoingCard, setOutgoingCard] = useState<AiPanelCard | null>(null)
+  const visibleCardRef = useRef(card)
+  const incomingTranslateX = useRef(new Animated.Value(0)).current
+  const outgoingTranslateX = useRef(new Animated.Value(0)).current
+  const outgoingOpacity = useRef(new Animated.Value(0)).current
+  const displayedSignatureRef = useRef(signature)
+  const pendingRef = useRef<{ card: AiPanelCard; signature: string } | null>(null)
+
+  const cardLayoutTransition = useMemo(
+    () => LinearTransition.springify().damping(22).stiffness(210).mass(0.7),
+    []
+  )
+
+  const entering = useMemo(
+    () => FadeInLeft.duration(ENTRANCE_DURATION).delay(index * ENTRANCE_STAGGER),
+    [index]
+  )
+
+  const exiting = useMemo(() => SlideOutRight.duration(EXIT_DURATION), [])
+
+  const runGrowthTransition = useCallback(
+    (nextCard: AiPanelCard, nextSignature: string) => {
+      const currentCard = visibleCardRef.current
+
+      // Keep outgoing card fixed in place while the incoming card takes layout.
+      setOutgoingCard(currentCard)
+      setVisibleCard(nextCard)
+      visibleCardRef.current = nextCard
+      displayedSignatureRef.current = nextSignature
+
+      incomingTranslateX.setValue(-18)
+      outgoingTranslateX.setValue(0)
+      outgoingOpacity.setValue(1)
+
+      Animated.parallel([
+        Animated.timing(incomingTranslateX, {
+          toValue: 0,
+          duration: UPDATE_FADE_IN_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(outgoingTranslateX, {
+          toValue: 18,
+          duration: UPDATE_FADE_OUT_MS,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(outgoingOpacity, {
+          toValue: 0,
+          duration: UPDATE_FADE_OUT_MS,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]).start(() => {
+        setOutgoingCard(null)
+        onGrowthDone(cardId)
+      })
+    },
+    [cardId, incomingTranslateX, onGrowthDone, outgoingOpacity, outgoingTranslateX]
+  )
 
   useEffect(() => {
-    const delay = index * ENTRANCE_STAGGER
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: ENTRANCE_DURATION,
-        delay,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-      Animated.timing(translateX, {
-        toValue: 0,
-        duration: ENTRANCE_DURATION,
-        delay,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-    ]).start()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    if (displayedSignatureRef.current === signature) {
+      // Keep local card in sync when no queued growth transition is needed.
+      setVisibleCard(card)
+      visibleCardRef.current = card
+      return
+    }
+
+    pendingRef.current = { card, signature }
+    if (isGrowthActive) {
+      const pending = pendingRef.current
+      if (pending) {
+        pendingRef.current = null
+        runGrowthTransition(pending.card, pending.signature)
+      }
+    }
+  }, [card, isGrowthActive, runGrowthTransition, signature])
 
   return (
-    <Animated.View style={{ opacity, transform: [{ translateX }] }}>
-      <AiCard card={card} onSendReply={onSendReply} />
-    </Animated.View>
+    <Reanimated.View entering={entering} exiting={exiting} layout={cardLayoutTransition}>
+      <YStack position="relative">
+        <Animated.View style={{ transform: [{ translateX: incomingTranslateX }] }}>
+          <AiCard card={visibleCard} onSendReply={onSendReply} />
+        </Animated.View>
+        {outgoingCard && (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              opacity: outgoingOpacity,
+              transform: [{ translateX: outgoingTranslateX }],
+            }}
+          >
+            <AiCard card={outgoingCard} onSendReply={onSendReply} />
+          </Animated.View>
+        )}
+      </YStack>
+    </Reanimated.View>
   )
 }
+
+const MemoAnimatedCard = memo(AnimatedCard, (prev, next) => {
+  return prev.signature === next.signature && prev.card === next.card
+})
 
 // ─── Insights Panel ───
 
@@ -104,110 +211,110 @@ export const InsightsPanel = memo(function InsightsPanel({
   const cards = useMemo(() => dealState?.aiPanelCards ?? [], [dealState])
   const isSending = useChatStore((s) => s.isSending)
 
+  const idCounterRef = useRef(0)
+  const idByIdentityRef = useRef<Map<string, string>>(new Map())
+  const previousSignatureByIdRef = useRef<Map<string, string>>(new Map())
+  const pendingGrowthQueueRef = useRef<string[]>([])
+  const [activeGrowthCardId, setActiveGrowthCardId] = useState<string | null>(null)
+
   // ─── Thinking indicator: stays until cards actually update ───
   const awaitingPanelUpdate = useRef(false)
-  const thinkingCardsRef = useRef(cards)
+  const thinkingCardsRef = useRef<string>('')
+
+  const cardsSignature = useMemo(() => cards.map(stableCardSignature).join('||'), [cards])
 
   if (isSending && !awaitingPanelUpdate.current) {
     awaitingPanelUpdate.current = true
   }
-  if (awaitingPanelUpdate.current && cards !== thinkingCardsRef.current && !isSending) {
+  if (awaitingPanelUpdate.current && cardsSignature !== thinkingCardsRef.current && !isSending) {
     awaitingPanelUpdate.current = false
   }
-  thinkingCardsRef.current = cards
+  if (awaitingPanelUpdate.current && !isSending) {
+    awaitingPanelUpdate.current = false
+  }
+  thinkingCardsRef.current = cardsSignature
 
   const showThinking = isSending || awaitingPanelUpdate.current
 
-  // ─── Panel-level transition ───
-  const [visibleCards, setVisibleCards] = useState<AiPanelCard[]>(cards)
-  const [transitionKey, setTransitionKey] = useState(0)
-  const exitOpacity = useRef(new Animated.Value(1)).current
-  const exitTranslateX = useRef(new Animated.Value(0)).current
-  const phaseRef = useRef<'idle' | 'exiting'>('idle')
-  const pendingCardsRef = useRef<AiPanelCard[] | null>(null)
-  const prevCardsRef = useRef<AiPanelCard[]>(cards)
+  const renderCards = useMemo<RenderCard[]>(() => {
+    const identityCounts = new Map<string, number>()
+    return cards.map((card) => {
+      const base = card.type
+      const count = (identityCounts.get(base) ?? 0) + 1
+      identityCounts.set(base, count)
+      const identity = buildIdentityKey(card.type, count)
 
-  useEffect(() => {
-    const prev = prevCardsRef.current
-    prevCardsRef.current = cards
+      let id = idByIdentityRef.current.get(identity)
+      if (!id) {
+        idCounterRef.current += 1
+        id = `insight-${idCounterRef.current}`
+        idByIdentityRef.current.set(identity, id)
+      }
 
-    // Same reference — no change
-    if (cards === prev) return
-
-    if (cards.length === 0 && visibleCards.length === 0) return
-
-    if (cards.length === 0) {
-      // Cards cleared — exit to empty
-      phaseRef.current = 'exiting'
-      exitOpacity.setValue(1)
-      exitTranslateX.setValue(0)
-      Animated.parallel([
-        Animated.timing(exitOpacity, {
-          toValue: 0,
-          duration: EXIT_DURATION,
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-        Animated.timing(exitTranslateX, {
-          toValue: SLIDE_DISTANCE,
-          duration: EXIT_DURATION,
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-      ]).start(({ finished }) => {
-        if (finished) {
-          setVisibleCards([])
-          phaseRef.current = 'idle'
-        }
-      })
-      return
-    }
-
-    if (visibleCards.length === 0) {
-      // First cards — no exit needed, just enter
-      setVisibleCards(cards)
-      setTransitionKey((k) => k + 1)
-      return
-    }
-
-    // Cards changed — exit old, then enter new
-    if (phaseRef.current === 'exiting') {
-      // Already exiting — just update pending
-      pendingCardsRef.current = cards
-      return
-    }
-
-    pendingCardsRef.current = cards
-    phaseRef.current = 'exiting'
-    exitOpacity.setValue(1)
-    exitTranslateX.setValue(0)
-
-    Animated.parallel([
-      Animated.timing(exitOpacity, {
-        toValue: 0,
-        duration: EXIT_DURATION,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-      Animated.timing(exitTranslateX, {
-        toValue: SLIDE_DISTANCE,
-        duration: EXIT_DURATION,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-    ]).start(({ finished }) => {
-      if (finished && pendingCardsRef.current) {
-        setVisibleCards(pendingCardsRef.current)
-        setTransitionKey((k) => k + 1)
-        pendingCardsRef.current = null
-        phaseRef.current = 'idle'
-        exitOpacity.setValue(1)
-        exitTranslateX.setValue(0)
+      return {
+        id,
+        identity,
+        signature: stableCardSignature(card),
+        card,
       }
     })
-  }, [cards, visibleCards.length, exitOpacity, exitTranslateX])
+  }, [cards])
+
+  useEffect(() => {
+    const active = new Set(renderCards.map((item) => item.identity))
+    for (const identity of idByIdentityRef.current.keys()) {
+      if (!active.has(identity)) {
+        idByIdentityRef.current.delete(identity)
+      }
+    }
+  }, [renderCards])
+
+  useEffect(() => {
+    const prev = previousSignatureByIdRef.current
+    const next = new Map<string, string>()
+    for (const item of renderCards) {
+      next.set(item.id, item.signature)
+      const oldSig = prev.get(item.id)
+      if (oldSig && oldSig !== item.signature) {
+        if (activeGrowthCardId !== item.id && !pendingGrowthQueueRef.current.includes(item.id)) {
+          pendingGrowthQueueRef.current.push(item.id)
+        }
+      }
+    }
+    previousSignatureByIdRef.current = next
+
+    if (!activeGrowthCardId && pendingGrowthQueueRef.current.length > 0) {
+      setActiveGrowthCardId(pendingGrowthQueueRef.current.shift() ?? null)
+    }
+  }, [activeGrowthCardId, renderCards])
+
+  useEffect(() => {
+    if (!activeGrowthCardId) {
+      return
+    }
+    const stillVisible = renderCards.some((item) => item.id === activeGrowthCardId)
+    if (!stillVisible) {
+      setActiveGrowthCardId(pendingGrowthQueueRef.current.shift() ?? null)
+    }
+  }, [activeGrowthCardId, renderCards])
+
+  const handleGrowthDone = useCallback((cardId: string) => {
+    setActiveGrowthCardId((current) => {
+      if (current !== cardId) return current
+      return pendingGrowthQueueRef.current.shift() ?? null
+    })
+  }, [])
 
   const handleSendReply = useCallback(async (text: string, quotedCard: QuotedCard) => {
     await useChatStore.getState().sendMessage(text, undefined, quotedCard)
   }, [])
 
-  if (visibleCards.length === 0) {
+  const listLayoutTransition = useMemo(
+    () => LinearTransition.springify().damping(22).stiffness(200).mass(0.75),
+    []
+  )
+
+  if (renderCards.length === 0) {
     return (
       <YStack flex={1} paddingHorizontal="$3.5" paddingVertical="$3">
         <PanelHeader thinking={showThinking} />
@@ -224,18 +331,22 @@ export const InsightsPanel = memo(function InsightsPanel({
       {negotiationContext?.situation && negotiationContext?.stance && (
         <SituationBar context={negotiationContext} />
       )}
-      <Animated.View style={{ opacity: exitOpacity, transform: [{ translateX: exitTranslateX }] }}>
+      <Reanimated.View layout={listLayoutTransition}>
         <YStack gap="$3">
-          {visibleCards.map((card, i) => (
-            <StaggeredCard
-              key={`${transitionKey}-${i}`}
-              card={card}
+          {renderCards.map((item, i) => (
+            <MemoAnimatedCard
+              key={item.id}
+              cardId={item.id}
+              card={item.card}
               index={i}
+              signature={item.signature}
+              isGrowthActive={activeGrowthCardId === item.id}
+              onGrowthDone={handleGrowthDone}
               onSendReply={handleSendReply}
             />
           ))}
         </YStack>
-      </Animated.View>
+      </Reanimated.View>
       <YStack height={24} />
     </YStack>
   )

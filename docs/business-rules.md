@@ -466,7 +466,7 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 
 ### Streaming
 
-Chat responses are streamed via Server-Sent Events (SSE) with five event types:
+Chat responses are streamed via Server-Sent Events (SSE) with core chat and panel lifecycle events:
 
 | Event | Data | Description |
 |---|---|---|
@@ -474,7 +474,11 @@ Chat responses are streamed via Server-Sent Events (SSE) with five event types:
 | `tool_result` | `{"tool": "...", "data": {...}}` | A tool call result for dashboard updates |
 | `retry` | `{"attempt": 1, "reason": "max_tokens", "reset_text": true, ...}` | Stream recovery or bounded truncation replay |
 | `step` | `{"step": 2}` | Multi-step turn progress |
-| `done` | `{"text": "...", "usage": {...}, "sessionUsage": {...}}` | Final event with complete text, assistant-turn usage, and cumulative session usage |
+| `done` | `{"text": "...", "usage": {...}}` | Chat text completion event with chat-phase usage |
+| `panel_started` | `{"attempt": 1, "max_tokens": 2048}` | Panel generation phase started |
+| `panel_card` | `{"index": 0, "attempt": 1, "card": {...}}` | Incremental panel card streamed to client |
+| `panel_done` | `{"cards": [...], "usage": {...}}` | Panel generation completed with final cards and panel-phase usage |
+| `panel_error` | `{"message": "...", "attempt": 2}` | Panel generation failed after retries |
 
 ### Step Loop Architecture
 

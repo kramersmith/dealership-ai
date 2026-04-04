@@ -77,7 +77,7 @@ The `ChatSession` model stores a cumulative `usage` JSON column. On each turn, t
 }
 ```
 
-The session summary is returned to the frontend as `sessionUsage` on the SSE `done` event and on session detail endpoints.
+The session summary is returned to the frontend on session detail endpoints. SSE events report phase-specific request usage (`done` for chat phase, `panel_done` for panel phase), while persisted message usage remains the per-turn aggregate.
 
 ### Cost calculation
 

@@ -192,15 +192,7 @@ export function SessionCard({
         style={{ flex: 1, minHeight: 72, flexDirection: 'row', padding: 12, gap: 12 }}
       >
         <YStack paddingTop={4}>
-          <YStack
-            width={10}
-            height={10}
-            borderRadius={100}
-            backgroundColor={phaseDotColor}
-            accessibilityLabel={
-              session.dealSummary?.phase ? phaseLabel(session.dealSummary.phase) : 'No phase'
-            }
-          />
+          <YStack width={10} height={10} borderRadius={100} backgroundColor={phaseDotColor} />
         </YStack>
 
         <YStack flex={1} gap="$1">

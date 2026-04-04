@@ -1968,3 +1968,16 @@ def test_build_conversation_context_can_exclude_assistant_text():
 
     assert "[user]: VIN: 1FT7W2BN0NED52782" in context
     assert "[assistant]:" not in context
+
+
+def test_build_conversation_context_dedupes_latest_assistant_text():
+    latest_reply = "Based on your needs, the Sport 380 is the best fit."
+    context = _build_conversation_context(
+        [
+            {"role": "user", "content": "Which model should I buy?"},
+            {"role": "assistant", "content": latest_reply},
+        ],
+        latest_reply,
+    )
+
+    assert context.count("[assistant]:") == 1

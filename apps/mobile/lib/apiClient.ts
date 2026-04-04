@@ -11,8 +11,11 @@ import type {
   ModelUsageSummary,
   SessionUsage,
 } from './types'
+import { PANEL_UPDATE_MODE } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
+
+const PANEL_UPDATE = PANEL_UPDATE_MODE
 
 const API_BASE = 'http://localhost:8001/api'
 
@@ -93,6 +96,24 @@ function mapSessionUsage(value: any): SessionUsage {
   return {
     ...mapUsageSummary(value),
     perModel,
+  }
+}
+
+function mergeMessageUsage(
+  base: MessageUsage | undefined,
+  delta: MessageUsage | undefined
+): MessageUsage | undefined {
+  if (!base) return delta
+  if (!delta) return base
+
+  return {
+    requests: (base.requests ?? 0) + (delta.requests ?? 0),
+    inputTokens: (base.inputTokens ?? 0) + (delta.inputTokens ?? 0),
+    outputTokens: (base.outputTokens ?? 0) + (delta.outputTokens ?? 0),
+    cacheCreationInputTokens:
+      (base.cacheCreationInputTokens ?? 0) + (delta.cacheCreationInputTokens ?? 0),
+    cacheReadInputTokens: (base.cacheReadInputTokens ?? 0) + (delta.cacheReadInputTokens ?? 0),
+    totalTokens: (base.totalTokens ?? 0) + (delta.totalTokens ?? 0),
   }
 }
 
@@ -424,6 +445,8 @@ class ApiClient implements ApiService {
       let processed = 0
       let buffer = ''
       let sseError: string | null = null
+      let panelStreamActive = false
+      const streamedPanelCards: unknown[] = []
 
       xhr.onprogress = () => {
         const newData = xhr.responseText.slice(processed)
@@ -457,11 +480,46 @@ class ApiClient implements ApiService {
               onChunk?.(fullText)
             } else if (eventType === 'done') {
               // Text streaming is complete — finalize immediately.
-              // Panel cards may still arrive as tool_result events after this.
+              // Panel cards continue in a separate async phase after this.
               fullText = data.text ?? fullText
               messageUsage = data.usage
               sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
               onTextDone?.(fullText, messageUsage, sessionUsage)
+            } else if (eventType === 'panel_started') {
+              console.debug('[apiClient] panel stream started', data)
+              panelStreamActive = true
+              streamedPanelCards.length = 0
+            } else if (eventType === 'panel_card' && data.card) {
+              if (!panelStreamActive) {
+                panelStreamActive = true
+                streamedPanelCards.length = 0
+              }
+              const index =
+                typeof data.index === 'number' && Number.isInteger(data.index) && data.index >= 0
+                  ? data.index
+                  : streamedPanelCards.length
+              streamedPanelCards[index] = data.card
+              const toolCall: ToolCall = {
+                name: 'update_insights_panel',
+                args: { mode: PANEL_UPDATE.APPEND, card: data.card, index },
+              }
+              toolCalls.push(toolCall)
+              onToolResult?.(toolCall)
+            } else if (eventType === 'panel_done') {
+              if (data.usage) {
+                messageUsage = mergeMessageUsage(messageUsage, data.usage)
+              }
+              panelStreamActive = false
+              const finalCards = (data.cards ?? []) as unknown[]
+              // Always reconcile to server-final cards so empty results clear stale UI state.
+              const toolCall: ToolCall = {
+                name: 'update_insights_panel',
+                args: { mode: PANEL_UPDATE.REPLACE, cards: finalCards },
+              }
+              toolCalls.push(toolCall)
+              onToolResult?.(toolCall)
+            } else if (eventType === 'panel_error') {
+              console.warn('[apiClient] panel stream error:', data.message ?? data)
             } else if (eventType === 'error') {
               console.error('[apiClient] SSE error event:', data.message ?? data)
               sseError = data.message ?? 'An error occurred'

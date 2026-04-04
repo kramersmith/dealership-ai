@@ -206,6 +206,13 @@ export type AiCardType =
   | 'success'
 export type AiCardPriority = 'critical' | 'high' | 'normal' | 'low'
 
+export const PANEL_UPDATE_MODE = {
+  APPEND: 'append',
+  REPLACE: 'replace',
+} as const
+
+export type PanelUpdateMode = (typeof PANEL_UPDATE_MODE)[keyof typeof PANEL_UPDATE_MODE]
+
 export interface AiPanelCard {
   type: AiCardType
   title: string

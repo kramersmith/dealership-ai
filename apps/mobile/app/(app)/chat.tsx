@@ -201,10 +201,18 @@ export default function ChatScreen() {
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
   const isDesktopChatActive = isDesktop && !showContextPicker
 
+  const navigateBackOrChats = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back()
+      return
+    }
+    router.replace('/(app)/chats')
+  }, [router])
+
   const desktopTransition = useDesktopChatTransition({
     dealState,
     enabled: isDesktopChatActive,
-    onBackComplete: () => router.back(),
+    onBackComplete: navigateBackOrChats,
     onResetComplete: () => {
       useChatStore.setState({
         activeSessionId: null,
@@ -222,9 +230,9 @@ export default function ChatScreen() {
     if (isDesktopChatActive) {
       desktopTransition.beginBackNavigation()
     } else {
-      router.back()
+      navigateBackOrChats()
     }
-  }, [isDesktopChatActive, desktopTransition, router])
+  }, [isDesktopChatActive, desktopTransition, navigateBackOrChats])
 
   useEffect(() => {
     if (!showMobileInsightsToggle && isInsightsOpen) {
@@ -679,11 +687,11 @@ export default function ChatScreen() {
                 {...(Platform.OS === 'web'
                   ? {
                       style: {
-                        boxShadow: `-8px 0 24px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}`,
+                        boxShadow: `-8px 0 24px ${theme.shadowColor?.val ?? palette.overlay}`,
                       },
                     }
                   : {
-                      shadowColor: theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)',
+                      shadowColor: theme.shadowColor?.val ?? palette.overlay,
                       shadowOffset: { width: -4, height: 0 },
                       shadowOpacity: 1,
                       shadowRadius: 12,

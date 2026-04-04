@@ -4,6 +4,8 @@
 **Date:** 2026-03
 **Deciders:** Kramer Smith
 
+Note: The SSE terminal-event semantics described in this ADR were later refined by ADR-0012 (two-phase chat/panel SSE contract).
+
 ## Context
 
 The backend's Claude integration originally used a three-stage sequential pipeline for every user message:
@@ -70,7 +72,7 @@ The step loop emits these SSE events to the frontend:
 - `tool_error` — Tool execution failure (malformed JSON input or runtime error). Reported back to Claude as an error `tool_result` so the model can adjust.
 - `step` — Notification that a new step is starting (emitted for steps > 0) so the frontend can show a thinking indicator.
 - `retry` — Stream retry (idle timeout, connection error, or `max_tokens` truncation). Includes `reset_text: true` so the frontend clears partial text.
-- `done` — Final text when the loop completes, plus per-turn `usage` and cumulative `sessionUsage`.
+- `done` — Final text when the loop completes, plus usage metadata (later refined by ADR-0012).
 - `error` — Unrecoverable failure (exception during streaming). The loop terminates.
 
 ### ChatLoopResult

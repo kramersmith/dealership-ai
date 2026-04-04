@@ -418,7 +418,7 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. The core events are `text`, `tool_result`, and terminal `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`.
+The response is a stream of Server-Sent Events. The core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`.
 
 **`text` event** — Incremental text chunks from the AI:
 ```
@@ -438,17 +438,42 @@ event: tool_result
 data: {"tool": "update_scorecard", "data": {"score_price": "green", "score_overall": "yellow"}}
 ```
 
-**`done` event** — Final event with complete response:
+**`done` event** — Chat text completion event (input can unblock immediately):
 ```
 event: done
-data: {"text": "Based on the numbers you've shared, this is a fair deal.", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}, "sessionUsage": {"requestCount": 5, "inputTokens": 3120, "outputTokens": 544, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3664, "totalCostUsd": 0.023846, "perModel": {"claude-sonnet-4-6": {"requestCount": 4, "inputTokens": 3000, "outputTokens": 520, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3520, "totalCostUsd": 0.023086}, "claude-haiku-4-5-20251001": {"requestCount": 1, "inputTokens": 120, "outputTokens": 24, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "totalTokens": 144, "totalCostUsd": 0.00076}}}}
+data: {"text": "Based on the numbers you've shared, this is a fair deal.", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
+```
+
+**`panel_started` event** — Panel generation phase started:
+```
+event: panel_started
+data: {"attempt": 1, "max_tokens": 2048}
+```
+
+**`panel_card` event** — Incremental panel card arrival:
+```
+event: panel_card
+data: {"index": 0, "attempt": 1, "card": {"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}}
+```
+
+**`panel_done` event** — Panel generation completed with canonical cards + panel-phase usage:
+```
+event: panel_done
+data: {"cards": [{"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}}
+```
+
+**`panel_error` event** — Panel generation failed after retries:
+```
+event: panel_error
+data: {"message": "...", "attempt": 2}
 ```
 
 **Side effects:**
 - Message history is loaded before the user message is saved (prevents duplicate user messages in Claude context)
 - User message is persisted before streaming begins
-- The step loop may execute multiple model requests before the terminal `done` event; the `usage` payload reflects the full assistant response, not just the final step
-- The terminal `done` event also includes `sessionUsage`, a cumulative per-session ledger covering chat turns, panel generation, title generation, and session-bound re-analysis calls
+- The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
+- Panel generation runs after `done`; incremental cards are streamed via `panel_card`, and panel-phase usage is reported on `panel_done`
+- Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals
 - If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
 - Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
 - Tool call results are applied to the session's deal state
@@ -513,7 +538,7 @@ Get the full message history for a session, ordered by creation time.
 ]
 ```
 
-Message-level `usage` remains per assistant turn. Session-wide totals are exposed on the session resource and mirrored in the terminal chat `done` event's `sessionUsage` payload.
+Message-level `usage` remains per assistant turn. Session-wide totals are exposed on the session resource. Stream usage is phase-specific (`done` for chat phase, `panel_done` for panel phase).
 
 **Error responses:**
 

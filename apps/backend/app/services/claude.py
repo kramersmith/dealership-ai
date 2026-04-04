@@ -37,6 +37,11 @@ def create_anthropic_client() -> anthropic.AsyncAnthropic:
     )
 
 
+def _normalize_step_text_for_dedupe(text: str) -> str:
+    """Normalize whitespace so identical step prose can be compared reliably."""
+    return " ".join(text.split())
+
+
 # ─── Context message configuration ───
 
 LINKED_CONTEXT_MAX_MESSAGES = 10
@@ -903,6 +908,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
     # Add cache_control to the last tool so the entire tool list is cached
     cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
+    last_appended_step_text_normalized = ""
 
     for step in range(max_steps):
         # Notify frontend that a new step is starting (after tool execution)
@@ -1072,13 +1078,27 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         # Accumulate text across steps — add paragraph break between steps
         # so multi-step text (step 0 text + tool execution + step 1 text)
         # doesn't run together without whitespace.
-        if (
-            step_text
-            and result.full_text
-            and not result.full_text.endswith(("\n", " "))
-        ):
-            result.full_text += "\n\n"
-        result.full_text += step_text
+        normalized_step_text = _normalize_step_text_for_dedupe(step_text)
+        is_duplicate_step_text = (
+            bool(normalized_step_text)
+            and normalized_step_text == last_appended_step_text_normalized
+        )
+
+        if is_duplicate_step_text:
+            logger.info(
+                "Step %d emitted duplicate text after tool execution; skipping aggregation",
+                step,
+            )
+        else:
+            if (
+                step_text
+                and result.full_text
+                and not result.full_text.endswith(("\n", " "))
+            ):
+                result.full_text += "\n\n"
+            result.full_text += step_text
+            if normalized_step_text:
+                last_appended_step_text_normalized = normalized_step_text
 
         # If no tool calls, we're done — emit done event
         if stop_reason == "end_turn" or (not tool_use_blocks and not json_error_blocks):

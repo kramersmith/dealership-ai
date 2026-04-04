@@ -21,3 +21,4 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0009](0009-streaming-resilience.md) | Streaming resilience | Accepted | 2026-03 |
 | [0010](0010-multi-vehicle-deal-architecture.md) | Multi-vehicle/deal architecture | Accepted | 2026-03 |
 | [0011](0011-usage-tracking-and-cost-accounting.md) | Usage tracking and cost accounting | Accepted | 2026-04 |
+| [0012](0012-two-phase-chat-panel-sse-contract.md) | Two-phase chat/panel SSE contract | Accepted | 2026-04 |

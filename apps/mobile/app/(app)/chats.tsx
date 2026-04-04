@@ -17,6 +17,7 @@ import { APP_NAME } from '@/lib/constants'
 import { useChatStore } from '@/stores/chatStore'
 import { useFocusEffect } from 'expo-router'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
+import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { SessionCard } from '@/components/chats'
 
 // ─── Section builder: active deals above, past deals below ───
@@ -111,7 +112,7 @@ function SearchBar({
     Animated.timing(translateY, {
       toValue: 0,
       duration: 280,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start()
   }, [translateY, isFocused])
 
@@ -192,6 +193,7 @@ export default function SessionsScreen() {
   // Single-session fast-path: auto-navigate to chat if exactly 1 session.
   // Uses module-level flag so navigating back from chat never re-triggers.
   useEffect(() => {
+    if (Platform.OS === 'web') return
     if (didAutoNavigate) return
     if (!isLoading && sessions.length >= 1) {
       didAutoNavigate = true

@@ -25,12 +25,11 @@ from app.services.claude import (
     stream_chat_loop,
 )
 from app.services.deal_state import deal_state_to_dict
-from app.services.panel import generate_ai_panel_cards_with_usage
+from app.services.panel import stream_ai_panel_cards_with_usage
 from app.services.post_chat_processing import update_session_metadata
 from app.services.usage_tracking import (
     SessionUsageSummary,
     build_request_usage,
-    session_usage_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,7 +130,7 @@ async def send_message(
             yield sse_event
 
         if result.failed:
-            logger.warning("Step loop failed: session_id=%s", session_id)
+            logger.error("Step loop failed: session_id=%s", session_id)
             return
 
         logger.debug(
@@ -151,35 +150,51 @@ async def send_message(
         if result.full_text:
             all_messages.append({"role": "assistant", "content": result.full_text})
 
-        # ── Panel generation: generate AI insight cards ──
-        # Runs after done — tool_result events still reach the frontend
-        # via the open SSE stream.
+        # ── Panel generation: stream AI insight cards asynchronously ──
+        # Runs after done so chat remains responsive while panel updates stream in.
         if deal_state:
-            logger.debug("Generating AI panel cards, session_id=%s", session_id)
+            logger.debug("Streaming AI panel cards, session_id=%s", session_id)
             try:
                 await db.refresh(deal_state)
                 updated_state_dict = await deal_state_to_dict(deal_state, db)
-                (
-                    ai_cards,
-                    panel_usage_summary,
-                ) = await generate_ai_panel_cards_with_usage(
+                panel_usage_summary: dict[str, int] | None = None
+                latest_cards: list[dict] = []
+
+                async for panel_event in stream_ai_panel_cards_with_usage(
                     updated_state_dict,
                     result.full_text,
                     all_messages,
                     session_id=session_id,
-                )
-                merge_usage_summary(result.usage_summary, panel_usage_summary)
-                if ai_cards:
-                    deal_state.ai_panel_cards = ai_cards
+                ):
+                    if panel_event.type == "panel_started":
+                        yield f"event: panel_started\ndata: {json.dumps(panel_event.data)}\n\n"
+                    elif panel_event.type == "panel_card":
+                        latest_cards.append(panel_event.data["card"])
+                        yield f"event: panel_card\ndata: {json.dumps(panel_event.data)}\n\n"
+                    elif panel_event.type == "panel_done":
+                        latest_cards = panel_event.data.get("cards", latest_cards)
+                        panel_usage_summary = panel_event.data.get("usage_summary")
+                        payload = {
+                            "cards": latest_cards,
+                            "usage": _message_usage_payload(panel_usage_summary or {}),
+                        }
+                        yield f"event: panel_done\ndata: {json.dumps(payload)}\n\n"
+                    elif panel_event.type == "panel_error":
+                        yield f"event: panel_error\ndata: {json.dumps(panel_event.data)}\n\n"
+
+                if panel_usage_summary:
+                    merge_usage_summary(result.usage_summary, panel_usage_summary)
+
+                if latest_cards:
+                    deal_state.ai_panel_cards = latest_cards
                     panel_tool_call = {
                         "name": "update_insights_panel",
-                        "args": {"cards": ai_cards},
+                        "args": {"cards": latest_cards},
                     }
                     result.tool_calls.append(panel_tool_call)
-                    yield f"event: tool_result\ndata: {json.dumps({'tool': 'update_insights_panel', 'data': {'cards': ai_cards}})}\n\n"
                     logger.info(
-                        "Generated %d AI panel cards, session_id=%s",
-                        len(ai_cards),
+                        "Streamed %d AI panel cards, session_id=%s",
+                        len(latest_cards),
                         session_id,
                     )
             except Exception:

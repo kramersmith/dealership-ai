@@ -105,14 +105,15 @@ graph TB
     - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
     - `event: retry` -- stream recovery or `max_tokens` replay signal, including `reset_text` when the client should discard partial text
     - `event: step` -- step-loop progress for multi-step turns
-    - `event: done` -- final payload with full text and aggregated usage for the entire assistant turn
+    - `event: done` -- chat text completion payload (input can unblock immediately)
+    - `event: panel_started` / `event: panel_card` / `event: panel_done` / `event: panel_error` -- asynchronous panel lifecycle events after `done`
 8. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. After the step loop completes, the backend generates AI panel cards in a separate Sonnet call and merges that request's usage into the same assistant-turn summary.
-11. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata, applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
+10. After the step loop completes, the backend emits `done`, then starts a separate panel streaming phase that emits `panel_started`, incremental `panel_card` events, and terminal `panel_done` or `panel_error`.
+11. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata (chat phase + panel phase), applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
 12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
 13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
-14. The terminal `done` event carries both per-turn `usage` and cumulative `sessionUsage` so the frontend can render assistant-turn usage and developer-facing session totals separately.
+14. The `done` event carries chat text and chat-phase usage. Panel-phase usage is emitted on `panel_done` and merged into the persisted assistant usage summary.
 
 ---
 
@@ -217,10 +218,19 @@ event: retry
 data: {"attempt": 1, "reason": "max_tokens", "reset_text": true, "max_tokens": 8192}
 
 event: done
-data: {"text": "Full response text...", "usage": {"requests": 2, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}, "sessionUsage": {"requestCount": 5, "inputTokens": 3120, "outputTokens": 544, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3664, "totalCostUsd": 0.023846, "perModel": {"claude-sonnet-4-6": {"requestCount": 4, "inputTokens": 3000, "outputTokens": 520, "cacheCreationInputTokens": 620, "cacheReadInputTokens": 1120, "totalTokens": 3520, "totalCostUsd": 0.023086}, "claude-haiku-4-5-20251001": {"requestCount": 1, "inputTokens": 120, "outputTokens": 24, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "totalTokens": 144, "totalCostUsd": 0.00076}}}}
+data: {"text": "Full response text...", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
+
+event: panel_started
+data: {"attempt": 1, "max_tokens": 2048}
+
+event: panel_card
+data: {"index": 0, "attempt": 1, "card": {"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}}
+
+event: panel_done
+data: {"cards": [{"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}}
 ```
 
-The `done` event is the terminal SSE event. Its `usage` payload aggregates all model requests that contributed to that assistant turn, including the separate AI panel generation call. Its `sessionUsage` payload is the cumulative per-session usage ledger, including title generation and session-bound re-analysis work.
+The `done` event marks chat text completion only. Panel generation continues in the same SSE stream and is represented by `panel_*` events. The final persisted assistant usage summary includes both chat-phase and panel-phase usage.
 
 For detailed endpoint schemas (request/response bodies, status codes), see the Pydantic schemas in `apps/backend/app/schemas/`.
 
@@ -594,7 +604,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop, the backend generates AI panel cards in a separate Sonnet call and merges that usage into the assistant-turn summary. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. The terminal `done` event includes both the assistant-turn aggregate and the cumulative session usage ledger.
+The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness, then AI panel generation runs asynchronously in the same SSE stream via `panel_started` / `panel_card` / `panel_done` / `panel_error`. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage aggregates chat and panel phases.
 
 ### No Other External Integrations (v1)
 

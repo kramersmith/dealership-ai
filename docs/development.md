@@ -178,7 +178,7 @@ AI pipeline testing has its own guide covering fake-model tests, snapshots, SSE 
 
 - `docs/ai-pipeline-testing.md`
 
-Session-level usage tracking is persisted on `ChatSession.usage` and surfaced through session responses and the terminal chat `done` event's `sessionUsage` payload. Per-turn assistant usage remains on message history as `usage`.
+Session-level usage tracking is persisted on `ChatSession.usage` and surfaced through session responses. Chat stream events report phase-specific usage (`done` for chat phase, `panel_done` for panel phase), while per-turn assistant usage remains on message history as `usage`.
 
 Useful commands for that workflow:
 

@@ -29,7 +29,7 @@ from app.services.claude import (
     summarize_usage,
 )
 from app.services.deal_state import deal_state_to_dict
-from app.services.panel import generate_ai_panel_cards
+from app.services.panel import generate_ai_panel_cards, stream_ai_panel_cards_with_usage
 from httpx import ASGITransport, AsyncClient
 from inline_snapshot import snapshot
 from sqlalchemy import select
@@ -208,6 +208,43 @@ def _scripted_stream_factory(*step_scripts: list[tuple[str, object]]):
     return _fake_stream
 
 
+class _FakePanelTextDeltaEvent:
+    type = "content_block_delta"
+
+    def __init__(self, text: str) -> None:
+        self.delta = SimpleNamespace(type="text_delta", text=text)
+
+
+class _FakePanelStream:
+    def __init__(self, chunks: list[str], stop_reason: str = "end_turn") -> None:
+        self._chunks = chunks
+        self._stop_reason = stop_reason
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def __aiter__(self):
+        async def _iterate():
+            for chunk in self._chunks:
+                yield _FakePanelTextDeltaEvent(chunk)
+
+        return _iterate()
+
+    async def get_final_message(self):
+        return SimpleNamespace(
+            stop_reason=self._stop_reason,
+            usage=SimpleNamespace(
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+                input_tokens=0,
+                output_tokens=0,
+            ),
+        )
+
+
 async def _create_active_deal(adb, async_buyer_user):
     session, deal_state = await async_create_session_with_deal_state(
         adb, async_buyer_user
@@ -240,52 +277,43 @@ async def test_chat_tools_schema_snapshot():
 
 @patch("app.services.panel.create_anthropic_client")
 async def test_generate_ai_panel_cards_snapshot(mock_create_client):
-    mock_response = AsyncMock()
-    mock_response.stop_reason = "end_turn"
-    mock_response.usage = SimpleNamespace(
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        input_tokens=0,
+    response_json = json.dumps(
+        [
+            {
+                "type": "briefing",
+                "title": "Stand Firm",
+                "content": {
+                    "body": "Their counter is still above your target. Hold your number and push for the out-the-door total."
+                },
+                "priority": "high",
+            },
+            {
+                "type": "numbers",
+                "title": "Price Gap",
+                "content": {
+                    "rows": [
+                        {
+                            "label": "Your Target",
+                            "value": "$28,500",
+                            "field": "your_target",
+                            "highlight": "good",
+                        },
+                        {
+                            "label": "Their Offer",
+                            "value": "$30,200",
+                            "field": "current_offer",
+                            "highlight": "bad",
+                        },
+                    ]
+                },
+                "priority": "high",
+            },
+        ]
     )
-    mock_response.content = [
-        SimpleNamespace(
-            text=json.dumps(
-                [
-                    {
-                        "type": "briefing",
-                        "title": "Stand Firm",
-                        "content": {
-                            "body": "Their counter is still above your target. Hold your number and push for the out-the-door total."
-                        },
-                        "priority": "high",
-                    },
-                    {
-                        "type": "numbers",
-                        "title": "Price Gap",
-                        "content": {
-                            "rows": [
-                                {
-                                    "label": "Your Target",
-                                    "value": "$28,500",
-                                    "field": "your_target",
-                                    "highlight": "good",
-                                },
-                                {
-                                    "label": "Their Offer",
-                                    "value": "$30,200",
-                                    "field": "current_offer",
-                                    "highlight": "bad",
-                                },
-                            ]
-                        },
-                        "priority": "high",
-                    },
-                ]
-            )
-        )
-    ]
     mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_client.messages.stream = AsyncMock(
+        return_value=_FakePanelStream([response_json], stop_reason="end_turn")
+    )
     mock_create_client.return_value = mock_client
 
     actual = await generate_ai_panel_cards(
@@ -307,25 +335,12 @@ async def test_generate_ai_panel_cards_snapshot(mock_create_client):
 
 @patch("app.services.panel.create_anthropic_client")
 async def test_generate_ai_panel_cards_retries_after_max_tokens(mock_create_client):
-    truncated_response = AsyncMock()
-    truncated_response.stop_reason = "max_tokens"
-    truncated_response.usage = SimpleNamespace(
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        input_tokens=0,
+    truncated_stream = _FakePanelStream(
+        ['[{"type": "briefing"'], stop_reason="max_tokens"
     )
-    truncated_response.content = [SimpleNamespace(text='[{"type": "briefing"')]
-
-    recovered_response = AsyncMock()
-    recovered_response.stop_reason = "end_turn"
-    recovered_response.usage = SimpleNamespace(
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        input_tokens=0,
-    )
-    recovered_response.content = [
-        SimpleNamespace(
-            text=json.dumps(
+    recovered_stream = _FakePanelStream(
+        [
+            json.dumps(
                 [
                     {
                         "type": "briefing",
@@ -335,12 +350,13 @@ async def test_generate_ai_panel_cards_retries_after_max_tokens(mock_create_clie
                     }
                 ]
             )
-        )
-    ]
+        ],
+        stop_reason="end_turn",
+    )
 
     mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(
-        side_effect=[truncated_response, recovered_response]
+    mock_client.messages.stream = AsyncMock(
+        side_effect=[truncated_stream, recovered_stream]
     )
     mock_create_client.return_value = mock_client
 
@@ -358,9 +374,78 @@ async def test_generate_ai_panel_cards_retries_after_max_tokens(mock_create_clie
             "priority": "high",
         }
     ]
-    assert mock_client.messages.create.await_count == 2
-    assert mock_client.messages.create.await_args_list[0].kwargs["max_tokens"] == 2048
-    assert mock_client.messages.create.await_args_list[1].kwargs["max_tokens"] == 4096
+    assert mock_client.messages.stream.await_count == 2
+    assert mock_client.messages.stream.await_args_list[0].kwargs["max_tokens"] == 2048
+    assert mock_client.messages.stream.await_args_list[1].kwargs["max_tokens"] == 4096
+
+
+@patch("app.services.panel.create_anthropic_client")
+async def test_stream_ai_panel_cards_with_usage_parses_incremental_cards(
+    mock_create_client,
+):
+    streamed_chunks = [
+        '[{"type":"briefing","title":"Hold","content":{"body":"Hold your target."},"priority":"high"},',
+        '{"type":"unknown","title":"Skip","content":{"body":"invalid"},"priority":"high"},',
+        '{"type":"tip","title":"Leverage","content":{"body":"You can walk away."},"priority":"normal"}]',
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.messages.stream = AsyncMock(
+        return_value=_FakePanelStream(streamed_chunks, stop_reason="end_turn")
+    )
+    mock_create_client.return_value = mock_client
+
+    events = []
+    async for event in stream_ai_panel_cards_with_usage(
+        {"buyer_context": "at_dealership", "vehicles": [], "deals": []},
+        "Hold your target and be ready to leave.",
+        [{"role": "user", "content": "They came back with 30,200"}],
+    ):
+        events.append((event.type, event.data))
+
+    assert [event_type for event_type, _ in events] == [
+        "panel_started",
+        "panel_card",
+        "panel_card",
+        "panel_done",
+    ]
+
+    panel_done = events[-1][1]
+    assert [card["title"] for card in panel_done["cards"]] == ["Hold", "Leverage"]
+    assert panel_done["usage_summary"] == {
+        "requests": 1,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+@patch("app.services.panel.create_anthropic_client")
+async def test_stream_ai_panel_cards_with_usage_emits_panel_error_after_retries(
+    mock_create_client,
+):
+    retries = settings.CLAUDE_MAX_TOKENS_RETRIES
+    mock_client = AsyncMock()
+    mock_client.messages.stream = AsyncMock(
+        side_effect=RuntimeError("stream unavailable")
+    )
+    mock_client.messages.create = AsyncMock(side_effect=RuntimeError("fallback failed"))
+    mock_create_client.return_value = mock_client
+
+    events = []
+    async for event in stream_ai_panel_cards_with_usage(
+        {"buyer_context": "researching", "vehicles": [], "deals": []},
+        "We can review options.",
+        [{"role": "user", "content": "show panel"}],
+    ):
+        events.append((event.type, event.data))
+
+    started_count = sum(1 for event_type, _ in events if event_type == "panel_started")
+    assert started_count == retries + 1
+    assert events[-1][0] == "panel_error"
+    assert events[-1][1]["attempt"] == retries + 1
 
 
 async def test_stream_chat_loop_applies_multi_tool_chain_and_snapshots_state(
@@ -738,6 +823,59 @@ async def test_stream_chat_loop_emits_partial_done_when_max_steps_reached(
     assert result.completed is True
 
 
+async def test_stream_chat_loop_deduplicates_repeated_step_text_after_tools(
+    adb, async_buyer_user
+):
+    _, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
+    result = ChatLoopResult()
+
+    duplicated_text = (
+        "Good call on the 7.3L - it's proven and simpler to maintain than diesel."
+    )
+
+    step_0 = FakeClaudeResponse.tool_calls(
+        [
+            {
+                "id": "qa-1",
+                "name": "update_quick_actions",
+                "input": {
+                    "actions": [
+                        {
+                            "label": "Set budget",
+                            "prompt": "My budget is around $45,000.",
+                        }
+                    ]
+                },
+            }
+        ],
+        text_chunks=(duplicated_text,),
+    ).to_items()
+    step_1 = FakeClaudeResponse.text(duplicated_text, stop_reason="end_turn").to_items()
+
+    with (
+        patch("app.services.claude.create_anthropic_client", return_value=object()),
+        patch(
+            "app.services.claude._stream_step_with_retry",
+            new=_scripted_stream_factory(step_0, step_1),
+        ),
+    ):
+        events = await _collect_generator_events(
+            stream_chat_loop(
+                build_system_prompt(),
+                [{"role": "user", "content": "I want the 7.3L gas V8."}],
+                CHAT_TOOLS,
+                deal_state,
+                adb,
+                result,
+                session_factory=TestingAsyncSessionLocal,
+            )
+        )
+
+    done_event = next(data for name, data in events if name == "done")
+    assert done_event["text"] == duplicated_text
+    assert result.full_text == duplicated_text
+
+
 async def test_send_message_sse_done_before_panel_updates(
     async_client, adb, async_buyer_user
 ):
@@ -786,32 +924,54 @@ async def test_send_message_sse_done_before_panel_updates(
             'data: {"tool": "update_quick_actions", "data": {"actions": [{"label": "Ask OTD", "prompt": "What is the out-the-door price?"}]}}\n\n'
         )
 
+    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
+        yield SimpleNamespace(
+            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
+        )
+        yield SimpleNamespace(
+            type="panel_card",
+            data={
+                "index": 0,
+                "attempt": 1,
+                "card": {
+                    "type": "briefing",
+                    "title": "Hold Firm",
+                    "content": {
+                        "body": "Their latest counter is still above your target."
+                    },
+                    "priority": "high",
+                },
+            },
+        )
+        yield SimpleNamespace(
+            type="panel_done",
+            data={
+                "cards": [
+                    {
+                        "type": "briefing",
+                        "title": "Hold Firm",
+                        "content": {
+                            "body": "Their latest counter is still above your target."
+                        },
+                        "priority": "high",
+                    }
+                ],
+                "usage_summary": {
+                    "requests": 1,
+                    "input_tokens": 120,
+                    "output_tokens": 40,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 60,
+                    "total_tokens": 160,
+                },
+            },
+        )
+
     with (
         patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
         patch(
-            "app.routes.chat.generate_ai_panel_cards_with_usage",
-            new=AsyncMock(
-                return_value=(
-                    [
-                        {
-                            "type": "briefing",
-                            "title": "Hold Firm",
-                            "content": {
-                                "body": "Their latest counter is still above your target."
-                            },
-                            "priority": "high",
-                        }
-                    ],
-                    {
-                        "requests": 1,
-                        "input_tokens": 120,
-                        "output_tokens": 40,
-                        "cache_creation_input_tokens": 0,
-                        "cache_read_input_tokens": 60,
-                        "total_tokens": 160,
-                    },
-                )
-            ),
+            "app.routes.chat.stream_ai_panel_cards_with_usage",
+            new=fake_stream_panel_cards_with_usage,
         ),
         patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
     ):
@@ -825,16 +985,21 @@ async def test_send_message_sse_done_before_panel_updates(
             events = await _collect_response_events(response)
 
     # done fires immediately after the step loop so the frontend can
-    # unblock input; panel tool_result arrives after done.
+    # unblock input; panel lifecycle events arrive after done.
     assert [event_name for event_name, _ in events] == [
         "text",
         "tool_result",
         "done",
-        "tool_result",
+        "panel_started",
+        "panel_card",
+        "panel_done",
     ]
     # done carries step-loop-only usage (no panel generation costs)
     done_event = next(data for name, data in events if name == "done")
-    assert done_event["text"] == "Hold at $28,500 and get the out-the-door total in writing."
+    assert (
+        done_event["text"]
+        == "Hold at $28,500 and get the out-the-door total in writing."
+    )
     assert done_event["usage"] == {
         "requests": 1,
         "inputTokens": 240,
@@ -843,10 +1008,8 @@ async def test_send_message_sse_done_before_panel_updates(
         "cacheReadInputTokens": 180,
         "totalTokens": 336,
     }
-    # Panel cards arrive as the last tool_result
-    panel_event = events[-1]
-    assert panel_event[0] == "tool_result"
-    assert panel_event[1]["tool"] == "update_insights_panel"
+    panel_done = next(data for name, data in events if name == "panel_done")
+    assert panel_done["cards"][0]["title"] == "Hold Firm"
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(
@@ -960,22 +1123,6 @@ async def test_send_message_stops_after_stream_failure(
 
     with (
         patch("app.routes.chat.stream_chat_loop", new=failing_stream_chat_loop),
-        patch(
-            "app.routes.chat.generate_ai_panel_cards_with_usage",
-            new=AsyncMock(
-                return_value=(
-                    [],
-                    {
-                        "requests": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cache_creation_input_tokens": 0,
-                        "cache_read_input_tokens": 0,
-                        "total_tokens": 0,
-                    },
-                )
-            ),
-        ),
         patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
     ):
         async with async_client.stream(
