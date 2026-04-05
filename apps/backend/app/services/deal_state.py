@@ -14,6 +14,7 @@ from app.models.enums import (
     VehicleRole,
 )
 from app.models.vehicle import Vehicle
+from app.services.turn_context import TurnContext
 from app.services.vehicle_intelligence import build_vehicle_intelligence_response
 
 logger = logging.getLogger(__name__)
@@ -152,10 +153,18 @@ def build_execution_plan(tool_blocks: list[dict]) -> list[list[dict]]:
 async def execute_tool(
     tool_name: str,
     tool_input: dict,
-    deal_state: DealState,
-    db: AsyncSession,
+    context: TurnContext,
 ) -> list[dict]:
     """Execute a single chat tool call by routing to apply_extraction()."""
+    if context.deal_state is None:
+        logger.warning(
+            "execute_tool: called without deal_state context for %s", tool_name
+        )
+        return []
+
+    deal_state = context.deal_state
+    db = context.db
+
     if tool_name == "update_negotiation_context":
         deal_state.negotiation_context = tool_input
         return [{"name": "update_negotiation_context", "args": tool_input}]

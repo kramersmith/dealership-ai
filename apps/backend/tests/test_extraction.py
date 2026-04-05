@@ -7,6 +7,7 @@ from app.models.deal_state import DealState
 from app.models.enums import BuyerContext, DealPhase, VehicleRole
 from app.models.vehicle import Vehicle
 from app.services.deal_state import execute_tool
+from app.services.turn_context import TurnContext
 from sqlalchemy import select
 
 # ─── execute_tool: standard tools ───
@@ -26,8 +27,7 @@ async def test_execute_tool_set_vehicle(adb, async_buyer_user):
     result = await execute_tool(
         "set_vehicle",
         {"role": "primary", "make": "Toyota", "model": "Camry", "year": 2024},
-        deal_state,
-        adb,
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
     )
 
     # Should return tool calls including set_vehicle and possibly create_deal
@@ -67,8 +67,7 @@ async def test_execute_tool_update_deal_numbers(adb, async_buyer_user):
     result = await execute_tool(
         "update_deal_numbers",
         {"listing_price": 34000, "current_offer": 33500},
-        deal_state,
-        adb,
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
     )
 
     tool_names = [tc["name"] for tc in result]
@@ -89,7 +88,11 @@ async def test_execute_tool_negotiation_context(adb, async_buyer_user):
     await adb.flush()
 
     context = {"stance": "firm", "situation": "Waiting for callback"}
-    result = await execute_tool("update_negotiation_context", context, deal_state, adb)
+    result = await execute_tool(
+        "update_negotiation_context",
+        context,
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
 
     assert len(result) == 1
     assert result[0]["name"] == "update_negotiation_context"
@@ -118,8 +121,7 @@ async def test_execute_tool_scalar_phase(adb, async_buyer_user):
     result = await execute_tool(
         "update_deal_phase",
         {"phase": DealPhase.NEGOTIATION},
-        deal_state,
-        adb,
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
     )
 
     tool_names = [tc["name"] for tc in result]
@@ -141,8 +143,7 @@ async def test_execute_tool_scalar_buyer_context(adb, async_buyer_user):
     result = await execute_tool(
         "update_buyer_context",
         {"buyer_context": "at_dealership"},
-        deal_state,
-        adb,
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
     )
 
     tool_names = [tc["name"] for tc in result]
@@ -161,7 +162,21 @@ async def test_execute_tool_unknown_tool(adb, async_buyer_user):
     adb.add(deal_state)
     await adb.flush()
 
-    result = await execute_tool("nonexistent_tool", {}, deal_state, adb)
+    result = await execute_tool(
+        "nonexistent_tool",
+        {},
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+    assert result == []
+
+
+async def test_execute_tool_returns_empty_when_deal_state_none(adb):
+    """execute_tool returns empty list when context.deal_state is None."""
+    result = await execute_tool(
+        "update_deal_numbers",
+        {"listing_price": 30000},
+        TurnContext.create(session=None, deal_state=None, db=adb),
+    )
     assert result == []
 
 

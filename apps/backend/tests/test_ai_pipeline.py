@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -14,6 +15,7 @@ from app.core.deps import get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.deal import Deal
+from app.models.enums import BuyerContext
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.services.claude import (
@@ -23,6 +25,8 @@ from app.services.claude import (
     _SyntheticTextEvent,
     _SyntheticToolJsonEvent,
     _SyntheticToolStartEvent,
+    build_context_message,
+    build_messages,
     build_system_prompt,
     merge_usage_summary,
     stream_chat_loop,
@@ -30,6 +34,7 @@ from app.services.claude import (
 )
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import generate_ai_panel_cards, stream_ai_panel_cards_with_usage
+from app.services.turn_context import TurnContext
 from httpx import ASGITransport, AsyncClient
 from inline_snapshot import snapshot
 from sqlalchemy import select
@@ -275,6 +280,181 @@ async def test_chat_tools_schema_snapshot():
     _assert_json_snapshot("chat_tools_schema.json", _tool_schema_contract())
 
 
+def test_context_message_includes_current_utc_date():
+    context_message = build_context_message(
+        {"buyer_context": BuyerContext.RESEARCHING, "deals": [], "vehicles": []}
+    )
+
+    assert context_message is not None
+    content = context_message["content"]
+    assert "Current date (UTC):" in content
+    assert re.search(r"Current date \(UTC\): \d{4}-\d{2}-\d{2}\.", content)
+
+
+# ─── TurnContext unit tests ───
+
+
+def test_turn_context_create_with_deal_state():
+    """TurnContext.create() stores deal_state and initialises step to 0."""
+    from unittest.mock import MagicMock
+
+    mock_deal_state = MagicMock()
+    mock_db = MagicMock()
+
+    ctx = TurnContext.create(session=None, deal_state=mock_deal_state, db=mock_db)
+
+    assert ctx.deal_state is mock_deal_state
+    assert ctx.session is None
+    assert ctx.db is mock_db
+    assert ctx.step == 0
+
+
+def test_turn_context_create_with_deal_state_none():
+    """TurnContext.create() handles deal_state=None gracefully."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+
+    ctx = TurnContext.create(session=None, deal_state=None, db=mock_db)
+
+    assert ctx.deal_state is None
+
+
+def test_turn_context_for_step():
+    """for_step() returns a new context with updated step number."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    ctx = TurnContext.create(session=None, deal_state=None, db=mock_db)
+    stepped = ctx.for_step(3)
+
+    assert stepped.step == 3
+    assert ctx.step == 0  # original unchanged
+    assert stepped.db is ctx.db
+    assert stepped is not ctx
+
+
+def test_turn_context_for_db_session():
+    """for_db_session() returns a new context with replaced db and deal_state."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_deal_state = MagicMock()
+    ctx = TurnContext.create(session=None, deal_state=mock_deal_state, db=mock_db)
+
+    new_db = MagicMock()
+    new_deal_state = MagicMock()
+
+    swapped = ctx.for_db_session(new_db, deal_state=new_deal_state)
+
+    assert swapped.db is new_db
+    assert swapped.deal_state is new_deal_state
+    # original unchanged
+    assert ctx.db is mock_db
+    assert ctx.deal_state is mock_deal_state
+
+
+def test_turn_context_for_db_session_without_deal_state():
+    """for_db_session() without deal_state kwarg keeps existing deal_state."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_deal_state = MagicMock()
+    ctx = TurnContext.create(session=None, deal_state=mock_deal_state, db=mock_db)
+
+    new_db = MagicMock()
+    swapped = ctx.for_db_session(new_db)
+
+    assert swapped.db is new_db
+    assert swapped.deal_state is mock_deal_state
+
+
+# ─── build_messages tests ───
+
+
+def test_build_messages_context_merged_into_user_message():
+    """Context message is merged into the user message as content blocks."""
+    context = {
+        "role": "user",
+        "content": "<system-reminder>Deal context</system-reminder>",
+    }
+    messages = build_messages([], "What should I do?", context_message=context)
+
+    assert len(messages) == 1
+    msg = messages[0]
+    assert msg["role"] == "user"
+    # Should be a list of content blocks (context + user text)
+    assert isinstance(msg["content"], list)
+    assert len(msg["content"]) == 2
+    assert msg["content"][0]["type"] == "text"
+    assert "Deal context" in msg["content"][0]["text"]
+    assert msg["content"][1]["type"] == "text"
+    assert msg["content"][1]["text"] == "What should I do?"
+
+
+def test_build_messages_no_context_plain_string():
+    """Without context message, user message is a plain string."""
+    messages = build_messages([], "Hello")
+
+    assert len(messages) == 1
+    assert messages[0] == {"role": "user", "content": "Hello"}
+
+
+def test_build_messages_with_image_and_context():
+    """Image URL + context message produces context + image + text blocks."""
+    context = {
+        "role": "user",
+        "content": "<system-reminder>Context here</system-reminder>",
+    }
+    messages = build_messages(
+        [],
+        "What is this?",
+        image_url="https://example.com/img.jpg",
+        context_message=context,
+    )
+
+    assert len(messages) == 1
+    msg = messages[0]
+    assert msg["role"] == "user"
+    blocks = msg["content"]
+    assert isinstance(blocks, list)
+    assert len(blocks) == 3
+    # First block: context text
+    assert blocks[0]["type"] == "text"
+    assert "Context here" in blocks[0]["text"]
+    # Second block: image
+    assert blocks[1]["type"] == "image"
+    assert blocks[1]["source"]["url"] == "https://example.com/img.jpg"
+    # Third block: user text
+    assert blocks[2]["type"] == "text"
+    assert blocks[2]["text"] == "What is this?"
+
+
+def test_build_messages_with_image_no_context():
+    """Image URL without context produces image + text blocks (no context block)."""
+    messages = build_messages(
+        [], "Describe this", image_url="https://example.com/pic.png"
+    )
+
+    assert len(messages) == 1
+    blocks = messages[0]["content"]
+    assert isinstance(blocks, list)
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "image"
+    assert blocks[1]["type"] == "text"
+    assert blocks[1]["text"] == "Describe this"
+
+
+def test_build_messages_no_synthetic_reply_injected():
+    """build_messages no longer injects a synthetic assistant reply after context."""
+    context = {"role": "user", "content": "Some context"}
+    messages = build_messages([], "Hi", context_message=context)
+
+    # Should be just the merged user message, no synthetic assistant reply
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 0
+
+
 @patch("app.services.panel.create_anthropic_client")
 async def test_generate_ai_panel_cards_snapshot(mock_create_client):
     response_json = json.dumps(
@@ -496,8 +676,7 @@ async def test_stream_chat_loop_applies_multi_tool_chain_and_snapshots_state(
                 build_system_prompt(),
                 messages,
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=session, deal_state=deal_state, db=adb),
                 result,
                 session_factory=TestingAsyncSessionLocal,
             )
@@ -575,8 +754,7 @@ async def test_stream_chat_loop_synthesizes_tool_error_on_execution_failure(
                 build_system_prompt(),
                 messages,
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=None, deal_state=deal_state, db=adb),
                 result,
                 session_factory=TestingAsyncSessionLocal,
             )
@@ -629,8 +807,7 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
                 build_system_prompt(),
                 messages,
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=None, deal_state=deal_state, db=adb),
                 result,
                 session_factory=TestingAsyncSessionLocal,
             )
@@ -691,8 +868,7 @@ async def test_stream_chat_loop_emits_retry_event_before_recovery(
                 build_system_prompt(),
                 [{"role": "user", "content": "Hello"}],
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=None, deal_state=deal_state, db=adb),
                 result,
                 session_factory=TestingAsyncSessionLocal,
             )
@@ -738,8 +914,7 @@ async def test_stream_chat_loop_retries_after_max_tokens(adb, async_buyer_user):
                 build_system_prompt(),
                 [{"role": "user", "content": "Help me."}],
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=None, deal_state=deal_state, db=adb),
                 result,
                 session_factory=TestingAsyncSessionLocal,
             )
@@ -808,8 +983,7 @@ async def test_stream_chat_loop_emits_partial_done_when_max_steps_reached(
                 build_system_prompt(),
                 [{"role": "user", "content": "Help me negotiate."}],
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=None, deal_state=deal_state, db=adb),
                 result,
                 max_steps=2,
                 session_factory=TestingAsyncSessionLocal,
@@ -864,8 +1038,7 @@ async def test_stream_chat_loop_deduplicates_repeated_step_text_after_tools(
                 build_system_prompt(),
                 [{"role": "user", "content": "I want the 7.3L gas V8."}],
                 CHAT_TOOLS,
-                deal_state,
-                adb,
+                TurnContext.create(session=None, deal_state=deal_state, db=adb),
                 result,
                 session_factory=TestingAsyncSessionLocal,
             )
@@ -888,7 +1061,7 @@ async def test_send_message_sse_done_before_panel_updates(
     token = create_access_token({"sub": async_buyer_user.id})
 
     async def fake_stream_chat_loop(*args, **kwargs):
-        result = args[5]
+        result = args[4]
         result.full_text = "Hold at $28,500 and get the out-the-door total in writing."
         merge_usage_summary(
             result.usage_summary,
@@ -1114,7 +1287,7 @@ async def test_send_message_stops_after_stream_failure(
     token = create_access_token({"sub": async_buyer_user.id})
 
     async def failing_stream_chat_loop(*args, **kwargs):
-        result = args[5]
+        result = args[4]
         result.failed = True
         yield (
             "event: error\n"

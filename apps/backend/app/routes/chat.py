@@ -27,6 +27,7 @@ from app.services.claude import (
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import stream_ai_panel_cards_with_usage
 from app.services.post_chat_processing import update_session_metadata
+from app.services.turn_context import TurnContext
 from app.services.usage_tracking import (
     SessionUsageSummary,
     build_request_usage,
@@ -116,14 +117,18 @@ async def send_message(
     async def generate():
         result = ChatLoopResult()
         session_usage = SessionUsageSummary.from_dict(session.usage)
+        turn_context = TurnContext.create(
+            session=session,
+            deal_state=deal_state,
+            db=db,
+        )
 
         # ── Step loop: stream text + execute tools until done ──
         async for sse_event in stream_chat_loop(
             system_prompt,
             messages,
             CHAT_TOOLS,
-            deal_state,
-            db,
+            turn_context,
             result,
             emit_done_event=False,
         ):

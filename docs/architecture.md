@@ -72,10 +72,11 @@ dealership-ai/
 │       │   ├── schemas/         # Pydantic request/response
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
-│       │       ├── claude.py    # Chat step loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult
+│       │       ├── claude.py    # Chat step loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, temporal grounding
 │       │       ├── panel.py     # AI panel card generation (generate_ai_panel_cards), conversation context, panel prompt, card validation
 │       │       ├── deal_analysis.py # Standalone deal analysis (analyze_deal), analyst tool definition
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
+│       │       ├── turn_context.py  # TurnContext dataclass — unified execution context for step loop + tool execution
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
 │       │       ├── vehicle_intelligence.py  # NHTSA vPIC VIN decode, VinAudit history/valuation
@@ -213,7 +214,7 @@ POST   /simulations/{id}/complete     # End + score
 **Streaming flow:**
 1. Client POSTs message.
 2. Backend loads message history BEFORE saving the user message (avoids duplicate user messages in Claude context), then saves the user message.
-3. Backend loads deal state + linked session context and starts the Claude chat step loop with tools.
+3. Backend builds a `TurnContext` (session, deal state, DB session) and constructs the message list. The per-turn context message (deal state, linked sessions, current UTC date for temporal grounding) is merged into the user message as content blocks — no synthetic assistant reply is injected. The backend then starts the Claude chat step loop with tools.
 4. Each step streams `text` chunks and accumulates `tool_use` blocks. If the transport stalls or the model hits `stop_reason == "max_tokens"`, the backend emits a `retry` SSE event and replays the step with a reset signal for the client.
 5. When a step finishes with tool calls, the backend executes them, emits `tool_result` SSE events, appends tool results back into the Claude transcript, and continues the loop.
 6. When the step loop reaches a text-only completion, the backend emits `done` immediately so input can unblock, then starts asynchronous panel generation in the same SSE stream.

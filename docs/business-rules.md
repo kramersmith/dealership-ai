@@ -1,6 +1,6 @@
 # Business Rules
 
-Last updated: 2026-04-03
+Last updated: 2026-04-04
 
 ## Table of Contents
 
@@ -507,3 +507,11 @@ If Claude doesn't call `update_quick_actions` during the primary response, the b
 - Message history limited to 20 messages to control context size
 - Linked session context limited to last 10 messages, each truncated to 200 characters
 - Assistant message `usage` is persisted per turn, while `ChatSession.usage` stores the cumulative per-session ledger with per-model totals and USD cost
+
+### Temporal Grounding
+
+Each turn's context message includes the current UTC date (`Current date (UTC): YYYY-MM-DD`). This gives the AI accurate temporal awareness for deal timing advice without relying on the model's training data cutoff.
+
+### Message Construction
+
+Per-turn context (deal state, linked sessions, temporal grounding) is merged into the user message as content blocks rather than injected as a separate user/assistant message pair. This keeps the message history clean for prompt caching and avoids synthetic assistant replies.

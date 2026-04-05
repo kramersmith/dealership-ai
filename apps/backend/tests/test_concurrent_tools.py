@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services.claude import ChatLoopResult
 from app.services.deal_state import build_execution_plan
+from app.services.turn_context import TurnContext
 from sqlalchemy import select
 
 from tests.conftest import TestingAsyncSessionLocal
@@ -159,8 +160,11 @@ async def test_execute_tool_batch_single_tool(adb):
     ]
 
     results = []
+    turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
     async for block, outcome in _execute_tool_batch(
-        batch, deal_state.id, step=0, session_factory=TestingAsyncSessionLocal
+        batch,
+        turn_context.for_step(0),
+        session_factory=TestingAsyncSessionLocal,
     ):
         results.append((block, outcome))
 
@@ -200,8 +204,11 @@ async def test_execute_tool_batch_multiple_independent_tools(adb):
     ]
 
     results = []
+    turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
     async for block, outcome in _execute_tool_batch(
-        batch, deal_state.id, step=0, session_factory=TestingAsyncSessionLocal
+        batch,
+        turn_context.for_step(0),
+        session_factory=TestingAsyncSessionLocal,
     ):
         results.append((block, outcome))
 
@@ -240,8 +247,11 @@ async def test_execute_tool_batch_error_isolation(adb):
     ]
 
     results = []
+    turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
     async for block, outcome in _execute_tool_batch(
-        batch, deal_state.id, step=0, session_factory=TestingAsyncSessionLocal
+        batch,
+        turn_context.for_step(0),
+        session_factory=TestingAsyncSessionLocal,
     ):
         results.append((block, outcome))
 
@@ -273,8 +283,11 @@ async def test_execute_tool_batch_ordered_yielding(adb):
     ]
 
     result_ids = []
+    turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
     async for block, _ in _execute_tool_batch(
-        batch, deal_state.id, step=0, session_factory=TestingAsyncSessionLocal
+        batch,
+        turn_context.for_step(0),
+        session_factory=TestingAsyncSessionLocal,
     ):
         result_ids.append(block["id"])
 
@@ -317,8 +330,11 @@ async def test_batches_execute_in_priority_order(adb):
         }
     ]
     results_0 = []
+    turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
     async for block, outcome in _execute_tool_batch(
-        batch_0, deal_state.id, step=0, session_factory=TestingAsyncSessionLocal
+        batch_0,
+        turn_context.for_step(0),
+        session_factory=TestingAsyncSessionLocal,
     ):
         results_0.append((block, outcome))
 
@@ -342,8 +358,11 @@ async def test_batches_execute_in_priority_order(adb):
         }
     ]
     results_2 = []
+    turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
     async for block, outcome in _execute_tool_batch(
-        batch_2, deal_state.id, step=0, session_factory=TestingAsyncSessionLocal
+        batch_2,
+        turn_context.for_step(0),
+        session_factory=TestingAsyncSessionLocal,
     ):
         results_2.append((block, outcome))
 

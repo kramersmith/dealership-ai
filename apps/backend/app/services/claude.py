@@ -4,15 +4,11 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any
+from datetime import datetime, timezone
+from typing import Any
 
 import anthropic
 from sqlalchemy import select
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from app.models.deal_state import DealState
 
 from app.core.config import settings
 from app.models.enums import (
@@ -24,6 +20,7 @@ from app.models.enums import (
     RedFlagSeverity,
     ScoreStatus,
 )
+from app.services.turn_context import TurnContext
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +37,11 @@ def create_anthropic_client() -> anthropic.AsyncAnthropic:
 def _normalize_step_text_for_dedupe(text: str) -> str:
     """Normalize whitespace so identical step prose can be compared reliably."""
     return " ".join(text.split())
+
+
+def _current_utc_date_iso() -> str:
+    """Return today's UTC date for per-turn temporal grounding."""
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 # ─── Context message configuration ───
@@ -816,8 +818,7 @@ class _SyntheticBlockStopEvent:
 
 async def _execute_tool_batch(
     batch: list[dict],
-    deal_state_id: str,
-    step: int,
+    turn_context: TurnContext,
     session_factory,
 ) -> AsyncGenerator[tuple[dict, list[dict] | Exception], None]:
     """Execute a priority batch concurrently with isolated DB sessions.
@@ -845,21 +846,31 @@ async def _execute_tool_batch(
     ) -> tuple[int, dict, list[dict] | Exception]:
         async with session_factory() as tool_db:
             try:
+                if turn_context.deal_state is None:
+                    raise RuntimeError("Deal state no longer exists")
                 result = await tool_db.execute(
-                    select(DealState).where(DealState.id == deal_state_id)
+                    select(DealState).where(DealState.id == turn_context.deal_state.id)
                 )
                 tool_deal_state = result.scalar_one_or_none()
                 if tool_deal_state is None:
                     raise RuntimeError("Deal state no longer exists")
+                tool_context = turn_context.for_db_session(
+                    tool_db,
+                    deal_state=tool_deal_state,
+                )
                 applied = await execute_tool(
-                    block["name"], block["input"], tool_deal_state, tool_db
+                    block["name"],
+                    block["input"],
+                    tool_context,
                 )
                 await tool_db.commit()
                 return index, block, applied
             except Exception as exc:
                 await tool_db.rollback()
                 logger.exception(
-                    "Step %d: tool [%s] execution failed", step, block["name"]
+                    "Step %d: tool [%s] execution failed",
+                    turn_context.step,
+                    block["name"],
                 )
                 return index, block, exc
 
@@ -881,8 +892,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     system_prompt: list[dict],
     messages: list[dict],
     tools: list[dict],
-    deal_state: DealState | None,
-    db: AsyncSession,
+    turn_context: TurnContext,
     result: ChatLoopResult,
     max_steps: int = CHAT_LOOP_MAX_STEPS,
     session_factory=None,
@@ -911,6 +921,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     last_appended_step_text_normalized = ""
 
     for step in range(max_steps):
+        turn_context = turn_context.for_step(step)
         # Notify frontend that a new step is starting (after tool execution)
         # so it can show a thinking indicator during multi-step loops.
         if step > 0:
@@ -1139,11 +1150,13 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
             )
             yield f"event: tool_error\ndata: {json.dumps({'tool': err_block['name'], 'error': 'Malformed tool input'})}\n\n"
 
-        if deal_state:
+        if turn_context.deal_state:
             execution_plan = build_execution_plan(tool_use_blocks)
             for batch in execution_plan:
                 async for tool_block, outcome in _execute_tool_batch(
-                    batch, deal_state.id, step, session_factory
+                    batch,
+                    turn_context,
+                    session_factory,
                 ):
                     tool_name = tool_block["name"]
                     tool_id = tool_block["id"]
@@ -1234,7 +1247,7 @@ def build_context_message(
     system prompt stays stable and cacheable across turns. Uses
     <system-reminder> tags following the reference architecture pattern.
     """
-    context_parts: list[str] = []
+    context_parts: list[str] = [f"Current date (UTC): {_current_utc_date_iso()}."]
 
     if deal_state_dict:
         buyer_context = deal_state_dict.get("buyer_context", BuyerContext.RESEARCHING)
@@ -1372,24 +1385,34 @@ def build_messages(
                 entry["content"] = [*entry["content"][:-1], last_block]
         messages.append(entry)
 
-    # Dynamic context AFTER history — changes every turn/request, not cached
-    if context_message:
-        messages.append(context_message)
-        # Claude requires alternating user/assistant
-        messages.append(
-            {"role": "assistant", "content": "Understood. I have the current context."}
-        )
-
     # New user message (uncached — changes every turn/request)
+    context_text = context_message.get("content") if context_message else None
+
     if image_url:
+        content_blocks: list[dict] = []
+        if isinstance(context_text, str):
+            content_blocks.append({"type": "text", "text": context_text})
+        content_blocks.extend(
+            [
+                {
+                    "type": "image",
+                    "source": {"type": "url", "url": image_url},
+                },
+                {"type": "text", "text": user_content},
+            ]
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": content_blocks,
+            }
+        )
+    elif isinstance(context_text, str):
         messages.append(
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "url", "url": image_url},
-                    },
+                    {"type": "text", "text": context_text},
                     {"type": "text", "text": user_content},
                 ],
             }

@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-04-03**
+**Last updated: 2026-04-04**
 
 ---
 
@@ -97,7 +97,7 @@ graph TB
 1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL).
 2. Backend saves the user message to the `messages` table.
 3. Backend loads message history (last 20 messages) and current deal state.
-4. Backend constructs a system prompt with deal state context, a context-aware preamble based on `buyer_context`, negotiation context summary, and linked session context.
+4. Backend constructs a `TurnContext` (session, deal state, DB session) and builds the message list. A per-turn context message — deal state, context-aware preamble based on `buyer_context`, negotiation context summary, linked session context, and current UTC date for temporal grounding — is merged into the user message as content blocks (no synthetic assistant reply). The system prompt stays stable and cacheable across turns.
 5. Backend opens a streaming connection to the Claude API (Sonnet) with the current tool set.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays SSE events to the client as the turn progresses:
