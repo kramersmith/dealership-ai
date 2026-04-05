@@ -21,6 +21,7 @@ from app.models.session import ChatSession
 from app.services.claude import (
     CHAT_TOOLS,
     ChatLoopResult,
+    _move_message_cache_breakpoint,
     _SyntheticBlockStopEvent,
     _SyntheticTextEvent,
     _SyntheticToolJsonEvent,
@@ -455,6 +456,130 @@ def test_build_messages_no_synthetic_reply_injected():
     assert len(assistant_msgs) == 0
 
 
+def test_build_messages_cache_breakpoint_on_last_history():
+    """build_messages places cache_control on the last history message."""
+    history = [
+        {"role": "user", "content": "First message"},
+        {"role": "assistant", "content": "First reply"},
+        {"role": "user", "content": "Second message"},
+        {"role": "assistant", "content": "Second reply"},
+    ]
+    messages = build_messages(history, "New question")
+
+    # Last history message (index 3) should have cache_control
+    last_history = messages[3]
+    assert isinstance(last_history["content"], list)
+    assert last_history["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+    # Earlier history messages should NOT have cache_control
+    for msg in messages[:3]:
+        content = msg["content"]
+        if isinstance(content, list):
+            for block in content:
+                assert "cache_control" not in block
+        # String content can't have cache_control
+
+    # New user message (last) should NOT have cache_control
+    new_msg = messages[-1]
+    if isinstance(new_msg["content"], list):
+        for block in new_msg["content"]:
+            assert "cache_control" not in block
+
+
+def test_build_messages_cache_breakpoint_with_list_content():
+    """cache_control is applied to the last block when history content is a list."""
+    history = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Some text"},
+                {"type": "tool_use", "id": "t1", "name": "foo", "input": {}},
+            ],
+        },
+    ]
+    messages = build_messages(history, "Next question")
+
+    # The last block of the last history message should have cache_control
+    last_block = messages[0]["content"][-1]
+    assert last_block.get("cache_control") == {"type": "ephemeral"}
+    # First block should NOT
+    assert "cache_control" not in messages[0]["content"][0]
+
+
+def test_move_message_cache_breakpoint_moves_to_last():
+    """_move_message_cache_breakpoint moves breakpoint to the last message."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "old breakpoint",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+    ]
+
+    _move_message_cache_breakpoint(messages)
+
+    # Old breakpoint removed
+    assert "cache_control" not in messages[0]["content"][0]
+    # New breakpoint on last message's last block
+    assert messages[2]["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+
+def test_move_message_cache_breakpoint_string_content():
+    """_move_message_cache_breakpoint converts string content to list with cache_control."""
+    messages = [
+        {"role": "user", "content": "plain string"},
+    ]
+
+    _move_message_cache_breakpoint(messages)
+
+    assert isinstance(messages[0]["content"], list)
+    assert messages[0]["content"][0] == {
+        "type": "text",
+        "text": "plain string",
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def test_move_message_cache_breakpoint_strips_all_previous():
+    """_move_message_cache_breakpoint strips breakpoints from all previous messages."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "msg1", "cache_control": {"type": "ephemeral"}}
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "msg2", "cache_control": {"type": "ephemeral"}}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "msg3"}],
+        },
+    ]
+
+    _move_message_cache_breakpoint(messages)
+
+    # All previous breakpoints stripped
+    assert "cache_control" not in messages[0]["content"][0]
+    assert "cache_control" not in messages[1]["content"][0]
+    # Last message has the breakpoint
+    assert messages[2]["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+
 @patch("app.services.panel.create_anthropic_client")
 async def test_generate_ai_panel_cards_snapshot(mock_create_client):
     response_json = json.dumps(
@@ -774,6 +899,7 @@ async def test_stream_chat_loop_synthesizes_tool_error_on_execution_failure(
                 "tool_use_id": "phase-1",
                 "is_error": True,
                 "content": "Tool 'update_deal_phase' failed: 'phase'",
+                "cache_control": {"type": "ephemeral"},
             }
         ]
     )
@@ -838,6 +964,7 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
                 "tool_use_id": "qa-1",
                 "is_error": True,
                 "content": "Tool 'update_quick_actions' received malformed JSON input",
+                "cache_control": {"type": "ephemeral"},
             }
         ]
     )

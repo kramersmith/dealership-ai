@@ -1214,11 +1214,45 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         if tool_result_content:
             messages.append({"role": "user", "content": tool_result_content})
 
+        # Move the cache breakpoint to the last message so the next step's
+        # API call caches everything up to this point (two-breakpoint caching).
+        _move_message_cache_breakpoint(messages)
+
     # Max steps exceeded — emit whatever we have
     logger.warning("Chat loop hit max steps (%d), emitting partial response", max_steps)
     result.completed = True
     if emit_done_event:
         yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+
+
+def _move_message_cache_breakpoint(messages: list[dict]) -> None:
+    """Move the cache breakpoint to the last message in the array.
+
+    Called after each step appends tool results so the next step's API call
+    caches the entire conversation prefix (two-breakpoint caching). Only one
+    message-level breakpoint is maintained to stay within the Anthropic API's
+    4-breakpoint limit (system + tools + 1 message).
+    """
+    # Strip existing message-level cache_control
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and "cache_control" in block:
+                    del block["cache_control"]
+
+    if not messages:
+        return
+
+    # Add breakpoint to the last content block of the last message
+    last_msg = messages[-1]
+    content = last_msg.get("content")
+    if isinstance(content, str):
+        last_msg["content"] = [
+            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+        ]
+    elif isinstance(content, list) and content:
+        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
 
 
 def build_system_prompt() -> list[dict]:
