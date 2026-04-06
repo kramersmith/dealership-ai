@@ -230,6 +230,27 @@ Docker Compose runs:
 
 The frontend includes an `.npmrc` with `legacy-peer-deps=true` for Docker build compatibility.
 
+### Anthropic API key (Docker)
+
+Compose injects environment from **`apps/backend/.env` only** (not a `.env` at the repository root). Use the exact name `ANTHROPIC_API_KEY=sk-ant-...` with **no** surrounding quotes on the value.
+
+After changing the key:
+
+```bash
+make docker-down
+make docker-up
+```
+
+Verify the container sees a non-empty key (output should be `set`):
+
+```bash
+docker compose exec backend python -c "from app.core.config import settings; print('set' if settings.ANTHROPIC_API_KEY.strip() else 'EMPTY')"
+```
+
+If that prints `EMPTY`, the file path is wrong, the variable name is misspelled, or the line is commented out. With `LOG_LEVEL=DEBUG` in Compose, startup logs include `ANTHROPIC_API_KEY loaded (suffix …xxxx)` so you can confirm the running process picked up the new key (last four characters only).
+
+If the key is set but the API still returns “credit balance is too low”, confirm in [Anthropic Console](https://console.anthropic.com/) that **Workspaces → API keys** shows the same key, billing is active for that organization, and a few minutes have passed after purchase.
+
 ### Seed Users
 
 When `ENV=development` (the default), the backend automatically seeds two test users on startup via the lifespan handler:

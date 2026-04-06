@@ -502,6 +502,7 @@ Chat responses are streamed via Server-Sent Events (SSE) with core chat and pane
 | `tool_result` | `{"tool": "...", "data": {...}}` | A tool call result for dashboard updates |
 | `retry` | `{"attempt": 1, "reason": "max_tokens", "reset_text": true, ...}` | Stream recovery or bounded truncation replay |
 | `step` | `{"step": 2}` | Multi-step turn progress |
+| `error` | `{"message": "..."}` | Unrecoverable API failure with safe user-visible message |
 | `done` | `{"text": "...", "usage": {...}}` | Chat text completion event with chat-phase usage |
 | `panel_started` | `{"attempt": 1, "max_tokens": 2048}` | Panel generation phase started |
 | `panel_card` | `{"index": 0, "attempt": 1, "card": {...}}` | Incremental panel card streamed to client |
@@ -538,8 +539,16 @@ If Claude doesn't call `update_quick_actions` during the primary response, the b
 
 ### Temporal Grounding
 
-Each turn's context message includes the current UTC date (`Current date (UTC): YYYY-MM-DD`). This gives the AI accurate temporal awareness for deal timing advice without relying on the model's training data cutoff.
+Each turn's context message includes the current UTC date (`Current date (UTC): YYYY-MM-DD`) marked as the authoritative "now" for all time-relative claims (timelines, deadlines, warranties, lease pacing, event ordering). When a vehicle model year is known, a temporal hint line states the calendar-year span since that model year for consistent age and annualized mileage reasoning.
 
 ### Message Construction
 
 Per-turn context (deal state, linked sessions, temporal grounding) is merged into the user message as content blocks rather than injected as a separate user/assistant message pair. This keeps the message history clean for prompt caching and avoids synthetic assistant replies.
+
+### Prompt Cache Monitoring
+
+SHA-256 fingerprints of cache-relevant request components (system prompt, tools, model, betas) are compared across turns to detect prompt cache breaks. Break counts and last-known fingerprints are persisted on the session usage ledger. Break logs are INFO-level and contain only hashes and component labels — never raw prompt text or tool JSON.
+
+### Error Handling
+
+Anthropic API errors are mapped to safe user-visible SSE messages (e.g. "AI response failed. Please try again.") via the `error` event. Known conditions (low credit balance, authentication errors) produce specific but non-leaking messages. On stream failure or a failed step loop, the orphan user message is deleted to prevent duplicate history on retry.

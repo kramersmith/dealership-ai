@@ -1,6 +1,6 @@
 # Logging Guidelines
 
-**Last updated:** 2026-04-03
+**Last updated:** 2026-04-06
 
 ---
 
@@ -39,6 +39,8 @@ Allowed in Claude usage logs:
 - Session ID
 
 Do not include raw prompt text, message bodies, or extracted financial line items in usage logs.
+
+**Prompt cache break logs** (`Prompt cache break detected`) are INFO-level and must contain only SHA-256 hex digests and component labels (for example `system`, `tools`, `model`) — never raw system prompts, tool JSON, or message bodies.
 
 ## Configuration
 

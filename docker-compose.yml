@@ -19,6 +19,7 @@ services:
       - "8001:8001"
     volumes:
       - ./apps/backend:/app
+    # API keys live here (repo root .env is NOT used unless you wire it yourself)
     env_file:
       - ./apps/backend/.env
     environment:

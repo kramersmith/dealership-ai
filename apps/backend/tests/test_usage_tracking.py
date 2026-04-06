@@ -382,6 +382,32 @@ def test_session_usage_payload_null_cost():
     assert result["totalCostUsd"] == 0.0
 
 
+def test_session_usage_payload_includes_prompt_cache():
+    result = session_usage_payload(
+        {
+            "request_count": 1,
+            "total_cost_usd": 0.001,
+            "prompt_cache": {
+                "chat_last": {"system": "abc123", "combined": "def456"},
+                "panel_last": None,
+                "break_count": 2,
+            },
+        }
+    )
+    assert "promptCache" in result
+    assert result["promptCache"]["chatLast"] == {
+        "system": "abc123",
+        "combined": "def456",
+    }
+    assert result["promptCache"]["panelLast"] is None
+    assert result["promptCache"]["breakCount"] == 2
+
+
+def test_session_usage_payload_omits_prompt_cache_when_absent():
+    result = session_usage_payload({"request_count": 1, "total_cost_usd": 0.001})
+    assert "promptCache" not in result
+
+
 # ── log_request_usage ──
 
 

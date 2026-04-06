@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
@@ -88,6 +88,7 @@ async def send_message(
     )
     db.add(user_msg)
     await db.commit()
+    await db.refresh(user_msg)
 
     # Load deal state
     deal_state_result = await db.execute(
@@ -123,20 +124,42 @@ async def send_message(
             db=db,
         )
 
+        async def _remove_orphan_user_message(reason: str) -> None:
+            """Delete the user message when the step loop fails before persisting an assistant reply."""
+            try:
+                await db.execute(delete(Message).where(Message.id == user_msg.id))
+                await db.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to remove orphan user message (%s): session_id=%s",
+                    reason,
+                    session_id,
+                )
+
         # ── Step loop: stream text + execute tools until done ──
-        async for sse_event in stream_chat_loop(
-            system_prompt,
-            messages,
-            CHAT_TOOLS,
-            turn_context,
-            result,
-            emit_done_event=False,
-            linked_messages=linked_messages,
-        ):
-            yield sse_event
+        try:
+            async for sse_event in stream_chat_loop(
+                system_prompt,
+                messages,
+                CHAT_TOOLS,
+                turn_context,
+                result,
+                emit_done_event=False,
+                linked_messages=linked_messages,
+                prompt_cache_prior_chat=session_usage.prompt_cache_chat_last,
+            ):
+                yield sse_event
+        except Exception:
+            logger.exception("Chat stream aborted: session_id=%s", session_id)
+            await _remove_orphan_user_message("stream abort")
+            raise
+
+        session_usage.prompt_cache_chat_last = result.prompt_cache_chat_last
+        session_usage.prompt_cache_break_count += result.prompt_cache_breaks
 
         if result.failed:
             logger.error("Step loop failed: session_id=%s", session_id)
+            await _remove_orphan_user_message("failed step loop")
             return
 
         logger.debug(
@@ -169,11 +192,16 @@ async def send_message(
                 panel_usage_summary: dict[str, int] | None = None
                 latest_cards: list[dict] = []
 
+                panel_prompt_cache: dict = {
+                    "prior": session_usage.prompt_cache_panel_last,
+                    "breaks_delta": 0,
+                }
                 async for panel_event in stream_ai_panel_cards_with_usage(
                     updated_state_dict,
                     result.full_text,
                     all_messages,
                     session_id=session_id,
+                    panel_prompt_cache=panel_prompt_cache,
                 ):
                     if panel_event.type == "panel_started":
                         panel_started = True
@@ -197,6 +225,11 @@ async def send_message(
 
                 if panel_usage_summary:
                     merge_usage_summary(result.usage_summary, panel_usage_summary)
+
+                session_usage.prompt_cache_panel_last = panel_prompt_cache.get("last")
+                session_usage.prompt_cache_break_count += panel_prompt_cache.get(
+                    "breaks_delta", 0
+                )
 
                 if panel_completed:
                     deal_state.ai_panel_cards = latest_cards

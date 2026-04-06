@@ -31,7 +31,7 @@ dealership-ai/
 │   │   │   │   └── register.tsx # Registration with "Buying"/"Selling" role selection
 │   │   │   └── _layout.tsx      # Root layout
 │   │   ├── components/
-│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview), ChatInput, VoiceButton, ContextPicker (situation cards + VIN submit), CopyableBlock, VinAssistCard, VinInterceptModal
+│   │   │   ├── chat/            # ChatBubble (markdown rendering, QuotedCardPreview, FailedMessageFooter retry), ChatInput, VoiceButton, ContextPicker (situation cards + VIN submit), CopyableBlock, VinAssistCard, VinInterceptModal
 │   │   │   ├── chats/           # SessionCard (phase dot, preview, deal summary)
 │   │   │   ├── insights-panel/   # AI-driven InsightsPanel with card-based layout:
 │   │   │   │                    # AiCard (base renderer + reply button), CardReplyInput,
@@ -72,12 +72,13 @@ dealership-ai/
 │       │   ├── schemas/         # Pydantic request/response
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
-│       │       ├── claude.py    # Chat step loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, temporal grounding
+│       │       ├── claude.py    # Chat step loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, temporal grounding, API error mapping
 │       │       ├── panel.py     # AI panel card generation (generate_ai_panel_cards), conversation context, panel prompt, streaming, typed card normalization
 │       │       ├── panel_cards.py # Canonical panel card kinds, render templates, titles, and payload validation
 │       │       ├── deal_analysis.py # Standalone deal analysis (analyze_deal), analyst tool definition
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
 │       │       ├── tool_validation.py  # Semantic validation for chat tool inputs (post-parse, pre-DB)
+│       │       ├── prompt_cache_signature.py  # SHA-256 fingerprinting for prompt cache break detection
 │       │       ├── turn_context.py  # TurnContext dataclass — unified execution context for step loop + tool execution
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
@@ -174,7 +175,7 @@ These are used with the quick sign-in buttons on the login screen (visible only 
 ## FastAPI Routes
 
 ```
-POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/done + panel_started/panel_card/panel_done/panel_error)
+POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/error/done + panel_started/panel_card/panel_done/panel_error)
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
 GET    /chat/{session_id}/messages    # Message history
 

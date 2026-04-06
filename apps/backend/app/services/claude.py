@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
@@ -35,14 +36,174 @@ def create_anthropic_client() -> anthropic.AsyncAnthropic:
     )
 
 
+def _extract_anthropic_error_details(
+    exc: anthropic.APIStatusError,
+) -> tuple[str, str]:
+    """Extract (error_type, error_message) from an Anthropic API error response body."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return ("", "")
+    err = body.get("error")
+    if not isinstance(err, dict):
+        return ("", "")
+    return (err.get("type") or "", err.get("message") or "")
+
+
+def _is_anthropic_low_credit_error(exc: anthropic.APIStatusError) -> bool:
+    _, msg = _extract_anthropic_error_details(exc)
+    msg_lower = msg.lower()
+    return "credit balance is too low" in msg_lower or "purchase credits" in msg_lower
+
+
+_DEFAULT_USER_ERROR_MESSAGE = "AI response failed. Please try again."
+
+
+def _user_visible_message_for_anthropic_error(exc: anthropic.APIStatusError) -> str:
+    """Map known API failures to a safe SSE message.
+
+    Operators see the full error in logs.
+    """
+    if _is_anthropic_low_credit_error(exc):
+        return (
+            "The assistant is temporarily unavailable due to API account limits. "
+            "Try again later."
+        )
+    err_type, _ = _extract_anthropic_error_details(exc)
+    if err_type == "authentication_error":
+        return "The assistant is misconfigured. Please contact support."
+    return _DEFAULT_USER_ERROR_MESSAGE
+
+
 def _normalize_step_text_for_dedupe(text: str) -> str:
     """Normalize whitespace so identical step prose can be compared reliably."""
     return " ".join(text.split())
 
 
-def _current_utc_date_iso() -> str:
-    """Return today's UTC date for per-turn temporal grounding."""
+def _word_tokens_for_overlap(text: str) -> list[str]:
+    """Lowercase word tokens for comparing opener overlap across steps."""
+    return re.findall(r"[a-z0-9]+(?:'[a-z]+)?", text.lower())
+
+
+# Thresholds for _strip_redundant_continuation_opener overlap detection
+_MIN_TEXT_CHARS = 50  # Minimum char length for prior/continuation to attempt dedupe
+_MIN_PARAGRAPH_CHARS = 40  # Min chars for paragraph comparison
+_MIN_WORD_TOKENS = 8  # Minimum word tokens in continuation paragraph for overlap check
+_MAX_OVERLAP_WINDOW = 48  # Maximum word tokens to compare in prefix-match window
+_MIN_MATCHING_PREFIX = 6  # Required matching prefix length (word tokens) to strip
+
+
+def _strip_redundant_continuation_opener(
+    prior_assistant_text: str, continuation: str
+) -> str:
+    """Drop continuation's first paragraph when it re-opens like the prior step.
+
+    Sonnet often repeats a short opener after tools; the buyer already
+    read the pre-tool text.
+    """
+    prior = prior_assistant_text.strip()
+    cont = continuation.strip()
+    if len(prior) < _MIN_TEXT_CHARS or len(cont) < _MIN_TEXT_CHARS:
+        return continuation
+    prior_first = prior.split("\n\n", 1)[0].strip()
+    if len(prior_first) < _MIN_PARAGRAPH_CHARS:
+        return continuation
+    split_parts = re.split(r"\n\s*\n", cont, maxsplit=1)
+    first_para = split_parts[0].strip()
+    rest = split_parts[1].strip() if len(split_parts) > 1 else ""
+    if len(first_para) < _MIN_PARAGRAPH_CHARS or not rest:
+        return continuation
+    prior_words = _word_tokens_for_overlap(prior_first)
+    continuation_words = _word_tokens_for_overlap(first_para)
+    if len(continuation_words) < _MIN_WORD_TOKENS:
+        return continuation
+    matching_prefix_len = 0
+    max_compare = min(len(prior_words), len(continuation_words), _MAX_OVERLAP_WINDOW)
+    while (
+        matching_prefix_len < max_compare
+        and prior_words[matching_prefix_len] == continuation_words[matching_prefix_len]
+    ):
+        matching_prefix_len += 1
+    if matching_prefix_len < _MIN_MATCHING_PREFIX:
+        return continuation
+    return rest
+
+
+def current_utc_date_iso() -> str:
+    """Return today's UTC date (ISO) for temporal grounding."""
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _calendar_years_since_model_year(model_year: int, as_of_iso: str) -> int | None:
+    """Whole calendar years from model year to as_of year.
+
+    Returns min 1 for same-year model year.
+    """
+    try:
+        ref_year = int(as_of_iso.split("-", 1)[0])
+    except (ValueError, IndexError):
+        return None
+    if model_year > ref_year:
+        return None
+    return max(1, ref_year - model_year)
+
+
+def _vehicle_year(vehicle: dict) -> int | None:
+    """Extract integer model year from a vehicle dict, or None."""
+    year = vehicle.get("year")
+    return int(year) if isinstance(year, int) else None
+
+
+def _primary_vehicle_model_year(
+    prompt_deal_state: dict,
+) -> int | None:
+    """Model year for the active deal's vehicle, else first primary-role vehicle."""
+    vehicles = prompt_deal_state.get("vehicles") or []
+    if not vehicles:
+        return None
+    active_deal_id = prompt_deal_state.get("active_deal_id")
+    deals = prompt_deal_state.get("deals") or []
+    active_vehicle_id = None
+    if active_deal_id and deals:
+        for deal in deals:
+            if isinstance(deal, dict) and deal.get("id") == active_deal_id:
+                active_vehicle_id = deal.get("vehicle_id")
+                break
+    if active_vehicle_id:
+        for v in vehicles:
+            if isinstance(v, dict) and v.get("id") == active_vehicle_id:
+                return _vehicle_year(v)
+    for v in vehicles:
+        if isinstance(v, dict) and v.get("role") == "primary":
+            return _vehicle_year(v)
+    if isinstance(vehicles[0], dict):
+        return _vehicle_year(vehicles[0])
+    return None
+
+
+def build_temporal_hint_line(
+    prompt_deal_state: dict | None, today_iso: str
+) -> str | None:
+    """Model-year age hint line for chat and panel prompts."""
+    if not prompt_deal_state:
+        return None
+    model_year = _primary_vehicle_model_year(prompt_deal_state)
+    year_span = (
+        _calendar_years_since_model_year(model_year, today_iso)
+        if model_year is not None
+        else None
+    )
+    if model_year is None or year_span is None:
+        return None
+    return (
+        f"Temporal hint: primary vehicle model year {model_year} "
+        f"vs date above ⇒ ~{year_span} full "
+        "calendar year(s) since that model year. "
+        "Use for stated age (e.g. "
+        f'"~{year_span}-year-old" or '
+        f'"about {year_span} years since that model year") '
+        "and for miles/year (odometer ÷ that span) unless the "
+        "buyer gave an actual in-service or purchase date."
+    )
 
 
 def build_prompt_deal_state(deal_state_dict: dict | None) -> dict | None:
@@ -107,6 +268,8 @@ _CONTINUATION_TEXT_ONLY_SYSTEM: list[dict] = [
         "type": "text",
         "text": (
             "CONTINUATION (after tool results): Tools already updated state. "
+            "The buyer **already read** what you wrote before tools ran — do not repeat the same opening hook or rephrase "
+            "the same paragraph; add only new substance. "
             "Reply to the buyer as 'you'. Do not speak in the buyer's voice or fabricate details they never gave. "
             "If your prior message already answered them, add at most one short sentence — do not repeat long advice, "
             "headings, or bullet lists. This turn should normally be plain text only."
@@ -120,11 +283,12 @@ _CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM: list[dict] = [
         "type": "text",
         "text": (
             "CONTINUATION (after tool results): State is updated. This turn is plain text only — no tools. "
-            "If your prior message was only a short opener, ended mid-thought (e.g. trailing 'Here's the situation:' or "
-            "similar), or did not yet deliver bullets/scripts/next steps, **continue and finish** now: stay concise but "
-            "give the buyer the full takeaway they need. Do not re-paste your entire prior message. "
-            "If you already gave a complete answer before tools, add at most one short sentence. Reply as 'you' using "
-            "only facts the buyer stated."
+            "The buyer **already read** every sentence you wrote **before** tools ran; that prose stays in the thread. "
+            "Do **not** repeat the same opening hook, praise, or thesis (e.g. a second "
+            "'Good info — …' about the same point). Pick up with **new** substance: pricing, risks, scripts, or next steps. "
+            "If your prior message was only a short opener or ended mid-thought, **continue** what's missing — stay concise. "
+            "Do not re-paste your entire prior message. If you already gave a complete answer before tools, add at most "
+            "one short sentence. Reply as 'you' using only facts the buyer stated."
         ),
     }
 ]
@@ -201,6 +365,8 @@ GROUNDING RULES (critical — violating these erodes user trust):
 - When vehicle intelligence is present, treat decoded specs as identity facts, title/brand checks as limited official risk signals, and valuations as asking-price context only.
 - Never imply service history, maintenance history, or full accident coverage unless the provided data explicitly contains that evidence.
 - NEVER decode or infer year/make/model/trim/engine from a VIN unless that decode already exists in the provided deal state context. A raw VIN alone is not enough to claim exact specs.
+- **Today's date:** Each turn includes **Current date (UTC)** in the context reminder — treat it as authoritative **now** for this conversation. Base every time-relative claim on it: "recent"/"soon"/"next month", offer or promo deadlines, warranty or maintenance windows, registration or inspection timing, lease mileage pacing, loan term remaining, ordering of past vs future events, and ages inferred from model year or past dates. Do not treat "today" as your training cutoff, a default like 2024/2025, or a guessed month/year.
+- **Model year → age and mileage math:** When you only have a **model year** (no purchase/in-service date), whole calendar years since that model year ≈ **(year from Current date (UTC) − model_year)** — e.g. **2022** with **2026-04-06** ⇒ **about four years**, not three. Use the **same span** for **annualized miles** (odometer ÷ years) — do not use a smaller year count that inflates miles/year. A **Temporal hint** line in context may state this span; treat it as consistent with the rules above. Say "about" if first registration or build month is unknown.
 - Never write your visible reply as if you are the buyer (first-person buying voice like "I'm looking at…", "I have a trade-in…") unless you are quoting their exact USER message. Address the buyer as "you". Inventing "user" facts in assistant text and then saving them with tools corrupts the session.
 
 Your job:
@@ -211,6 +377,7 @@ Your job:
 
 TOOL USAGE:
 - CHAT-FIRST: The product shows your written reply to the buyer before it refreshes the insights side panel from tool updates. Always include clear user-visible prose in the same assistant turn as tools — lead with at least a sentence or two they can read immediately, then call tools; avoid a tools-only first turn.
+- Multi-step (text → tools → more text): the buyer already read your pre-tool prose. Never re-open with the same hook or repeat the same opening paragraph — add only new substance after tools complete.
 - You have tools to track deal data as the conversation progresses. Call them ALONGSIDE your text response when information changes.
 - Extract facts only from USER messages. Never persist data from your own suggestions or assistant responses.
 - Never fabricate a fake user statement in your assistant message and then extract it — if the buyer has not provided a vehicle, price, or trade-in, ask them or leave deal state unchanged.
@@ -746,6 +913,8 @@ class ChatLoopResult:
         self.completed: bool = False
         self.failed: bool = False
         self.usage_summary: dict[str, int] = empty_usage_summary()
+        self.prompt_cache_breaks: int = 0
+        self.prompt_cache_chat_last: dict[str, str] | None = None
 
 
 # Maximum steps (LLM call → tool execution cycles) per turn
@@ -1169,6 +1338,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     session_factory=None,
     emit_done_event: bool = True,
     linked_messages: list[dict] | None = None,
+    prompt_cache_prior_chat: dict[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Step loop: call Claude with tools, execute tool calls, repeat until text response.
 
@@ -1180,6 +1350,13 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     Populates `result` with accumulated full_text and all tool_calls.
     """
     from app.services.deal_state import build_execution_plan, deal_state_to_dict
+    from app.services.prompt_cache_signature import (
+        CHAT_STABLE_CACHE_KEYS,
+        DEFAULT_PROMPT_CACHE_BETAS,
+        build_chat_stable_cache_snapshot,
+        log_prompt_cache_break,
+        prompt_cache_components_changed,
+    )
 
     if session_factory is None:
         from app.db.session import AsyncSessionLocal
@@ -1190,11 +1367,13 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
     # Add cache_control to the last tool so the entire tool list is cached
     cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
+    last_chat_cache_snapshot: dict[str, str] | None = prompt_cache_prior_chat
     last_appended_step_text_normalized = ""
     prev_step_tool_errors = True
     prev_step_had_visible_assistant_text = False
     prev_step_tools_were_dashboard_only = False
     prev_step_had_state_extraction_tools = False
+    prev_step_had_any_tools = False
 
     for step in range(max_steps):
         turn_context = turn_context.for_step(step)
@@ -1244,6 +1423,32 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
             try:
                 stop_reason = None
+                cache_snap = build_chat_stable_cache_snapshot(
+                    base_system=system_prompt,
+                    tools=cached_tools,
+                    model=settings.CLAUDE_MODEL,
+                    betas=DEFAULT_PROMPT_CACHE_BETAS,
+                )
+                cache_changed = prompt_cache_components_changed(
+                    last_chat_cache_snapshot,
+                    cache_snap,
+                    component_keys=CHAT_STABLE_CACHE_KEYS,
+                )
+                if last_chat_cache_snapshot is not None and cache_changed:
+                    sid = turn_context.session.id if turn_context.session else None
+                    log_prompt_cache_break(
+                        logger,
+                        session_id=sid,
+                        phase="chat",
+                        step=step,
+                        prior=last_chat_cache_snapshot,
+                        current=cache_snap,
+                        changed_components=cache_changed,
+                    )
+                    result.prompt_cache_breaks += 1
+                last_chat_cache_snapshot = cache_snap
+                result.prompt_cache_chat_last = cache_snap
+
                 async for event_type, event_data in _stream_step_with_retry(
                     client,
                     model=settings.CLAUDE_MODEL,
@@ -1354,6 +1559,22 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                         0, {"type": "text", "text": step_text}
                     )
 
+            except anthropic.APIStatusError as exc:
+                if _is_anthropic_low_credit_error(exc):
+                    org = exc.response.headers.get("anthropic-organization-id")
+                    logger.error(
+                        "Chat loop step %d failed: Anthropic credits/billing "
+                        "(anthropic_organization_id=%s, request_id=%s)",
+                        step,
+                        org or "(unknown)",
+                        exc.request_id or "(unknown)",
+                    )
+                else:
+                    logger.exception("Chat loop step %d failed", step)
+                result.failed = True
+                user_msg = _user_visible_message_for_anthropic_error(exc)
+                yield f"event: error\ndata: {json.dumps({'message': user_msg})}\n\n"
+                return
             except Exception:
                 logger.exception("Chat loop step %d failed", step)
                 result.failed = True
@@ -1386,6 +1607,22 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                 )
 
             break
+
+        if (
+            step >= 1
+            and prev_step_had_any_tools
+            and prev_step_had_visible_assistant_text
+            and step_text.strip()
+        ):
+            stripped = _strip_redundant_continuation_opener(result.full_text, step_text)
+            if stripped != step_text:
+                logger.info(
+                    "Step %d: removed redundant continuation opener (%d -> %d chars)",
+                    step,
+                    len(step_text),
+                    len(stripped),
+                )
+                step_text = stripped
 
         # Accumulate text across steps — add paragraph break between steps
         # so multi-step text (step 0 text + tool execution + step 1 text)
@@ -1593,6 +1830,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         prev_step_had_state_extraction_tools = bool(tool_use_blocks) and bool(
             {b["name"] for b in tool_use_blocks} & _STATE_EXTRACTION_TOOLS
         )
+        prev_step_had_any_tools = bool(tool_use_blocks)
 
         # Move the cache breakpoint to the last message so the next step's
         # API call caches everything up to this point (two-breakpoint caching).
@@ -1695,7 +1933,15 @@ def build_context_message(
     system prompt stays stable and cacheable across turns. Uses
     <system-reminder> tags following the reference architecture pattern.
     """
-    context_parts: list[str] = [f"Current date (UTC): {_current_utc_date_iso()}."]
+    today_iso = current_utc_date_iso()
+    context_parts: list[str] = [
+        (
+            f"Current date (UTC): {today_iso}. "
+            'Authoritative "now" for this turn — use for every time-relative claim (timelines, deadlines, '
+            'warranties, lease or loan pacing, "recent"/"soon", event ordering, model-year age); do not assume '
+            "a different calendar year or month."
+        )
+    ]
 
     prompt_deal_state = build_prompt_deal_state(deal_state_dict)
 
@@ -1763,6 +2009,10 @@ def build_context_message(
 
         if summary_lines:
             context_parts.append("\n".join(summary_lines))
+
+        hint = build_temporal_hint_line(prompt_deal_state, today_iso)
+        if hint:
+            context_parts.append(hint)
 
         context_parts.append(
             f"Current deal state:\n```json\n"

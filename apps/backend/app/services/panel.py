@@ -11,12 +11,20 @@ from app.core.config import settings
 from app.services.claude import (
     _get_escalated_max_tokens,
     build_prompt_deal_state,
+    build_temporal_hint_line,
     create_anthropic_client,
+    current_utc_date_iso,
     empty_usage_summary,
     merge_usage_summary,
     summarize_usage,
 )
 from app.services.panel_cards import canonicalize_panel_cards, normalize_panel_card
+from app.services.prompt_cache_signature import (
+    DEFAULT_PROMPT_CACHE_BETAS,
+    build_panel_static_prompt_cache_snapshot,
+    log_prompt_cache_break,
+    prompt_cache_components_changed,
+)
 from app.services.usage_tracking import (
     UsageRecorder,
     build_request_usage,
@@ -147,6 +155,9 @@ def _build_panel_request_messages(
     conversation_context: str,
     assistant_text: str,
 ) -> list[dict[str, Any]]:
+    today_iso = current_utc_date_iso()
+    temporal = build_temporal_hint_line(prompt_deal_state, today_iso)
+    temporal_block = f"{temporal}\n\n" if temporal else ""
     return [
         {
             "role": "user",
@@ -159,6 +170,9 @@ def _build_panel_request_messages(
                 {
                     "type": "text",
                     "text": (
+                        f"Current date (UTC): {today_iso}. "
+                        'Authoritative "now" for any time-sensitive card copy.\n\n'
+                        f"{temporal_block}"
                         "Deal state:\n```json\n"
                         f"{json.dumps(prompt_deal_state, indent=2, default=str)}\n"
                         "```\n\n"
@@ -284,6 +298,7 @@ SOURCE OF TRUTH ORDER:
 4. latest assistant response as fallback only
 
 CRITICAL RULES:
+- The user message begins with **Current date (UTC)** — treat it as authoritative "now" for any time-relative card copy (deadlines, "soon"/"recent", warranty or promo windows, lease pacing, loan term remaining, event ordering, vehicle age from model year). Do not assume another calendar year or month.
 - Do NOT paraphrase the latest assistant reply unless something needs to stay visible across turns.
 - Never contradict the assistant's advice.
 - Every card must add distinct value. No duplicates.
@@ -426,6 +441,7 @@ async def stream_ai_panel_cards_with_usage(
     *,
     usage_recorder: UsageRecorder | None = None,
     session_id: str | None = None,
+    panel_prompt_cache: dict[str, Any] | None = None,
 ) -> AsyncGenerator[PanelStreamEvent, None]:
     """Stream AI panel cards incrementally and emit lifecycle events.
 
@@ -437,6 +453,32 @@ async def stream_ai_panel_cards_with_usage(
     """
     client = create_anthropic_client()
     usage_summary = empty_usage_summary()
+
+    panel_static_snap = build_panel_static_prompt_cache_snapshot(
+        static_panel_prompt=GENERATE_AI_PANEL_PROMPT,
+        model=settings.CLAUDE_MODEL,
+        betas=DEFAULT_PROMPT_CACHE_BETAS,
+    )
+    if panel_prompt_cache is not None:
+        prior_panel = panel_prompt_cache.get("prior")
+        if isinstance(prior_panel, dict):
+            cache_changed = prompt_cache_components_changed(
+                prior_panel, panel_static_snap
+            )
+            if cache_changed:
+                log_prompt_cache_break(
+                    logger,
+                    session_id=session_id,
+                    phase="panel",
+                    step=None,
+                    prior=prior_panel,
+                    current=panel_static_snap,
+                    changed_components=cache_changed,
+                )
+                panel_prompt_cache["breaks_delta"] = (
+                    panel_prompt_cache.get("breaks_delta", 0) + 1
+                )
+        panel_prompt_cache["last"] = panel_static_snap
 
     prompt_deal_state = build_prompt_deal_state(deal_state_dict) or {}
     conversation_context = _build_conversation_context(

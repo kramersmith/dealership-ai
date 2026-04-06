@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-04-03 (session usage ledger + SSE usage metadata)
+Last updated: 2026-04-06
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -418,7 +418,7 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. The core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`.
+The response is a stream of Server-Sent Events. The core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for unrecoverable API failures. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`.
 
 **`text` event** — Incremental text chunks from the AI:
 ```
@@ -468,9 +468,15 @@ event: panel_error
 data: {"message": "...", "attempt": 2}
 ```
 
+**`error` event** — Unrecoverable API failure (stream terminates after this event):
+```
+event: error
+data: {"message": "AI response failed. Please try again."}
+```
+
 **Side effects:**
 - Message history is loaded before the user message is saved (prevents duplicate user messages in Claude context)
-- User message is persisted before streaming begins
+- User message is persisted before streaming begins; deleted on stream failure or failed step loop to prevent duplicate history on retry
 - The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
 - Panel generation runs after `done`; incremental cards are streamed via `panel_card`, and panel-phase usage is reported on `panel_done`
 - Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals

@@ -105,15 +105,17 @@ graph TB
     - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
     - `event: retry` -- stream recovery or `max_tokens` replay signal, including `reset_text` when the client should discard partial text
     - `event: step` -- step-loop progress for multi-step turns
+    - `event: error` -- unrecoverable API failure with a safe user-visible message
     - `event: done` -- chat text completion payload (input can unblock immediately)
     - `event: panel_started` / `event: panel_card` / `event: panel_done` / `event: panel_error` -- asynchronous panel lifecycle events after `done`
-8. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up. Step-control logic bounds tool rounds per buyer message (step 0 = auto, step 1 = conditional based on errors/text visibility, step 2+ = text-only) to prevent model self-dialogue loops. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction.
-9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. After the step loop completes, the backend emits `done`, then starts a separate panel streaming phase that emits `panel_started`, incremental `panel_card` events, and terminal `panel_done` or `panel_error`.
-11. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata (chat phase + panel phase), applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
-12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
-13. Client Zustand stores update in real time as SSE events arrive. Tool result callbacks are deferred until after the `done` event so the UI finalizes the reply before insights update. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
-14. The `done` event carries chat text and chat-phase usage. Panel-phase usage is emitted on `panel_done` and merged into the persisted assistant usage summary.
+8. If the step loop raises an unrecoverable error (e.g. Anthropic billing, authentication), the backend emits an `error` SSE event with a safe user-visible message and deletes the orphan user message to prevent duplicate history on retry. Known API errors are mapped to specific but non-leaking messages.
+9. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up. Step-control logic bounds tool rounds per buyer message (step 0 = auto, step 1 = conditional based on errors/text visibility, step 2+ = text-only) to prevent model self-dialogue loops. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction.
+10. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
+11. After the step loop completes, the backend emits `done`, then starts a separate panel streaming phase that emits `panel_started`, incremental `panel_card` events, and terminal `panel_done` or `panel_error`.
+12. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata (chat phase + panel phase), applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
+13. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
+14. Client Zustand stores update in real time as SSE events arrive. Tool result callbacks are deferred until after the `done` event so the UI finalizes the reply before insights update. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+15. The `done` event carries chat text and chat-phase usage. Panel-phase usage is emitted on `panel_done` and merged into the persisted assistant usage summary.
 
 ---
 
@@ -216,6 +218,9 @@ data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "listing_price": 3
 
 event: retry
 data: {"attempt": 1, "reason": "max_tokens", "reset_text": true, "max_tokens": 8192}
+
+event: error
+data: {"message": "AI response failed. Please try again."}
 
 event: done
 data: {"text": "Full response text...", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
@@ -604,7 +609,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness, then AI panel generation runs asynchronously in the same SSE stream via `panel_started` / `panel_card` / `panel_done` / `panel_error`. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage aggregates chat and panel phases.
+The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness, then AI panel generation runs asynchronously in the same SSE stream via `panel_started` / `panel_card` / `panel_done` / `panel_error`. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage aggregates chat and panel phases. Prompt cache break detection (`prompt_cache_signature.py`) fingerprints system prompt, tools, and model via SHA-256 and logs INFO-level cache breaks across turns; break counts and last-known fingerprints are persisted on `SessionUsageSummary`.
 
 ### No Other External Integrations (v1)
 

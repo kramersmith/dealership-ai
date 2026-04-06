@@ -11,7 +11,11 @@ from app.models.enums import (
     RedFlagSeverity,
     ScoreStatus,
 )
-from app.services.claude import create_anthropic_client, summarize_usage
+from app.services.claude import (
+    create_anthropic_client,
+    current_utc_date_iso,
+    summarize_usage,
+)
 from app.services.panel import _build_conversation_context
 from app.services.usage_tracking import (
     UsageRecorder,
@@ -216,6 +220,8 @@ async def analyze_deal(
                 {
                     "role": "user",
                     "content": (
+                        f"Current date (UTC): {current_utc_date_iso()}. "
+                        'Authoritative "now" for timelines and time-relative assessment.\n\n'
                         f"Current deal state:\n```json\n{state_json}\n```\n\n"
                         f"Conversation:\n{conversation_context}\n\n"
                         "Assess the deal quality, identify risks, and surface information gaps. "

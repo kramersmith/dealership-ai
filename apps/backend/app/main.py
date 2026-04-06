@@ -29,6 +29,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     Base.metadata.create_all(bind=sync_engine)
     logger.info("Database tables ensured")
 
+    if not (settings.ANTHROPIC_API_KEY or "").strip():
+        logger.warning(
+            "ANTHROPIC_API_KEY is empty — Claude requests will fail. "
+            "For Docker, set the key in apps/backend/.env (see docker-compose env_file)."
+        )
+    elif settings.LOG_LEVEL == "DEBUG" and len(settings.ANTHROPIC_API_KEY) >= 8:
+        logger.debug(
+            "ANTHROPIC_API_KEY loaded (suffix …%s)",
+            settings.ANTHROPIC_API_KEY[-4:],
+        )
+
     async with AsyncSessionLocal() as db:
         await seed_users(db)
 

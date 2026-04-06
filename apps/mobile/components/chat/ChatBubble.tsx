@@ -1,6 +1,7 @@
 import { memo } from 'react'
-import { Animated, Platform, Pressable } from 'react-native'
-import { YStack, XStack, Text, useTheme } from 'tamagui'
+import { Animated, Platform } from 'react-native'
+import { YStack, XStack, Text, useTheme, Button } from 'tamagui'
+import { RefreshCw } from '@tamagui/lucide-icons'
 import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
@@ -79,8 +80,16 @@ export const ChatBubble = memo(function ChatBubble({
                   position: 'absolute',
                   width: 1,
                   height: 1,
+                  margin: -1,
+                  padding: 0,
                   overflow: 'hidden',
+                  clip: 'rect(0, 0, 0, 0)',
+                  whiteSpace: 'nowrap',
+                  borderWidth: 0,
                   opacity: 0,
+                  pointerEvents: 'none',
+                  fontSize: 1,
+                  lineHeight: 1,
                 } as any
               }
               aria-hidden
@@ -141,29 +150,42 @@ export const ChatBubble = memo(function ChatBubble({
             })}
             {usageLabel ? ` · ${usageLabel}` : ''}
           </Text>
+          {isUser && message.status === 'failed' && <FailedMessageFooter messageId={message.id} />}
         </YStack>
-        {message.status === 'failed' && <FailedIndicator messageId={message.id} />}
       </XStack>
     </Animated.View>
   )
 })
 
-function FailedIndicator({ messageId }: { messageId: string }) {
+function FailedMessageFooter({ messageId }: { messageId: string }) {
   const retrySend = useChatStore((s) => s.retrySend)
+
   return (
-    <Pressable
-      onPress={() => retrySend(messageId)}
-      hitSlop={8}
-      style={{ minHeight: 44, justifyContent: 'center' }}
-    >
-      <XStack alignItems="center" gap="$1.5" paddingTop="$1">
-        <Text fontSize={11} color="$danger">
-          Failed to send
+    <YStack marginTop="$3" paddingTop="$3" gap="$3" width="100%" alignItems="stretch">
+      <YStack height={1} width="100%" backgroundColor="$white" opacity={0.22} />
+      <YStack gap="$2.5" alignItems="stretch">
+        <Text fontSize={12} lineHeight={18} color="$white" opacity={0.92} textAlign="center">
+          This message didn&apos;t send.
         </Text>
-        <Text fontSize={11} color="$danger" fontWeight="600">
-          — Tap to retry
-        </Text>
-      </XStack>
-    </Pressable>
+        <Button
+          size="$4"
+          minHeight={44}
+          width="100%"
+          backgroundColor="$white"
+          borderRadius="$3"
+          onPress={() => retrySend(messageId)}
+          pressStyle={{ opacity: 0.9, scale: 0.99 }}
+          {...(Platform.OS === 'web' ? { hoverStyle: { opacity: 0.96 } } : {})}
+          accessibilityLabel="Try again to send this message"
+        >
+          <XStack gap="$2" alignItems="center" justifyContent="center">
+            <RefreshCw size={18} color="$brand" />
+            <Button.Text color="$brand" fontWeight="700" fontSize={15}>
+              Try again
+            </Button.Text>
+          </XStack>
+        </Button>
+      </YStack>
+    </YStack>
   )
 }

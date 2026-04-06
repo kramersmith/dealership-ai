@@ -1,6 +1,6 @@
 # Operational Guidelines
 
-**Last updated:** 2026-04-03
+**Last updated:** 2026-04-06
 
 ---
 
@@ -86,3 +86,4 @@ See `docs/logging-guidelines.md` for log level reference, PII rules, and configu
 - Bounded `max_tokens` retries use configurable escalation rather than silently truncating responses
 - Per-turn assistant usage is persisted on messages, and cumulative per-session usage is persisted on `ChatSession.usage` with per-model token and cost totals
 - Pricing is tracked server-side from a fixed backend pricing table for deterministic accounting; it is not fetched dynamically at runtime
+- Prompt cache break detection fingerprints stable request components (system prompt, tools, model) via SHA-256; break counts are persisted on the session usage ledger for cost diagnostics

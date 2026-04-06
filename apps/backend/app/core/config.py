@@ -1,4 +1,11 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Backend root = directory that contains the `app/` package (…/apps/backend).
+# Avoid cwd-relative ".env" so Docker / uvicorn always load the same file as compose `env_file`.
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _BACKEND_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -34,7 +41,10 @@ class Settings(BaseSettings):
     )
     VINAUDIT_VALUATION_URL: str = "https://marketvalue.vinaudit.com/getmarketvalue.php"
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+    )
 
 
 settings = Settings()

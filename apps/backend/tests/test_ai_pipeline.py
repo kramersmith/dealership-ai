@@ -23,7 +23,10 @@ from app.services.claude import (
     CHAT_TOOLS,
     POST_TOOL_CONTINUATION_REMINDER,
     ChatLoopResult,
+    _calendar_years_since_model_year,
     _move_message_cache_breakpoint,
+    _primary_vehicle_model_year,
+    _strip_redundant_continuation_opener,
     _SyntheticBlockStopEvent,
     _SyntheticTextEvent,
     _SyntheticToolJsonEvent,
@@ -31,6 +34,7 @@ from app.services.claude import (
     build_context_message,
     build_messages,
     build_system_prompt,
+    build_temporal_hint_line,
     merge_usage_summary,
     stream_chat_loop,
     summarize_usage,
@@ -293,6 +297,109 @@ def test_context_message_includes_current_utc_date():
     content = context_message["content"]
     assert "Current date (UTC):" in content
     assert re.search(r"Current date \(UTC\): \d{4}-\d{2}-\d{2}\.", content)
+
+
+@patch("app.services.claude.current_utc_date_iso", return_value="2026-04-06")
+def test_context_message_includes_temporal_hint_for_model_year(_mock_date):
+    context_message = build_context_message(
+        {
+            "buyer_context": BuyerContext.RESEARCHING,
+            "active_deal_id": "d1",
+            "vehicles": [
+                {
+                    "id": "v1",
+                    "role": "primary",
+                    "year": 2022,
+                    "make": "Ford",
+                    "model": "F-250",
+                    "trim": "Lariat",
+                }
+            ],
+            "deals": [{"id": "d1", "vehicle_id": "v1", "phase": "research"}],
+        }
+    )
+
+    assert context_message is not None
+    content = context_message["content"]
+    assert "Temporal hint:" in content
+    assert "model year 2022" in content
+    assert "~4 full" in content
+    assert "miles/year" in content
+
+
+def test_build_temporal_hint_line_none_without_vehicle_year():
+    assert build_temporal_hint_line({"vehicles": [], "deals": []}, "2026-04-06") is None
+
+
+def test_calendar_years_since_model_year_same_year_returns_one():
+    assert _calendar_years_since_model_year(2026, "2026-04-06") == 1
+
+
+def test_calendar_years_since_model_year_future_returns_none():
+    assert _calendar_years_since_model_year(2028, "2026-04-06") is None
+
+
+def test_calendar_years_since_model_year_normal_span():
+    assert _calendar_years_since_model_year(2020, "2026-04-06") == 6
+
+
+def test_calendar_years_since_model_year_invalid_date_returns_none():
+    assert _calendar_years_since_model_year(2020, "not-a-date") is None
+
+
+def test_primary_vehicle_model_year_uses_active_deal_vehicle():
+    state = {
+        "active_deal_id": "d1",
+        "vehicles": [
+            {"id": "v1", "role": "primary", "year": 2020},
+            {"id": "v2", "role": "trade_in", "year": 2018},
+        ],
+        "deals": [{"id": "d1", "vehicle_id": "v2"}],
+    }
+    assert _primary_vehicle_model_year(state) == 2018
+
+
+def test_primary_vehicle_model_year_falls_back_to_primary_role():
+    state = {
+        "vehicles": [
+            {"id": "v1", "role": "trade_in", "year": 2015},
+            {"id": "v2", "role": "primary", "year": 2022},
+        ],
+        "deals": [],
+    }
+    assert _primary_vehicle_model_year(state) == 2022
+
+
+def test_primary_vehicle_model_year_none_when_empty():
+    assert _primary_vehicle_model_year({"vehicles": []}) is None
+    assert _primary_vehicle_model_year({}) is None
+
+
+def test_strip_redundant_continuation_opener_removes_repeated_good_info_paragraph():
+    prior = (
+        "Good info — the 7.3L gas engine is actually a solid choice at high mileage "
+        "compared to the 6.7L diesel. It's simpler, cheaper to maintain, and parts are "
+        "more accessible. That said, 175k is still 175k."
+    )
+    cont = (
+        "Good info — the 7.3L gas is genuinely one of Ford's better modern engines. "
+        "It's a pushrod V8 (simple, proven architecture) and holds up well at high "
+        "mileage compared to the diesel. That works in your favor.\n\n"
+        "Here's where things stand on this deal:\n\n"
+        "The price concern is real."
+    )
+    out = _strip_redundant_continuation_opener(prior, cont)
+    assert out.startswith("Here's where things stand")
+    assert "Good info" not in out
+
+
+def test_strip_redundant_continuation_opener_unchanged_when_topics_diverge():
+    prior = "The APR at 8.9% over 72 months adds roughly $5,200 in interest."
+    cont = (
+        "Separately, you should verify the trade-in payoff before signing.\n\n"
+        "Next, ask for the out-the-door total in writing."
+    )
+    assert _strip_redundant_continuation_opener(prior, cont) == cont
 
 
 def test_context_message_omits_ai_panel_cards_from_prompt_state():
@@ -1990,7 +2097,45 @@ async def test_send_message_stops_after_stream_failure(
             .order_by(Message.created_at)
         )
         persisted_messages = list(message_result.scalars().all())
-        assert [message.role for message in persisted_messages] == ["user"]
+        # Failed turns must not leave a user row — otherwise retries duplicate history.
+        assert persisted_messages == []
+
+
+async def test_send_message_failed_turn_does_not_accumulate_duplicate_user_rows(
+    async_client, adb, async_buyer_user
+):
+    session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    await adb.commit()
+    await adb.refresh(session)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def failing_stream_chat_loop(*args, **kwargs):
+        result = args[4]
+        result.failed = True
+        yield (
+            "event: error\n"
+            'data: {"message": "AI response failed. Please try again."}\n\n'
+        )
+
+    with (
+        patch("app.routes.chat.stream_chat_loop", new=failing_stream_chat_loop),
+        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+    ):
+        for _ in range(3):
+            async with async_client.stream(
+                "POST",
+                f"/api/chat/{session.id}/message",
+                json={"content": "Same text every time"},
+                headers={"Authorization": f"Bearer {token}"},
+            ) as response:
+                assert response.status_code == 200
+                await _collect_response_events(response)
+
+    async with TestingAsyncSessionLocal() as check_db:
+        message_result = await check_db.execute(
+            select(Message).where(Message.session_id == session.id)
+        )
+        assert message_result.scalars().all() == []
 
 
 async def test_send_message_emits_panel_error_when_panel_stream_crashes_after_start(

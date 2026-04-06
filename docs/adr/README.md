@@ -24,3 +24,5 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0012](0012-two-phase-chat-panel-sse-contract.md) | Two-phase chat/panel SSE contract | Accepted | 2026-04 |
 | [0013](0013-canonical-panel-contract-and-step-loop-guardrails.md) | Canonical panel contract and step-loop guardrails | Accepted | 2026-04 |
 | [0014](0014-confirmed-vin-decode-promotion.md) | Confirmed VIN decode promotion | Accepted | 2026-04 |
+| [0015](0015-prompt-cache-break-detection.md) | Prompt cache break detection via request fingerprinting | Accepted | 2026-04 |
+| [0016](0016-chat-error-resilience-and-orphan-cleanup.md) | Chat error resilience — API error mapping and orphan cleanup | Accepted | 2026-04 |

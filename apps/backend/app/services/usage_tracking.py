@@ -183,6 +183,13 @@ class ModelUsageSummary:
         return _totals_dict(self)
 
 
+def _parse_prompt_cache(data: dict[str, Any] | None) -> dict[str, Any]:
+    raw = data.get("prompt_cache") if data else None
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
 @dataclass
 class SessionUsageSummary:
     request_count: int = 0
@@ -193,17 +200,28 @@ class SessionUsageSummary:
     total_tokens: int = 0
     total_cost_usd: float = 0.0
     per_model: dict[str, ModelUsageSummary] = field(default_factory=dict)
+    prompt_cache_chat_last: dict[str, str] | None = None
+    prompt_cache_panel_last: dict[str, str] | None = None
+    prompt_cache_break_count: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> SessionUsageSummary:
         if not data:
             return cls()
+        pc = _parse_prompt_cache(data)
         return cls(
             **_parse_totals(data),
             per_model={
                 model: ModelUsageSummary.from_dict(model_data)
                 for model, model_data in (data.get("per_model") or {}).items()
             },
+            prompt_cache_chat_last=pc.get("chat_last")
+            if isinstance(pc.get("chat_last"), dict)
+            else None,
+            prompt_cache_panel_last=pc.get("panel_last")
+            if isinstance(pc.get("panel_last"), dict)
+            else None,
+            prompt_cache_break_count=_safe_int(pc.get("break_count", 0)),
         )
 
     def add_request(self, request_usage: RequestUsage) -> None:
@@ -213,12 +231,23 @@ class SessionUsageSummary:
         self.per_model[request_usage.model].add_request(request_usage)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             **_totals_dict(self),
             "per_model": {
                 model: summary.to_dict() for model, summary in self.per_model.items()
             },
         }
+        if (
+            self.prompt_cache_chat_last is not None
+            or self.prompt_cache_panel_last is not None
+            or self.prompt_cache_break_count > 0
+        ):
+            out["prompt_cache"] = {
+                "chat_last": self.prompt_cache_chat_last,
+                "panel_last": self.prompt_cache_panel_last,
+                "break_count": self.prompt_cache_break_count,
+            }
+        return out
 
 
 def build_request_usage(
@@ -294,7 +323,19 @@ def session_usage_payload(summary: dict[str, Any] | None) -> dict[str, Any] | No
         for model, model_summary in (summary.get("per_model") or {}).items()
     }
 
-    return {
+    out: dict[str, Any] = {
         **_usage_summary_to_camel(summary),
         "perModel": per_model,
     }
+    pc = summary.get("prompt_cache")
+    if isinstance(pc, dict) and (
+        pc.get("chat_last") is not None
+        or pc.get("panel_last") is not None
+        or _safe_int(pc.get("break_count", 0)) > 0
+    ):
+        out["promptCache"] = {
+            "chatLast": pc.get("chat_last"),
+            "panelLast": pc.get("panel_last"),
+            "breakCount": _safe_int(pc.get("break_count", 0)),
+        }
+    return out

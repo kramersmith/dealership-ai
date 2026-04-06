@@ -1,8 +1,8 @@
 """Semantic validation for chat tool inputs (post-parse, pre-DB).
 
-Inspired by Pydantic AI's ModelRetry pattern: invalid extractions that pass JSON
-schema are rejected with a specific message so the model can self-correct on the
-next step via is_error tool_result (see docs/ai-harness-improvements.md §10).
+Invalid extractions that satisfy JSON schema but fail domain checks are rejected
+with a specific message so the model can self-correct on the next step via
+is_error tool_result (see docs/ai-harness-improvements.md §10).
 """
 
 from __future__ import annotations
