@@ -367,10 +367,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
-      // Process tool results incrementally as they arrive from SSE.
-      // Do NOT finalize the message here — tool_result events arrive between
-      // turns in a multi-turn loop, before the full text is accumulated.
-      // The done event (handleTextDone) or onload fallback handles finalization.
+      // Deal-driving tool results: apiClient defers callbacks until after the
+      // `done` event so the assistant message finalizes before the insights
+      // sidebar updates. Panel card events still stream after `done`.
       const handleToolResult = (toolCall: ToolCall) => {
         // Route tool call
         if (toolCall.name === 'update_quick_actions') {

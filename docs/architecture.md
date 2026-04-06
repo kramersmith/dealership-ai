@@ -77,6 +77,7 @@ dealership-ai/
 │       │       ├── panel_cards.py # Canonical panel card kinds, render templates, titles, and payload validation
 │       │       ├── deal_analysis.py # Standalone deal analysis (analyze_deal), analyst tool definition
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
+│       │       ├── tool_validation.py  # Semantic validation for chat tool inputs (post-parse, pre-DB)
 │       │       ├── turn_context.py  # TurnContext dataclass — unified execution context for step loop + tool execution
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
@@ -218,16 +219,17 @@ POST   /simulations/{id}/complete     # End + score
 2. Backend loads message history BEFORE saving the user message (avoids duplicate user messages in Claude context), then saves the user message.
 3. Backend builds a `TurnContext` (session, deal state, DB session) and constructs the message list. The per-turn context message (deal state, linked sessions, current UTC date for temporal grounding) is merged into the user message as content blocks — no synthetic assistant reply is injected. The backend then starts the Claude chat step loop with tools.
 4. Each step streams `text` chunks and accumulates `tool_use` blocks. If the transport stalls or the model hits `stop_reason == "max_tokens"`, the backend emits a `retry` SSE event and replays the step with a reset signal for the client.
-5. When a step finishes with tool calls, the backend executes them, emits `tool_result` SSE events, appends tool results back into the Claude transcript, and continues the loop.
-6. When the step loop reaches a text-only completion, the backend emits `done` immediately so input can unblock, then starts asynchronous panel generation in the same SSE stream.
-7. Panel generation emits explicit lifecycle events: `panel_started`, incremental `panel_card`, and terminal `panel_done` or `panel_error`.
-8. Backend persists the assistant message with its tool calls and aggregated usage summary (chat phase + panel phase) and folds that turn into the session-level usage ledger.
-9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-10. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.
-11. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events.
-12. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
-13. Frontend `useChat` uses event-based SSE parsing to dispatch tool results, retry resets, and final usage metadata into Zustand state. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
-14. On send failure, optimistic messages are rolled back from the chat store.
+5. When a step finishes with tool calls, the backend groups them into priority-ordered batches (structural → context switches → field updates → deal health) and executes each batch concurrently. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction. Results are emitted as `tool_result` SSE events, appended back into the Claude transcript, and the loop continues.
+6. Step-control logic (`_chat_tool_choice_for_step`) bounds tool rounds per buyer message: step 0 uses `auto` tool choice, step 1 conditionally allows tools (only if the previous step had errors or produced no visible text and no dashboard-only tools), and step 2+ forces `none` (text-only). This prevents model self-dialogue loops.
+7. When the step loop reaches a text-only completion, the backend emits `done` immediately so input can unblock, then starts asynchronous panel generation in the same SSE stream.
+8. Panel generation emits explicit lifecycle events: `panel_started`, incremental `panel_card`, and terminal `panel_done` or `panel_error`.
+9. Backend persists the assistant message with its tool calls and aggregated usage summary (chat phase + panel phase) and folds that turn into the session-level usage ledger.
+10. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
+11. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.
+12. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events.
+13. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
+14. Frontend `useChat` uses event-based SSE parsing to dispatch tool results, retry resets, and final usage metadata into Zustand state. Tool result callbacks are deferred until after the `done` event so the UI finalizes the reply before insights update. The `snakeToCamel` utility converts backend snake_case field names to frontend camelCase.
+15. On send failure, optimistic messages are rolled back from the chat store.
 
 **New session flow (buyer):**
 1. Buyer lands on the chats list (`/(app)/chats`), the buyer home screen. If no sessions exist, ContextPicker shows as an empty state with three situation cards: "Researching", "Have a deal to review", "At the dealership".

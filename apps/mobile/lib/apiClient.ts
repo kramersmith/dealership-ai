@@ -15,8 +15,6 @@ import { PANEL_UPDATE_MODE } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
 
-const PANEL_UPDATE = PANEL_UPDATE_MODE
-
 const API_BASE = 'http://localhost:8001/api'
 
 let authToken: string | null = null
@@ -477,11 +475,22 @@ class ApiClient implements ApiService {
       let messageUsage: MessageUsage | undefined
       let sessionUsage: SessionUsage | undefined
       const toolCalls: ToolCall[] = []
+      /** Chat-loop tool results only — held until `done` so the UI can finalize the reply before insights/deal updates. */
+      const pendingDealToolResults: ToolCall[] = []
       let processed = 0
       let buffer = ''
       let sseError: string | null = null
       let panelStreamActive = false
       const streamedPanelCards: unknown[] = []
+
+      const flushPendingDealToolResults = () => {
+        if (pendingDealToolResults.length === 0) return
+        for (const tc of pendingDealToolResults) {
+          toolCalls.push(tc)
+          onToolResult?.(tc)
+        }
+        pendingDealToolResults.length = 0
+      }
 
       const finishPanelStream = () => {
         if (!panelStreamActive) return
@@ -526,6 +535,8 @@ class ApiClient implements ApiService {
               messageUsage = data.usage
               sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
               onTextDone?.(fullText, messageUsage, sessionUsage)
+              // Apply step-loop deal/insights-driving tools only after the reply is finalized.
+              flushPendingDealToolResults()
             } else if (eventType === 'panel_started') {
               console.debug('[apiClient] panel stream started', data)
               panelStreamActive = true
@@ -543,7 +554,7 @@ class ApiClient implements ApiService {
               streamedPanelCards[index] = data.card
               const toolCall: ToolCall = {
                 name: 'update_insights_panel',
-                args: { mode: PANEL_UPDATE.APPEND, card: data.card, index },
+                args: { mode: PANEL_UPDATE_MODE.APPEND, card: data.card, index },
               }
               toolCalls.push(toolCall)
               onToolResult?.(toolCall)
@@ -556,7 +567,7 @@ class ApiClient implements ApiService {
               // Always reconcile to server-final cards so empty results clear stale UI state.
               const toolCall: ToolCall = {
                 name: 'update_insights_panel',
-                args: { mode: PANEL_UPDATE.REPLACE, cards: finalCards },
+                args: { mode: PANEL_UPDATE_MODE.REPLACE, cards: finalCards },
               }
               toolCalls.push(toolCall)
               onToolResult?.(toolCall)
@@ -578,9 +589,7 @@ class ApiClient implements ApiService {
               console.warn('[apiClient] Tool execution error:', data.tool, data.error)
             } else if (eventType === 'tool_result' && data.tool) {
               const toolCall: ToolCall = { name: data.tool as ToolCall['name'], args: data.data }
-              toolCalls.push(toolCall)
-              // Process tool results incrementally as they arrive
-              onToolResult?.(toolCall)
+              pendingDealToolResults.push(toolCall)
             }
           } catch (e) {
             console.debug(
@@ -596,6 +605,8 @@ class ApiClient implements ApiService {
         if (xhr.status >= 200 && xhr.status < 300) {
           // Process any remaining data not caught by onprogress
           xhr.onprogress?.(null as any)
+          // If the stream ended without a `done` event, still apply buffered deal tools.
+          flushPendingDealToolResults()
           if (sseError) {
             finishPanelStream()
             reject(new Error(sseError))

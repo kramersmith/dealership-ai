@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-04-04**
+**Last updated: 2026-04-06**
 
 ---
 
@@ -50,7 +50,7 @@ dealership-ai/
 │   │   │   ├── models/   # SQLAlchemy ORM models
 │   │   │   ├── routes/   # API endpoint definitions
 │   │   │   ├── schemas/  # Pydantic request/response models
-│   │   │   └── services/ # Business logic (Claude integration, deal state, extraction)
+│   │   │   └── services/ # Business logic (Claude integration, deal state, tool validation, extraction)
 │   │   └── migrations/   # Alembic database migrations
 │   └── mobile/           # Expo React Native application
 │       ├── app/          # Expo Router file-based routing
@@ -107,12 +107,12 @@ graph TB
     - `event: step` -- step-loop progress for multi-step turns
     - `event: done` -- chat text completion payload (input can unblock immediately)
     - `event: panel_started` / `event: panel_card` / `event: panel_done` / `event: panel_error` -- asynchronous panel lifecycle events after `done`
-8. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up.
+8. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up. Step-control logic bounds tool rounds per buyer message (step 0 = auto, step 1 = conditional based on errors/text visibility, step 2+ = text-only) to prevent model self-dialogue loops. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction.
 9. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
 10. After the step loop completes, the backend emits `done`, then starts a separate panel streaming phase that emits `panel_started`, incremental `panel_card` events, and terminal `panel_done` or `panel_error`.
 11. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata (chat phase + panel phase), applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
 12. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
-13. Client Zustand stores update in real time as SSE events arrive. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+13. Client Zustand stores update in real time as SSE events arrive. Tool result callbacks are deferred until after the `done` event so the UI finalizes the reply before insights update. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
 14. The `done` event carries chat text and chat-phase usage. Panel-phase usage is emitted on `panel_done` and merged into the persisted assistant usage summary.
 
 ---
@@ -281,7 +281,7 @@ The AI advisor uses 10 tools to drive the frontend dashboard and quick actions i
 | `update_checklist`       | Update buyer's action item checklist       | `items` (array of {label, done}) |
 | `update_quick_actions`   | Suggest 2-3 dynamic quick action buttons   | `actions` (array of {label, prompt}) |
 | `update_buyer_context`   | Change buyer's situational context mid-conversation | `buyer_context` |
-| `update_deal_health`     | Overall deal health assessment (status + summary + recommendation) | `status`, `summary` |
+| `update_deal_health`     | Overall deal health assessment (status + summary + recommendation) | `status`, `summary`, `recommendation` |
 | `update_red_flags`       | Surface specific deal problems with severity | `flags` (array of {id, severity, message}) |
 | `update_information_gaps` | Identify missing data to improve assessment | `gaps` (array of {label, reason, priority}) |
 

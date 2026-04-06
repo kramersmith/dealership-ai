@@ -20,6 +20,7 @@ from app.models.enums import (
     RedFlagSeverity,
     ScoreStatus,
 )
+from app.services.tool_validation import ToolValidationError
 from app.services.turn_context import TurnContext
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,116 @@ POST_TOOL_CONTINUATION_REMINDER = (
     "Tool results above reflect committed state updates. "
     "If the user's request is already answerable, reply directly to the user in your next message. "
     "Do not make another tool-only pass just to add quick actions. "
+    "If the buyer only shared subjective impressions (looks clean, feels fine) and nothing structural changed, "
+    "reply in text only — no update_quick_actions. "
+    "Do not invent new user facts, vehicles, or numbers — only persist what appears in prior USER-role messages. "
+    "Never write dialogue as if you are the buyer (e.g. 'I'm looking at a 2025…') unless quoting their exact words. "
+    "If nothing real changed, end with a brief text reply and no further tools. "
     "If any remaining tool updates are still genuinely needed, include them alongside the final user-facing answer."
     "</system-reminder>"
 )
-TEXT_ONLY_RECOVERY_TOOL_NAMES = {"update_quick_actions"}
+TEXT_ONLY_RECOVERY_TOOL_NAMES = frozenset(
+    {"update_quick_actions", "update_session_information_gaps"}
+)
+
+# Successful step whose tools are all session/dashboard updates (no vehicle/deal extraction)
+# → next step is text-only, even when the model emitted tools before any visible prose.
+_SESSION_SCOPED_DASHBOARD_TOOLS = frozenset(
+    {
+        "update_quick_actions",
+        "update_session_information_gaps",
+        "update_buyer_context",
+        "update_checklist",
+        "update_negotiation_context",
+        "update_session_red_flags",
+    }
+)
+
+# Vehicle/deal/numbers tools — step 0 often stops streaming after tool_use while the prose is still incomplete.
+_STATE_EXTRACTION_TOOLS = frozenset(
+    {
+        "set_vehicle",
+        "create_deal",
+        "update_deal_numbers",
+        "update_deal_phase",
+        "switch_active_deal",
+        "remove_vehicle",
+    }
+)
+
+# After tools run, discourage endless tool_use + self-dialogue loops (Sonnet can roleplay the user).
+_CONTINUATION_TEXT_ONLY_SYSTEM: list[dict] = [
+    {
+        "type": "text",
+        "text": (
+            "CONTINUATION (after tool results): Tools already updated state. "
+            "Reply to the buyer as 'you'. Do not speak in the buyer's voice or fabricate details they never gave. "
+            "If your prior message already answered them, add at most one short sentence — do not repeat long advice, "
+            "headings, or bullet lists. This turn should normally be plain text only."
+        ),
+    }
+]
+
+# Step 0 had prose + vehicle/deal/number tools; visible text is often only an opener before tool_use stops the stream.
+_CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM: list[dict] = [
+    {
+        "type": "text",
+        "text": (
+            "CONTINUATION (after tool results): State is updated. This turn is plain text only — no tools. "
+            "If your prior message was only a short opener, ended mid-thought (e.g. trailing 'Here's the situation:' or "
+            "similar), or did not yet deliver bullets/scripts/next steps, **continue and finish** now: stay concise but "
+            "give the buyer the full takeaway they need. Do not re-paste your entire prior message. "
+            "If you already gave a complete answer before tools, add at most one short sentence. Reply as 'you' using "
+            "only facts the buyer stated."
+        ),
+    }
+]
+
+# Prior step was tool_use blocks only — the buyer has not seen assistant text yet.
+_CONTINUATION_AFTER_TOOL_ONLY_SYSTEM: list[dict] = [
+    {
+        "type": "text",
+        "text": (
+            "CONTINUATION: Your previous assistant turn contained only tool calls — the buyer has not seen any reply "
+            "from you yet for this message. Write the full user-visible answer now: lead with the conclusion, use 'you', "
+            "keep it concise, include blockquote scripts where helpful. Do not call tools. Do not invent facts the "
+            "buyer did not state."
+        ),
+    }
+]
+
+# Step 1 still has tool_choice auto (e.g. to run assessment after extraction) — nudge prose when step 0 was tool-only.
+_STEP_AFTER_TOOL_ONLY_NUDGE: list[dict] = [
+    {
+        "type": "text",
+        "text": (
+            "STEP NOTE: Your previous assistant turn for this buyer message had tool calls but no visible text — "
+            "the buyer has not read a reply from you yet on this message. Lead this turn with a clear, substantive "
+            "answer; you may still call tools in the same turn if state or assessment updates are still needed. "
+            "Do not send another tools-only turn. Skip update_quick_actions unless the current buttons are clearly wrong."
+        ),
+    }
+]
+
+
+def _chat_tool_choice_for_step(
+    step: int,
+    *,
+    prev_step_had_tool_errors: bool,
+    prev_step_had_visible_assistant_text: bool,
+    prev_step_tools_were_dashboard_only: bool,
+) -> dict[str, str]:
+    """Bound tool rounds per buyer message to prevent model self-dialogue loops."""
+    if step == 0:
+        return {"type": "auto"}
+    if step >= 2:
+        return {"type": "none"}
+    if not prev_step_had_tool_errors and (
+        prev_step_had_visible_assistant_text or prev_step_tools_were_dashboard_only
+    ):
+        return {"type": "none"}
+    return {"type": "auto"}
+
 
 CONTEXT_PREAMBLES = {
     BuyerContext.RESEARCHING: (
@@ -94,6 +201,7 @@ GROUNDING RULES (critical — violating these erodes user trust):
 - When vehicle intelligence is present, treat decoded specs as identity facts, title/brand checks as limited official risk signals, and valuations as asking-price context only.
 - Never imply service history, maintenance history, or full accident coverage unless the provided data explicitly contains that evidence.
 - NEVER decode or infer year/make/model/trim/engine from a VIN unless that decode already exists in the provided deal state context. A raw VIN alone is not enough to claim exact specs.
+- Never write your visible reply as if you are the buyer (first-person buying voice like "I'm looking at…", "I have a trade-in…") unless you are quoting their exact USER message. Address the buyer as "you". Inventing "user" facts in assistant text and then saving them with tools corrupts the session.
 
 Your job:
 - Help buyers understand deal numbers, spot overcharges, and negotiate effectively
@@ -102,10 +210,13 @@ Your job:
 - Analyze deal sheets, CARFAX reports, and financing terms
 
 TOOL USAGE:
+- CHAT-FIRST: The product shows your written reply to the buyer before it refreshes the insights side panel from tool updates. Always include clear user-visible prose in the same assistant turn as tools — lead with at least a sentence or two they can read immediately, then call tools; avoid a tools-only first turn.
 - You have tools to track deal data as the conversation progresses. Call them ALONGSIDE your text response when information changes.
 - Extract facts only from USER messages. Never persist data from your own suggestions or assistant responses.
+- Never fabricate a fake user statement in your assistant message and then extract it — if the buyer has not provided a vehicle, price, or trade-in, ask them or leave deal state unchanged.
 - Only call tools when data has actually changed or is newly mentioned. Omit unchanged fields.
 - You may call multiple tools in a single response. Do NOT narrate tool usage to the user — just respond naturally.
+- Always include at least a short user-visible answer (one or more sentences) in the same turn as your tools whenever you call tools — never send a tools-only assistant message with no text for the buyer to read.
 - Prefer one batched tool pass per buyer message whenever possible.
 - If one user message updates multiple parts of state, emit all relevant tools in the SAME response: extraction, assessment updates, negotiation context, checklist updates, and quick actions.
 - Do not spread obvious updates across multiple tool-only follow-up turns if you already have enough information to update everything now.
@@ -121,14 +232,18 @@ Assessment tools (update_deal_health, update_scorecard, update_deal_red_flags, u
 - If a tool call fails, read the error and adjust your input — do not retry with the same arguments.
 
 QUICK ACTIONS:
-- Always call update_quick_actions with 2-3 contextually relevant suggestions at the end of every response.
+- Call update_quick_actions with 2-3 relevant suggestions when your reply also updates deal state or when next-step buttons should clearly change. If the buyer only adds subjective color (condition, worry, mood) and existing actions still fit the conversation, answer in **text only** and skip tools.
+- Do not call update_quick_actions as the **only** tool just to rotate buttons when structured deal state is unchanged — reserve single-tool quick-action updates for replacing clearly wrong or stale buttons.
+- After tool results are returned for that same buyer message (a continuation turn), do NOT call update_quick_actions again unless the suggested actions are genuinely wrong or stale — prefer a short text-only wrap-up instead.
 - Quick actions should reflect the natural next step in the conversation, not repeat what was just discussed.
+- When structured deal state already satisfies a session_information_gaps item (e.g. listing_price is set, vehicle year/make/model/trim are in state), call update_session_information_gaps in the same pass to remove or replace those stale entries so the dashboard matches reality.
 
 CRITICAL RULES FOR FINANCIAL NUMBERS:
 - listing_price = the advertised/sticker price BEFORE taxes, fees, or financing
 - current_offer = the dealer's current ask or negotiated price BEFORE taxes and fees
 - NEVER confuse the financed total (price + taxes + fees) with listing_price or current_offer
 - If buyer says "$35,900 with taxes included" and listing was $34,000, then listing_price=34000, NOT 35900
+- When the buyer states an asking or listing price in plain language (e.g. "for 34k", "$34,000", "they're asking 40"), call update_deal_numbers in the **same** tool batch as the vehicle when both appear in one user message: use listing_price for sticker/advertised/asking figures; use current_offer only if they clearly mean the dealer's current negotiated offer to them.
 
 VEHICLE EXTRACTION RULES:
 - Only create vehicles from user-provided information, not assistant suggestions
@@ -901,6 +1016,15 @@ async def _execute_tool_batch(
                 )
                 await tool_db.commit()
                 return index, block, applied
+            except ToolValidationError as exc:
+                await tool_db.rollback()
+                logger.warning(
+                    "Step %d: tool [%s] validation failed: %s",
+                    turn_context.step,
+                    block["name"],
+                    exc,
+                )
+                return index, block, exc
             except Exception as exc:
                 await tool_db.rollback()
                 logger.exception(
@@ -1067,6 +1191,10 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     # Add cache_control to the last tool so the entire tool list is cached
     cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
     last_appended_step_text_normalized = ""
+    prev_step_tool_errors = True
+    prev_step_had_visible_assistant_text = False
+    prev_step_tools_were_dashboard_only = False
+    prev_step_had_state_extraction_tools = False
 
     for step in range(max_steps):
         turn_context = turn_context.for_step(step)
@@ -1074,6 +1202,31 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         # so it can show a thinking indicator during multi-step loops.
         if step > 0:
             yield f"event: step\ndata: {json.dumps({'step': step})}\n\n"
+
+        tool_choice_param = _chat_tool_choice_for_step(
+            step,
+            prev_step_had_tool_errors=prev_step_tool_errors,
+            prev_step_had_visible_assistant_text=prev_step_had_visible_assistant_text,
+            prev_step_tools_were_dashboard_only=prev_step_tools_were_dashboard_only,
+        )
+        if tool_choice_param["type"] == "none":
+            if not prev_step_had_visible_assistant_text:
+                step_system = [*system_prompt, *_CONTINUATION_AFTER_TOOL_ONLY_SYSTEM]
+            elif prev_step_had_state_extraction_tools:
+                step_system = [
+                    *system_prompt,
+                    *_CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM,
+                ]
+            else:
+                step_system = [*system_prompt, *_CONTINUATION_TEXT_ONLY_SYSTEM]
+        else:
+            step_system = system_prompt
+            if (
+                step == 1
+                and not prev_step_had_visible_assistant_text
+                and not prev_step_tool_errors
+            ):
+                step_system = [*step_system, *_STEP_AFTER_TOOL_ONLY_NUDGE]
 
         current_max_tokens = settings.CLAUDE_MAX_TOKENS
         truncation_retry_count = 0
@@ -1095,10 +1248,10 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                     client,
                     model=settings.CLAUDE_MODEL,
                     max_tokens=current_max_tokens,
-                    system=system_prompt,
+                    system=step_system,
                     messages=messages,
                     tools=cached_tools,
-                    tool_choice={"type": "auto"},
+                    tool_choice=tool_choice_param,
                 ):
                     if event_type == "retry":
                         retry_payload = dict(event_data)
@@ -1319,7 +1472,12 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
                     if isinstance(outcome, Exception):
                         had_tool_errors = True
-                        error_msg = f"Tool '{tool_name}' failed: {outcome}"
+                        if isinstance(outcome, ToolValidationError):
+                            error_msg = (
+                                f"Tool '{tool_name}' validation failed: {outcome}"
+                            )
+                        else:
+                            error_msg = f"Tool '{tool_name}' failed: {outcome}"
                         tool_result_content.append(
                             {
                                 "type": "tool_result",
@@ -1425,6 +1583,16 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                     len(result.tool_calls),
                 )
                 return
+
+        prev_step_tool_errors = had_tool_errors
+        prev_step_had_visible_assistant_text = bool(step_text.strip())
+        prev_step_tools_were_dashboard_only = (
+            bool(tool_use_blocks)
+            and {b["name"] for b in tool_use_blocks} <= _SESSION_SCOPED_DASHBOARD_TOOLS
+        )
+        prev_step_had_state_extraction_tools = bool(tool_use_blocks) and bool(
+            {b["name"] for b in tool_use_blocks} & _STATE_EXTRACTION_TOOLS
+        )
 
         # Move the cache breakpoint to the last message so the next step's
         # API call caches everything up to this point (two-breakpoint caching).

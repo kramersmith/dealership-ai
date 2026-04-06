@@ -13,7 +13,19 @@ from app.services.usage_tracking import (
 
 logger = logging.getLogger(__name__)
 
-MAX_TITLE_LENGTH = 40
+# Chat list / header: room for ~6 short words without mid-word cuts (LLM often exceeds "3-6 words").
+MAX_TITLE_LENGTH = 56
+
+
+def _clip_session_title(text: str, max_len: int) -> str:
+    """Trim to max_len; if that would split a word, drop the partial last word."""
+    t = text.strip()
+    if len(t) <= max_len:
+        return t
+    clipped = t[:max_len]
+    if " " not in clipped:
+        return clipped.rstrip()
+    return clipped.rsplit(" ", 1)[0].rstrip()
 
 
 def build_vehicle_title(vehicle: dict | None) -> str | None:
@@ -33,7 +45,7 @@ def build_vehicle_title(vehicle: dict | None) -> str | None:
     if vehicle.get("trim"):
         parts.append(vehicle["trim"])
 
-    return " ".join(parts)[:MAX_TITLE_LENGTH]
+    return _clip_session_title(" ".join(parts), MAX_TITLE_LENGTH)
 
 
 async def generate_session_title(
@@ -93,7 +105,7 @@ async def generate_session_title(
         started_at = time.monotonic()
         response = await client.messages.create(
             model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=30,
+            max_tokens=48,
             messages=api_messages,  # type: ignore[arg-type]
         )
         request_usage = build_request_usage(
@@ -114,7 +126,7 @@ async def generate_session_title(
             block.text.strip().strip('"').strip("'") if hasattr(block, "text") else ""
         )
         if title:
-            return title[:MAX_TITLE_LENGTH]
+            return _clip_session_title(title, MAX_TITLE_LENGTH)
     except Exception:
         logger.warning("Title generation failed, keeping existing title", exc_info=True)
 

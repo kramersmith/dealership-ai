@@ -2,11 +2,13 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, DealPhase, VehicleRole
+from app.models.enums import BuyerContext, DealPhase, HealthStatus, VehicleRole
 from app.models.vehicle import Vehicle
 from app.services.deal_state import execute_tool
+from app.services.tool_validation import ToolValidationError
 from app.services.turn_context import TurnContext
 from sqlalchemy import select
 
@@ -74,6 +76,131 @@ async def test_execute_tool_update_deal_numbers(adb, async_buyer_user):
     assert "update_deal_numbers" in tool_names
     assert deal.listing_price == 34000
     assert deal.current_offer == 33500
+
+
+async def test_execute_tool_rejects_negative_listing_price(adb, async_buyer_user):
+    """Negative deal numbers fail semantic validation before DB write."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    with pytest.raises(ToolValidationError, match="cannot be negative"):
+        await execute_tool(
+            "update_deal_numbers",
+            {"listing_price": -100},
+            TurnContext.create(session=session, deal_state=deal_state, db=adb),
+        )
+
+
+async def test_execute_tool_rejects_phase_regression(adb, async_buyer_user):
+    """Phase cannot move backward relative to persisted deal phase."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(
+        session_id=session.id,
+        vehicle_id=vehicle.id,
+        phase=DealPhase.NEGOTIATION,
+    )
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    with pytest.raises(ToolValidationError, match="cannot move backward"):
+        await execute_tool(
+            "update_deal_phase",
+            {"phase": DealPhase.INITIAL_CONTACT},
+            TurnContext.create(session=session, deal_state=deal_state, db=adb),
+        )
+
+
+async def test_execute_tool_rejects_health_without_numbers(adb, async_buyer_user):
+    """Health assessment requires at least one extracted number on the deal."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    with pytest.raises(ToolValidationError, match="at least one deal number"):
+        await execute_tool(
+            "update_deal_health",
+            {
+                "status": "good",
+                "summary": "Looks fine",
+                "recommendation": "Keep negotiating",
+            },
+            TurnContext.create(session=session, deal_state=deal_state, db=adb),
+        )
+
+
+async def test_execute_tool_update_deal_health_with_numbers(adb, async_buyer_user):
+    """Health tool succeeds when the deal has numeric context."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(
+        session_id=session.id,
+        vehicle_id=vehicle.id,
+        listing_price=30000,
+    )
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    result = await execute_tool(
+        "update_deal_health",
+        {
+            "status": "good",
+            "summary": "Below listing",
+            "recommendation": "Counter slightly lower",
+        },
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+    assert any(tc["name"] == "update_deal_health" for tc in result)
+    assert deal.health_status == HealthStatus.GOOD
 
 
 async def test_execute_tool_negotiation_context(adb, async_buyer_user):
@@ -263,3 +390,78 @@ async def test_analyze_deal_handles_api_error(mock_create_client):
         "test response",
     )
     assert result == {}
+
+
+# ─── tool_validation unit tests (pure, no DB) ───
+
+
+def test_validate_deal_numbers_rejects_apr_over_max():
+    """APR above 35 is rejected."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="apr must be between"):
+        _validate_update_deal_numbers({"apr": 40.0})
+
+
+def test_validate_deal_numbers_rejects_negative_apr():
+    """Negative APR is rejected."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="apr must be between"):
+        _validate_update_deal_numbers({"apr": -1.0})
+
+
+def test_validate_deal_numbers_accepts_valid_apr():
+    """Valid APR within range passes."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    _validate_update_deal_numbers({"apr": 4.9})  # should not raise
+
+
+def test_validate_deal_numbers_rejects_loan_term_too_high():
+    """Loan term above 120 months is rejected."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="loan_term_months must be between"):
+        _validate_update_deal_numbers({"loan_term_months": 240})
+
+
+def test_validate_deal_numbers_rejects_loan_term_zero():
+    """Loan term of 0 is rejected."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="loan_term_months must be between"):
+        _validate_update_deal_numbers({"loan_term_months": 0})
+
+
+def test_validate_deal_numbers_rejects_loan_term_bool():
+    """Boolean loan_term_months is rejected (bool is subclass of int)."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="must be an integer"):
+        _validate_update_deal_numbers({"loan_term_months": True})
+
+
+def test_validate_deal_numbers_rejects_unrealistically_large_price():
+    """Prices above 50M are rejected."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="unrealistically large"):
+        _validate_update_deal_numbers({"listing_price": 100_000_000})
+
+
+def test_validate_deal_numbers_rejects_string_money_field():
+    """String value for a money field is rejected."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    with pytest.raises(ToolValidationError, match="must be a number"):
+        _validate_update_deal_numbers({"msrp": "thirty thousand"})
+
+
+def test_validate_deal_numbers_skips_deal_id_and_none():
+    """deal_id and None values are skipped without error."""
+    from app.services.tool_validation import _validate_update_deal_numbers
+
+    _validate_update_deal_numbers(
+        {"deal_id": "some-id", "listing_price": None, "msrp": 30000}
+    )  # should not raise

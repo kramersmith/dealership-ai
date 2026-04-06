@@ -2,7 +2,7 @@
 
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import VehicleRole
+from app.models.enums import HealthStatus, VehicleRole
 from app.models.session import ChatSession
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -71,8 +71,12 @@ def test_build_execution_plan_all_same_priority():
         _block("update_deal_health", "t3"),
     ]
     plan = build_execution_plan(blocks)
-    assert len(plan) == 1
-    assert plan[0] == blocks
+    assert len(plan) == 2
+    assert [b["name"] for b in plan[0]] == [
+        "update_deal_numbers",
+        "update_quick_actions",
+    ]
+    assert [b["name"] for b in plan[1]] == ["update_deal_health"]
 
 
 def test_build_execution_plan_mixed_priorities():
@@ -102,8 +106,9 @@ def test_build_execution_plan_preserves_order_within_batch():
         _block("update_deal_numbers", "t3"),
     ]
     plan = build_execution_plan(blocks)
-    assert len(plan) == 1
-    assert [b["id"] for b in plan[0]] == ["t1", "t2", "t3"]
+    assert len(plan) == 2
+    assert [b["id"] for b in plan[0]] == ["t1", "t3"]
+    assert [b["id"] for b in plan[1]] == ["t2"]
 
 
 def test_build_execution_plan_empty_input():
@@ -293,6 +298,48 @@ async def test_execute_tool_batch_ordered_yielding(adb):
 
     # Must match original call order
     assert result_ids == ["t1", "t2", "t3"]
+
+
+async def test_execute_tool_batch_health_runs_after_numbers_batch(adb):
+    """Priority 3 health runs in a later batch so DB has committed numbers."""
+    from app.services.claude import _execute_tool_batch
+    from app.services.deal_state import build_execution_plan
+
+    _, deal_state, deal = await _setup_session_with_deal(adb)
+
+    blocks = [
+        {
+            "id": "t1",
+            "name": "update_deal_numbers",
+            "input": {"listing_price": 31000},
+        },
+        {
+            "id": "t2",
+            "name": "update_deal_health",
+            "input": {
+                "status": "good",
+                "summary": "Fair vs listing",
+                "recommendation": "Ask about fees",
+            },
+        },
+    ]
+    plan = build_execution_plan(blocks)
+    assert len(plan) == 2
+
+    turn_ctx = TurnContext.create(session=None, deal_state=deal_state, db=adb).for_step(
+        0
+    )
+    for batch in plan:
+        async for block, outcome in _execute_tool_batch(
+            batch,
+            turn_ctx,
+            session_factory=TestingAsyncSessionLocal,
+        ):
+            assert not isinstance(outcome, Exception), (block, outcome)
+
+    await adb.refresh(deal)
+    assert deal.listing_price == 31000
+    assert deal.health_status == HealthStatus.GOOD
 
 
 # ─── Integration: batch sequencing ───

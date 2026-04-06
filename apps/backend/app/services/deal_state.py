@@ -14,6 +14,7 @@ from app.models.enums import (
     VehicleRole,
 )
 from app.models.vehicle import Vehicle
+from app.services.tool_validation import validate_tool_input
 from app.services.turn_context import TurnContext
 from app.services.vehicle_intelligence import build_vehicle_intelligence_response
 
@@ -163,6 +164,8 @@ TOOL_PRIORITY: dict[str, int] = {
     "remove_vehicle": 0,
     "create_deal": 1,
     "switch_active_deal": 1,
+    # After numeric extraction so validate_tool_input sees committed numbers
+    "update_deal_health": 3,
 }
 DEFAULT_TOOL_PRIORITY = 2
 
@@ -190,6 +193,8 @@ async def execute_tool(
 
     deal_state = context.deal_state
     db = context.db
+
+    await validate_tool_input(tool_name, tool_input, context)
 
     if tool_name == "update_negotiation_context":
         if _json_like_equal(deal_state.negotiation_context, tool_input):

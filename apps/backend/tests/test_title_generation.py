@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from app.services.title_generator import (
     MAX_TITLE_LENGTH,
+    _clip_session_title,
     build_vehicle_title,
     generate_session_title,
 )
@@ -56,7 +57,7 @@ def test_build_vehicle_title_no_make():
 
 
 def test_build_vehicle_title_truncation():
-    """Long titles are truncated to 40 characters."""
+    """Long titles are truncated to MAX_TITLE_LENGTH characters."""
     result = build_vehicle_title(
         {
             "year": 2024,
@@ -66,7 +67,17 @@ def test_build_vehicle_title_truncation():
         }
     )
     assert result is not None
-    assert len(result) <= 40
+    assert len(result) <= MAX_TITLE_LENGTH
+
+
+def test_clip_session_title_prefers_word_boundary():
+    """Session title clip drops a partial last word instead of cutting mid-word."""
+    raw = "How to Negotiate Truck Dealership Purchase"
+    assert _clip_session_title(raw, 40) == "How to Negotiate Truck Dealership"
+
+
+def test_clip_session_title_no_split_when_short():
+    assert _clip_session_title("Short title", 56) == "Short title"
 
 
 # --- generate_session_title (async, mocked Anthropic) ---

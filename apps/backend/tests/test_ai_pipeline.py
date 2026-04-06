@@ -21,6 +21,7 @@ from app.models.message import Message
 from app.models.session import ChatSession
 from app.services.claude import (
     CHAT_TOOLS,
+    POST_TOOL_CONTINUATION_REMINDER,
     ChatLoopResult,
     _move_message_cache_breakpoint,
     _SyntheticBlockStopEvent,
@@ -391,6 +392,88 @@ def test_turn_context_for_db_session_without_deal_state():
 
     assert swapped.db is new_db
     assert swapped.deal_state is mock_deal_state
+
+
+# ─── _chat_tool_choice_for_step tests ───
+
+
+def test_chat_tool_choice_step_zero_is_auto():
+    """Step 0 always returns auto (model decides freely)."""
+    from app.services.claude import _chat_tool_choice_for_step
+
+    result = _chat_tool_choice_for_step(
+        0,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=False,
+        prev_step_tools_were_dashboard_only=False,
+    )
+    assert result == {"type": "auto"}
+
+
+def test_chat_tool_choice_step_two_or_beyond_is_none():
+    """Step >= 2 always forces text-only (no tools)."""
+    from app.services.claude import _chat_tool_choice_for_step
+
+    for step in (2, 3, 4):
+        result = _chat_tool_choice_for_step(
+            step,
+            prev_step_had_tool_errors=False,
+            prev_step_had_visible_assistant_text=True,
+            prev_step_tools_were_dashboard_only=False,
+        )
+        assert result == {"type": "none"}, f"step={step}"
+
+
+def test_chat_tool_choice_step_one_none_when_text_and_no_errors():
+    """Step 1 forces none when step 0 had visible text and no errors."""
+    from app.services.claude import _chat_tool_choice_for_step
+
+    result = _chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=True,
+        prev_step_tools_were_dashboard_only=False,
+    )
+    assert result == {"type": "none"}
+
+
+def test_chat_tool_choice_step_one_none_when_dashboard_only_no_errors():
+    """Step 1 forces none when step 0 had dashboard-only tools and no errors."""
+    from app.services.claude import _chat_tool_choice_for_step
+
+    result = _chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=False,
+        prev_step_tools_were_dashboard_only=True,
+    )
+    assert result == {"type": "none"}
+
+
+def test_chat_tool_choice_step_one_auto_when_tool_errors():
+    """Step 1 allows auto when step 0 had tool errors (model self-correction)."""
+    from app.services.claude import _chat_tool_choice_for_step
+
+    result = _chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=True,
+        prev_step_had_visible_assistant_text=True,
+        prev_step_tools_were_dashboard_only=False,
+    )
+    assert result == {"type": "auto"}
+
+
+def test_chat_tool_choice_step_one_auto_when_no_text_and_not_dashboard():
+    """Step 1 allows auto when step 0 had no visible text and non-dashboard tools."""
+    from app.services.claude import _chat_tool_choice_for_step
+
+    result = _chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=False,
+        prev_step_tools_were_dashboard_only=False,
+    )
+    assert result == {"type": "auto"}
 
 
 # ─── build_messages tests ───
@@ -1058,11 +1141,11 @@ async def test_stream_chat_loop_synthesizes_tool_error_on_execution_failure(
                 "type": "tool_result",
                 "tool_use_id": "phase-1",
                 "is_error": True,
-                "content": "Tool 'update_deal_phase' failed: 'phase'",
+                "content": "Tool 'update_deal_phase' validation failed: update_deal_phase requires a non-empty phase string (see tool schema enum).",
             },
             {
                 "type": "text",
-                "text": "<system-reminder>Tool results above reflect committed state updates. If the user's request is already answerable, reply directly to the user in your next message. Do not make another tool-only pass just to add quick actions. If any remaining tool updates are still genuinely needed, include them alongside the final user-facing answer.</system-reminder>",
+                "text": POST_TOOL_CONTINUATION_REMINDER,
                 "cache_control": {"type": "ephemeral"},
             },
         ]
@@ -1131,7 +1214,7 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
             },
             {
                 "type": "text",
-                "text": "<system-reminder>Tool results above reflect committed state updates. If the user's request is already answerable, reply directly to the user in your next message. Do not make another tool-only pass just to add quick actions. If any remaining tool updates are still genuinely needed, include them alongside the final user-facing answer.</system-reminder>",
+                "text": POST_TOOL_CONTINUATION_REMINDER,
                 "cache_control": {"type": "ephemeral"},
             },
         ]

@@ -56,6 +56,31 @@ describe('ApiClient.sendMessage', () => {
     globalThis.XMLHttpRequest = originalXmlHttpRequest
   })
 
+  it('invokes onTextDone before chat-loop onToolResult when tool_result precedes done', async () => {
+    const apiClient = new ApiClient()
+    const order: string[] = []
+    const onToolResult = vi.fn(() => order.push('tool'))
+    const onTextDone = vi.fn(() => order.push('done'))
+
+    const sendPromise = apiClient.sendMessage(
+      'session-order',
+      'Hi',
+      undefined,
+      undefined,
+      onToolResult,
+      onTextDone
+    )
+
+    const xhr = FakeXMLHttpRequest.instances.at(-1)
+    xhr?.pushEvent('tool_result', { tool: 'set_vehicle', data: { vehicle_id: 'v1' } })
+    xhr?.pushEvent('text', { chunk: 'Updated.' })
+    xhr?.pushEvent('done', { text: 'Updated.' })
+    xhr?.complete()
+
+    await sendPromise
+    expect(order).toEqual(['done', 'tool'])
+  })
+
   it('streams panel cards and reconciles final panel state', async () => {
     const apiClient = new ApiClient()
     const onToolResult = vi.fn()

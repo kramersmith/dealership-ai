@@ -1,6 +1,6 @@
 # Business Rules
 
-Last updated: 2026-04-04
+Last updated: 2026-04-06
 
 ## Table of Contents
 
@@ -172,7 +172,7 @@ When no title is provided at creation:
 - `dealer_sim` sessions default to "New Simulation"
 
 **Auto-titling:** Sessions with `auto_title=true` (the default) receive automatic title updates:
-1. **Vehicle title (deterministic):** When the `set_vehicle` tool is called, the title updates to the vehicle description (e.g., "2024 Toyota Camry LE"). Max 40 characters.
+1. **Vehicle title (deterministic):** When the `set_vehicle` tool is called, the title updates to the vehicle description (e.g., "2024 Toyota Camry LE"). Max 56 characters, clipped at word boundaries.
 2. **LLM title (fallback):** If the title is still the default after the first AI exchange, the backend generates a 3-6 word title via Haiku (`CLAUDE_FAST_MODEL`) using the last 3 messages.
 
 **Manual rename:** When a user renames a session via `PATCH /api/sessions/{id}`, `auto_title` is set to `false`, preventing further automatic title updates.
@@ -240,6 +240,8 @@ Updates the current phase of the deal.
 | `phase` | string | Yes | One of: `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
 
 **Trigger:** When the conversation indicates progression to a new deal phase.
+
+**Constraint:** Phase can only move forward in the lifecycle order (research → initial_contact → test_drive → negotiation → financing → closing). Backward transitions are rejected by semantic validation.
 
 ### 3. `update_scorecard`
 
@@ -328,9 +330,11 @@ Updates the overall deal health assessment. Called after any significant change 
 |---|---|---|---|
 | `status` | string | Yes | `good`, `fair`, `concerning`, or `bad` |
 | `summary` | string | Yes | 1-2 sentence explanation grounded in user's data |
-| `recommendation` | string | No | Specific next-action recommendation (e.g., "Counter at $31,500") |
+| `recommendation` | string | Yes | Specific next-action recommendation (e.g., "Counter at $31,500") |
 
 **Trigger:** After any significant number/offer/term change. This is the buyer's primary signal.
+
+**Prerequisites:** The active deal must have at least one numeric field set (via `update_deal_numbers`) before `update_deal_health` can be called. This ensures the health assessment is grounded in extracted figures, not speculation.
 
 ### 9. `update_red_flags`
 
@@ -380,9 +384,33 @@ Users can inline-edit dealer name on the frontend. AiVehicleCard inline editing 
 4. Re-runs `analyze_deal()` via Sonnet on the first affected deal to update health status, red flags, and recommendation
 5. Returns the updated assessment (including deal_id and recommendation) to the frontend
 
+### Tool Semantic Validation
+
+Chat tool inputs undergo semantic validation (`tool_validation.py`) after JSON parsing but before database application. Invalid inputs are returned as `is_error` tool results, allowing the model to self-correct on the next step. Validated rules include:
+
+| Rule | Tool | Constraint |
+|---|---|---|
+| Non-negative money | `update_deal_numbers` | Dollar fields (msrp, listing_price, current_offer, etc.) must be non-negative and ≤ $50M |
+| Boolean rejection | `update_deal_numbers` | Numeric fields reject boolean values (Python `bool` is a subclass of `int`) |
+| APR range | `update_deal_numbers` | APR must be between 0 and 35 |
+| Loan term range | `update_deal_numbers` | loan_term_months must be an integer between 1 and 120 |
+| Phase no-regression | `update_deal_phase` | Phase cannot move backward in the lifecycle order |
+| Numeric context required | `update_deal_health` | The target deal must have at least one numeric field set before health can be assessed |
+| Required fields | `update_deal_health` | Both `summary` and `recommendation` must be non-empty strings |
+| Valid phase on create | `create_deal` | If `phase` is provided, it must be a valid DealPhase enum value |
+
 ### Tool Application Order
 
-When the AI returns multiple tool calls in a single response, they are applied sequentially to the deal state and each emits a separate `tool_result` SSE event to the frontend.
+When the AI returns multiple tool calls in a single response, they are executed concurrently in priority-ordered batches. Each batch completes before the next begins:
+
+| Priority | Tools | Rationale |
+|---|---|---|
+| 0 | `set_vehicle`, `remove_vehicle` | Structural — must exist before field updates |
+| 1 | `create_deal`, `switch_active_deal` | Context switches — must resolve before updates target the correct deal |
+| 2 | All other tools (default) | Field updates — run concurrently within the batch |
+| 3 | `update_deal_health` | Runs after numeric extraction so semantic validation sees committed deal numbers |
+
+Each concurrent tool gets an isolated database session to avoid shared-session conflicts. Tool results are emitted as SSE events in original call order regardless of execution order.
 
 ---
 
