@@ -5,17 +5,18 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from app.core.config import settings
-from app.models.enums import AiCardPriority, AiCardType
 from app.services.claude import (
     _get_escalated_max_tokens,
+    build_prompt_deal_state,
     create_anthropic_client,
     empty_usage_summary,
     merge_usage_summary,
     summarize_usage,
 )
+from app.services.panel_cards import canonicalize_panel_cards, normalize_panel_card
 from app.services.usage_tracking import (
     UsageRecorder,
     build_request_usage,
@@ -27,13 +28,10 @@ logger = logging.getLogger(__name__)
 # ─── Panel configuration constants ───
 
 PANEL_GENERATOR_MAX_TOKENS = 2048
-PANEL_RECENT_MESSAGES = 2
+PANEL_MAX_CARDS = 5
+PANEL_RECENT_MESSAGES = 1
 PANEL_MESSAGE_TRUNCATION = 300
-PANEL_ASSISTANT_TRUNCATION = 500
-
-# Valid card types and priorities for AI panel validation
-VALID_PANEL_CARD_TYPES = {t.value for t in AiCardType}
-VALID_PANEL_CARD_PRIORITIES = {p.value for p in AiCardPriority}
+PANEL_ASSISTANT_TRUNCATION = 220
 
 
 @dataclass
@@ -61,11 +59,11 @@ class _JsonArrayObjectStreamParser:
     def feed(self, chunk: str) -> list[dict]:
         objects: list[dict] = []
 
-        for ch in chunk:
+        for character in chunk:
             if not self._started:
-                if ch.isspace():
+                if character.isspace():
                     continue
-                if ch == "[":
+                if character == "[":
                     self._started = True
                 continue
 
@@ -73,12 +71,12 @@ class _JsonArrayObjectStreamParser:
                 continue
 
             if not self._collecting:
-                if ch.isspace() or ch == ",":
+                if character.isspace() or character == ",":
                     continue
-                if ch == "]":
+                if character == "]":
                     self._ended = True
                     continue
-                if ch == "{":
+                if character == "{":
                     self._collecting = True
                     self._depth = 1
                     self._in_string = False
@@ -86,22 +84,22 @@ class _JsonArrayObjectStreamParser:
                     self._buffer = "{"
                 continue
 
-            self._buffer += ch
+            self._buffer += character
 
             if self._in_string:
                 if self._escape:
                     self._escape = False
-                elif ch == "\\":
+                elif character == "\\":
                     self._escape = True
-                elif ch == '"':
+                elif character == '"':
                     self._in_string = False
                 continue
 
-            if ch == '"':
+            if character == '"':
                 self._in_string = True
-            elif ch == "{":
+            elif character == "{":
                 self._depth += 1
-            elif ch == "}":
+            elif character == "}":
                 self._depth -= 1
                 if self._depth == 0:
                     try:
@@ -115,20 +113,6 @@ class _JsonArrayObjectStreamParser:
                         self._buffer = ""
 
         return objects
-
-
-def _validate_panel_card(card: Any) -> dict | None:
-    if not isinstance(card, dict):
-        return None
-    if card.get("type") not in VALID_PANEL_CARD_TYPES:
-        return None
-    if not card.get("title"):
-        return None
-    if not isinstance(card.get("content"), dict):
-        return None
-    if card.get("priority") not in VALID_PANEL_CARD_PRIORITIES:
-        card["priority"] = AiCardPriority.NORMAL
-    return card
 
 
 def _extract_cards_from_text(text: str) -> list[dict]:
@@ -151,10 +135,42 @@ def _extract_cards_from_text(text: str) -> list[dict]:
 
     cards: list[dict] = []
     for raw_card in raw_cards:
-        validated = _validate_panel_card(raw_card)
+        validated = normalize_panel_card(raw_card)
         if validated:
             cards.append(validated)
     return cards
+
+
+def _build_panel_request_messages(
+    *,
+    prompt_deal_state: dict[str, Any],
+    conversation_context: str,
+    assistant_text: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": GENERATE_AI_PANEL_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Deal state:\n```json\n"
+                        f"{json.dumps(prompt_deal_state, indent=2, default=str)}\n"
+                        "```\n\n"
+                        "Recent conversation (fallback only):\n"
+                        f"{conversation_context}\n\n"
+                        "Latest assistant response (fallback only):\n"
+                        f"{assistant_text[:PANEL_ASSISTANT_TRUNCATION]}"
+                    ),
+                },
+            ],
+        }
+    ]
 
 
 async def _create_panel_message_with_retry(
@@ -248,134 +264,141 @@ def _build_conversation_context(
     return "\n".join(context_parts)
 
 
-GENERATE_AI_PANEL_PROMPT = """You are an AI insights panel generator for a car buying advisor app. Given the current deal state and the assistant's latest response, generate a set of cards for the buyer's insights panel.
+GENERATE_AI_PANEL_PROMPT = """You are generating the Insights Panel for a car-buying app.
 
-The panel is a live dashboard the buyer glances at — show the most important information RIGHT NOW.
+The panel is NOT a recap of the latest assistant reply. It is the buyer's working memory.
+
+PRIMARY GOAL:
+Generate 3-5 cards that help the buyer answer these questions at a glance:
+- What is true now?
+- What changed?
+- What is dangerous?
+- What still needs confirmation?
+- What should I do next?
+- What is worth remembering?
+
+SOURCE OF TRUTH ORDER:
+1. negotiation_context
+2. structured deal state (numbers, vehicle, phase, comparison, checklist, red flags, information gaps)
+3. recent conversation as fallback only
+4. latest assistant response as fallback only
 
 CRITICAL RULES:
-- NEVER contradict the assistant's advice. The panel structures and supplements the chat response — it does not give independent opinions or alternative strategies.
-- Body text must be 1-2 SENTENCES max. Not paragraphs. The chat has the detail — the panel is a glanceable summary.
-- Cards must not repeat each other. Each card should convey a distinct piece of information.
+- Do NOT paraphrase the latest assistant reply unless something needs to stay visible across turns.
+- Never contradict the assistant's advice.
+- Every card must add distinct value. No duplicates.
+- Narrative body text must be 1-2 sentences max.
+- Prefer persistent state over fresh prose.
+- Stable cards should preserve structure across turns.
+- Use the exact card kinds below. Do not invent new kinds.
+- Do not return a title or render template. The backend assigns canonical titles and templates.
 
 Return ONLY a JSON array of card objects. Each card has:
-- "type": one of "briefing", "numbers", "vehicle", "warning", "tip", "checklist", "success", "comparison"
-- "title": short card title (2-5 words)
-- "content": card-type-specific content object (schemas below)
+- "kind": one of the exact kinds below
+- "content": kind-specific content object
 - "priority": "critical", "high", "normal", or "low"
 
-CARD TYPES — each renders with a distinct visual template:
+EXACT CARD KINDS:
 
-briefing — Status updates, assessments, next steps, strategy advice.
-  Visual: Blue left accent border (high/critical) or plain card (normal/low). NEVER red.
-  Use for: "where we are", "what's happening", "what to do next"
-  Schema: {"body": "1-2 sentences. Supports **markdown**."}
+vehicle
+- Use when a specific vehicle has been identified and it adds context.
+- Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "cab_style": "SuperCrew", "bed_length": "8 ft", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|trade_in"}, "risk_flags": ["High Mileage"]}
 
-warning — Genuine problems or dealer tactics that could hurt the buyer.
-  Visual: Red border + AlertCircle (critical), Yellow border + AlertTriangle (warning).
-  Use for: Suspicious charges, scam tactics, hidden fees, missing info creating financial risk, pressure tactics ("let me talk to my manager"), monthly payment misdirection, F&I upsells.
-  NOT for: Status updates, negotiation progress, next steps, general advice.
-  Test: "Could this hurt the buyer — financially, tactically, or informationally?" If no, use briefing.
-  Schema: {"severity": "critical|warning", "message": "The concern", "action": "Optional — what to do"}
+numbers
+- Use for: current deal state.
+- Labels must be short.
+- Schema: {"rows": [{"label": "Field", "value": "$32,000", "field": "current_offer", "highlight": "good|bad|neutral"}]}
+- Groups allowed: {"groups": [{"key": "pricing", "rows": [...]}, {"key": "financing", "rows": [...]}]}
 
-numbers — Financial data display with labeled rows.
-  Visual: Uppercase section label, label-value rows. Values highlighted good (green), bad (red), or neutral.
-  Labels must be SHORT (2-4 words max). Good: "Listing Price", "Your Target", "Gap". Bad: "Fair Range (Gas, 2017-2020, 80-140k mi)" — too long, will wrap on mobile.
-  Schema: {"rows": [{"label": "Field", "value": "$32,000", "field": "current_offer", "highlight": "good|bad|neutral"}]}
-  Editable fields (include "field"): msrp, invoice_price, listing_price, your_target, walk_away_price, current_offer, monthly_payment, apr, loan_term_months, down_payment, trade_in_value
-  Groups: {"groups": [{"key": "pricing", "rows": [...]}, {"key": "financing", "rows": [...]}]}
-  IMPORTANT: Use the actual numbers from the deal state. Do NOT confuse listing_price (advertised price before taxes/fees) with financed totals (price + taxes + fees). Labels must accurately describe what the number represents.
+what_changed
+- Use only when something materially changed since the prior state.
+- Same schema as `numbers`.
+- Prefer concrete deltas over explanation.
 
-vehicle — Vehicle information with specs and risk flags.
-  Visual: Uppercase contextual label (title), bold vehicle name, specs, danger-colored risk flags.
-  Title should be a short contextual label (2-4 words) that matches the buyer's situation:
-  - Researching/shopping: "Target Vehicle", "Searching For"
-  - Evaluating a specific vehicle: "Under Consideration", "Candidate"
-  - Found a specific listing: "At [Dealer Name]", "[City] Listing"
-  - Actively negotiating/bought: "Your Vehicle", "Your Deal"
-  - Trade-in: "Trade-In"
-  - Comparing multiple: "Option A", "Option B"
-  NEVER use "Your Vehicle" when the buyer is still searching — that implies ownership. NOT the vehicle name (that's in content).
-  risk_flags should be genuine concerns about the vehicle — not open preferences. If the buyer says "I'm open to diesel or gas", that is NOT a risk flag. Risk flags are for actual problems: high mileage, accident history, missing records, mechanical concerns.
-  Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|trade_in"}, "risk_flags": ["High Mileage"]}
+warning
+- Use for: an active risk that stands on its own.
+- Schema: {"severity": "critical|warning", "message": "The concern", "action": "Optional — what to do"}
 
-tip — Tactical advice and helpful context.
-  Visual: Lightbulb icon in blue, title + body.
-  Schema: {"body": "Helpful advice. Supports **markdown**."}
+if_you_say_yes
+- Use for: the consequence of agreeing right now.
+- Same schema as `warning`.
+- Focus on what the buyer would be accepting.
 
-checklist — Action items with checkboxes.
-  Visual: Uppercase section label, progress counter, checkbox rows.
-  Schema: {"items": [{"label": "Item description", "done": false}]}
+notes
+- Use for: durable facts the buyer should not have to remember alone.
+- Facts only. No generic encouragement. No mind-reading. No recap.
+- High bar for inclusion. Max 5 items.
+- Good notes: first offer, pre-approval, dealer promises, unresolved payoff, verbal commitments.
+- Schema: {"items": ["First offer: $31,900", "Trade-in payoff still unconfirmed"]}
 
-success — Celebrate a win: savings achieved, deal closed, milestone reached.
-  Visual: Green left border + CheckCircle icon in green. The "referral screenshot" card.
-  Use sparingly — only for genuine, measurable wins.
-  Schema: {"body": "You saved an estimated **$2,400** compared to the dealer's first offer."}
+what_still_needs_confirming
+- Use for: unresolved facts the buyer must verify before progressing.
+- Schema: {"items": [{"label": "Item description", "done": false}]}
+- Items should usually remain undone.
 
-comparison — Side-by-side deal comparison when 2+ deals exist.
-  Visual: Uppercase section label, summary, highlight rows with winner in green, recommendation at bottom.
-  Use when: Buyer is comparing the same vehicle at different dealers or different vehicles.
-  Schema: {"summary": "Brief comparison", "recommendation": "Which to choose", "best_deal_id": "id", "highlights": [{"label": "Price", "values": [{"deal_id": "id", "value": "$28,500", "is_winner": true}], "note": "Optional"}]}
+checklist
+- Use for: concrete tasks and verification steps.
+- Schema: {"items": [{"label": "Item description", "done": false}]}
 
-PRIORITY — controls emphasis within a card's template:
-- "critical": Red styling ONLY on warning cards. All other types treat this as "high" (blue).
-- "high": Important — next steps, key insights. Blue accent on briefings.
-- "normal": Supplementary context. No accent.
-- "low": Nice-to-know background details.
+comparison
+- Use for: a real side-by-side comparison.
+- Schema: {"summary": "Brief comparison", "recommendation": "Which to choose", "best_deal_id": "id", "highlights": [{"label": "Price", "values": [{"deal_id": "id", "value": "$28,500", "is_winner": true}], "note": "Optional"}]}
 
-PHASE-AWARE COMPOSITION:
-- Research (at home): 4-6 cards, thorough. Vehicle + briefing + numbers + tip + checklist.
-- At dealership (negotiation): 3-4 cards MAX. Short text. Briefing (with script) + numbers + warning (if applicable).
-- Financing/F&I: Warnings dominate (flag upsells). Numbers show total cost impact. 3-4 cards.
-- Closing: Success card (if savings), numbers (final summary), checklist (post-purchase). 2-4 cards.
+trade_off
+- Use for: a legitimate choice where each option has a real upside/downside.
+- Same schema as `comparison`.
 
-CARD STABILITY — maintain continuity for data cards:
-- Vehicle, numbers, checklist: keep the same structure across exchanges, update values.
-- Briefing, warning, tip, success: regenerate based on latest context.
+dealer_read
+- Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting signal"]}
 
-EXAMPLES:
+next_best_move
+- Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting point"]}
 
-Early research panel:
-[
-  {"type": "vehicle", "title": "Target Vehicle", "content": {"vehicle": {"year": 2024, "make": "Toyota", "model": "Camry", "trim": "SE"}, "risk_flags": []}, "priority": "normal"},
-  {"type": "briefing", "title": "Getting Started", "content": {"body": "Good choice on the Camry SE. Next step: get pre-approved from your bank before visiting dealers."}, "priority": "high"},
-  {"type": "tip", "title": "Pre-Approval Advantage", "content": {"body": "A bank pre-approval forces the dealer to compete on price alone and gives you a rate floor."}, "priority": "normal"},
-  {"type": "checklist", "title": "Research Checklist", "content": {"items": [{"label": "Get pre-approved financing", "done": false}, {"label": "Check KBB/Edmunds fair purchase price", "done": false}]}, "priority": "normal"}
-]
+your_leverage
+- Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting point"]}
 
-Active negotiation at dealership:
-[
-  {"type": "warning", "title": "Monthly Payment Misdirection", "content": {"severity": "warning", "message": "Dealer switched from total price to monthly payment. They may be stretching the term to hide the real cost.", "action": "Redirect: 'What's the out-the-door price? I'll worry about monthly later.'"}, "priority": "critical"},
-  {"type": "briefing", "title": "Hold at $28,500", "content": {"body": "Their counter of $30,200 is $1,700 above your target. You have leverage — the car has been listed 45 days."}, "priority": "high"},
-  {"type": "numbers", "title": "Price Gap", "content": {"rows": [{"label": "Your Offer", "value": "$28,500", "highlight": "good"}, {"label": "Their Counter", "value": "$30,200", "highlight": "bad"}, {"label": "Gap", "value": "$1,700", "highlight": "bad"}]}, "priority": "high"}
-]
+success
+- Use for: a meaningful win or milestone.
+- Schema: {"body": "A measurable win. Supports **markdown**.", "headline": "Optional short line", "amount": "$2,400", "detail": "Optional detail"}
 
-DON'T DO THIS:
-- {"type": "warning", "title": "Price Negotiation in Progress"} — This is a status update, not a warning. Use briefing.
-- {"type": "briefing", "priority": "critical"} — Critical on a briefing renders as blue (same as high), not red. If you need red, use warning.
-- {"type": "warning", "title": "Next Steps"} — Next steps are advice, not a problem. Use briefing or tip.
+savings_so_far
+- Use only when the savings are real and grounded in actual deal numbers.
+- Schema: {"body": "A measurable win. Supports **markdown**.", "headline": "Optional short line", "amount": "$2,400", "detail": "Optional detail"}
 
-NEGOTIATION CONTEXT:
-If the deal state contains a "negotiation_context" object, it represents the AI advisor's maintained understanding of the buyer's current situation. This context PERSISTS across conversation turns — it is the ground truth for where things stand.
+NEGOTIATION CONTEXT RULES:
+If negotiation_context exists, it is the strongest source of truth.
+- Use key_numbers to drive the Numbers card.
+- Use scripts to strengthen next_best_move when exact wording matters.
+- Use pending_actions to drive what_still_needs_confirming or checklist.
+- Use leverage to drive your_leverage.
+- The situation field should strongly influence dealer_read or next_best_move.
 
-CRITICAL: Your cards must ALWAYS reflect the negotiation context when present:
-- The briefing card should reflect the "situation" field — what is happening right now
-- If "scripts" are present, include a dedicated briefing card (title: the script label) with the script text in a blockquote-style body. Scripts are word-for-word things the buyer should say.
-- If "pending_actions" are present, include them as a checklist card
-- If "key_numbers" are present, use them to build the numbers card (they represent what matters NOW, not all deal numbers)
-- If "leverage" points are present, include a tip card surfacing the buyer's advantages
+PHASE GUIDANCE:
+- Research: vehicle, numbers, checklist, notes.
+- Negotiation: numbers, what_changed, warning, next_best_move, your_leverage, notes.
+- F&I: numbers, warning, if_you_say_yes, what_still_needs_confirming, notes.
+- Closing: numbers, what_still_needs_confirming, notes, savings_so_far, success.
 
-The negotiation context takes PRECEDENCE over your own interpretation of the truncated conversation. Do NOT generate cards that ignore or contradict it. If the context says the buyer is waiting for a callback with specific scripts, those scripts MUST appear in the panel even if the latest message was about something else.
+INCLUSION RULES:
+- Include a vehicle card when a specific vehicle has been identified and it adds context.
+- Include a numbers card when meaningful financial data exists.
+- Include what_changed only for real deltas.
+- Include notes only when there are durable facts worth preserving.
+- Include savings_so_far only when the savings are real and grounded.
+- Use at most one of dealer_read or next_best_move unless both are clearly needed.
+- Do not create cards that only restate each other in different words.
 
-RULES:
-- ALWAYS include a vehicle card if a vehicle has been identified
-- ALWAYS include a briefing card with your current assessment
-- Include numbers when financial data exists
-- Body text: 1-2 sentences max. The chat has the detail.
-- Order: warnings > success > briefings > numbers > comparison > vehicle > tips > checklist
-- Do NOT repeat the chat response — supplement with structured data
-- Checklist items MUST have text labels
+ORDER:
+- warning / if_you_say_yes
+- numbers / what_changed
+- dealer_read / next_best_move / your_leverage
+- notes
+- trade_off / comparison
+- vehicle
+- what_still_needs_confirming / checklist
+- savings_so_far / success
 
-Return ONLY the JSON array, no other text."""
+Return ONLY the JSON array."""
 
 
 async def generate_ai_panel_cards(
@@ -415,13 +438,17 @@ async def stream_ai_panel_cards_with_usage(
     client = create_anthropic_client()
     usage_summary = empty_usage_summary()
 
-    state_json = json.dumps(deal_state_dict, indent=2, default=str)
+    prompt_deal_state = build_prompt_deal_state(deal_state_dict) or {}
     conversation_context = _build_conversation_context(
         messages,
         assistant_text,
-        recent_count=PANEL_RECENT_MESSAGES,
         msg_truncation=PANEL_MESSAGE_TRUNCATION,
-        assistant_truncation=PANEL_ASSISTANT_TRUNCATION,
+        include_assistant=False,
+    )
+    panel_messages = _build_panel_request_messages(
+        prompt_deal_state=prompt_deal_state,
+        conversation_context=conversation_context,
+        assistant_text=assistant_text,
     )
 
     current_max_tokens = PANEL_GENERATOR_MAX_TOKENS
@@ -435,31 +462,14 @@ async def stream_ai_panel_cards_with_usage(
 
         parser = _JsonArrayObjectStreamParser()
         emitted_this_attempt = 0
+        streamed_text_chunks: list[str] = []
 
         try:
             started_at = time.monotonic()
             stream_call = client.messages.stream(
                 model=settings.CLAUDE_MODEL,
                 max_tokens=current_max_tokens,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": GENERATE_AI_PANEL_PROMPT,
-                                "cache_control": {"type": "ephemeral"},
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"Deal state:\n```json\n{state_json}\n```\n\n"
-                                    f"Recent conversation:\n{conversation_context}"
-                                ),
-                            },
-                        ],
-                    }
-                ],
+                messages=cast(Any, panel_messages),
             )
             if hasattr(stream_call, "__await__"):
                 stream_call = await stream_call
@@ -473,8 +483,9 @@ async def stream_ai_panel_cards_with_usage(
                         text_chunk = getattr(event.delta, "text", None)
                         if not isinstance(text_chunk, str):
                             continue
+                        streamed_text_chunks.append(text_chunk)
                         for raw_card in parser.feed(text_chunk):
-                            validated = _validate_panel_card(raw_card)
+                            validated = normalize_panel_card(raw_card)
                             if not validated:
                                 continue
                             cards.append(validated)
@@ -537,6 +548,16 @@ async def stream_ai_panel_cards_with_usage(
                     emitted_this_attempt,
                 )
 
+            final_cards = _extract_cards_from_text("".join(streamed_text_chunks))
+            if final_cards:
+                if final_cards != cards:
+                    logger.info(
+                        "AI panel reconciliation adjusted final cards from %d streamed to %d canonical",
+                        len(cards),
+                        len(final_cards),
+                    )
+                cards = final_cards
+
             break
 
         except Exception:
@@ -546,32 +567,14 @@ async def stream_ai_panel_cards_with_usage(
                     emitted_this_attempt,
                 )
                 break
-            # Gracefully fall back when streaming is unavailable or fails.
+
             try:
                 started_at = time.monotonic()
                 response = await _create_panel_message_with_retry(
                     client,
                     model=settings.CLAUDE_MODEL,
                     max_tokens=current_max_tokens,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": GENERATE_AI_PANEL_PROMPT,
-                                    "cache_control": {"type": "ephemeral"},
-                                },
-                                {
-                                    "type": "text",
-                                    "text": (
-                                        f"Deal state:\n```json\n{state_json}\n```\n\n"
-                                        f"Recent conversation:\n{conversation_context}"
-                                    ),
-                                },
-                            ],
-                        }
-                    ],
+                    messages=panel_messages,
                 )
 
                 request_summary = summarize_usage(response.usage)
@@ -621,10 +624,20 @@ async def stream_ai_panel_cards_with_usage(
                     )
                     return
 
+    canonical_cards = canonicalize_panel_cards(cards, max_cards=PANEL_MAX_CARDS)
+    if canonical_cards != cards:
+        logger.info(
+            "AI panel canonicalization adjusted final cards from %d to %d: %s",
+            len(cards),
+            len(canonical_cards),
+            [card["kind"] for card in canonical_cards],
+        )
+        cards = canonical_cards
+
     logger.info(
         "AI panel streamed %d cards: %s",
         len(cards),
-        [c["type"] for c in cards],
+        [card["kind"] for card in cards],
     )
     yield PanelStreamEvent(
         type="panel_done",

@@ -30,6 +30,7 @@ from app.schemas.deal import (
     VehicleResponse,
     VehicleUpsertFromVinRequest,
 )
+from app.schemas.panel_cards import AiPanelCardResponse
 from app.services.deal_analysis import analyze_deal
 from app.services.deal_state import (
     DEAL_NUMBER_FIELDS,
@@ -38,12 +39,14 @@ from app.services.deal_state import (
     deal_state_to_dict,
 )
 from app.services.panel import generate_ai_panel_cards
+from app.services.panel_cards import sanitize_panel_cards
 from app.services.post_chat_processing import _get_primary_vehicle
 from app.services.title_generator import build_vehicle_title
 from app.services.usage_tracking import SessionUsageSummary
 from app.services.vehicle_intelligence import (
     ProviderConfigurationError,
     VehicleIntelligenceError,
+    apply_confirmed_decode_to_vehicle,
     build_vehicle_intelligence_response,
     check_history,
     decode_vin,
@@ -187,7 +190,10 @@ async def get_deal_state(
         information_gaps=deal_state.information_gaps or [],
         checklist=checklist,
         timer_started_at=deal_state.timer_started_at,
-        ai_panel_cards=deal_state.ai_panel_cards or [],
+        ai_panel_cards=[
+            AiPanelCardResponse.model_validate(card)
+            for card in sanitize_panel_cards(deal_state.ai_panel_cards)
+        ],
         deal_comparison=deal_state.deal_comparison,
         negotiation_context=deal_state.negotiation_context,
         updated_at=deal_state.updated_at,
@@ -524,17 +530,31 @@ async def confirm_vehicle_identity(
     session, deal_state = await _get_deal_state_or_404(session_id, user, db)
     vehicle = await _get_vehicle_or_404(session_id, vehicle_id, db)
 
-    if body.status == IdentityConfirmationStatus.CONFIRMED:
-        vehicle.identity_confirmation_status = IdentityConfirmationStatus.CONFIRMED
-        vehicle.identity_confirmed_at = datetime.now(timezone.utc)
-        vehicle.identity_confirmation_source = "user_confirmed_decode"
-    else:
-        vehicle.identity_confirmation_status = IdentityConfirmationStatus.REJECTED
-        vehicle.identity_confirmed_at = None
-        vehicle.identity_confirmation_source = None
+    try:
+        if body.status == IdentityConfirmationStatus.CONFIRMED:
+            vehicle.identity_confirmation_status = IdentityConfirmationStatus.CONFIRMED
+            vehicle.identity_confirmed_at = datetime.now(timezone.utc)
+            vehicle.identity_confirmation_source = "user_confirmed_decode"
+            await apply_confirmed_decode_to_vehicle(vehicle, db)
+        else:
+            vehicle.identity_confirmation_status = IdentityConfirmationStatus.REJECTED
+            vehicle.identity_confirmed_at = None
+            vehicle.identity_confirmation_source = None
 
-    await _refresh_after_identity_resolution(session, deal_state, db)
-    await db.commit()
+        await _refresh_after_identity_resolution(session, deal_state, db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "vehicle_intelligence.confirm_identity.failed session_id=%s vehicle_id=%s",
+            session_id,
+            vehicle_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to confirm vehicle identity",
+        ) from None
+
     await db.refresh(vehicle)
     return await _serialize_vehicle(vehicle, db)
 

@@ -26,10 +26,10 @@ export function setAuthToken(token: string | null) {
 }
 
 function headers(json = true): Record<string, string> {
-  const h: Record<string, string> = {}
-  if (json) h['Content-Type'] = 'application/json'
-  if (authToken) h['Authorization'] = `Bearer ${authToken}`
-  return h
+  const requestHeaders: Record<string, string> = {}
+  if (json) requestHeaders['Content-Type'] = 'application/json'
+  if (authToken) requestHeaders['Authorization'] = `Bearer ${authToken}`
+  return requestHeaders
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -44,32 +44,32 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json()
 }
 
-function mapDealSummary(ds: any): import('./types').DealSummary | null {
-  if (!ds) return null
+function mapDealSummary(rawSummary: any): import('./types').DealSummary | null {
+  if (!rawSummary) return null
   return {
-    phase: ds.phase ?? null,
-    vehicleYear: ds.vehicle_year ?? null,
-    vehicleMake: ds.vehicle_make ?? null,
-    vehicleModel: ds.vehicle_model ?? null,
-    vehicleTrim: ds.vehicle_trim ?? null,
-    currentOffer: ds.current_offer ?? null,
-    listingPrice: ds.listing_price ?? null,
-    scoreOverall: ds.score_overall ?? null,
-    dealCount: ds.deal_count ?? 0,
+    phase: rawSummary.phase ?? null,
+    vehicleYear: rawSummary.vehicle_year ?? null,
+    vehicleMake: rawSummary.vehicle_make ?? null,
+    vehicleModel: rawSummary.vehicle_model ?? null,
+    vehicleTrim: rawSummary.vehicle_trim ?? null,
+    currentOffer: rawSummary.current_offer ?? null,
+    listingPrice: rawSummary.listing_price ?? null,
+    scoreOverall: rawSummary.score_overall ?? null,
+    dealCount: rawSummary.deal_count ?? 0,
   }
 }
 
-function mapSession(s: any): Session {
+function mapSession(rawSession: any): Session {
   return {
-    id: s.id,
-    title: s.title,
-    sessionType: s.session_type,
-    linkedSessionIds: s.linked_session_ids || [],
-    lastMessagePreview: s.last_message_preview || '',
-    usage: s.usage ? mapSessionUsage(s.usage) : undefined,
-    dealSummary: mapDealSummary(s.deal_summary),
-    updatedAt: s.updated_at,
-    createdAt: s.created_at,
+    id: rawSession.id,
+    title: rawSession.title,
+    sessionType: rawSession.session_type,
+    linkedSessionIds: rawSession.linked_session_ids || [],
+    lastMessagePreview: rawSession.last_message_preview || '',
+    usage: rawSession.usage ? mapSessionUsage(rawSession.usage) : undefined,
+    dealSummary: mapDealSummary(rawSession.deal_summary),
+    updatedAt: rawSession.updated_at,
+    createdAt: rawSession.created_at,
   }
 }
 
@@ -118,22 +118,24 @@ function mergeMessageUsage(
 }
 
 /** Map a single vehicle from backend snake_case to frontend Vehicle type. */
-function mapVehicle(v: any): import('./types').Vehicle {
+function mapVehicle(rawVehicle: any): import('./types').Vehicle {
   return {
-    id: v.id,
-    role: v.role,
-    year: v.year,
-    make: v.make,
-    model: v.model,
-    trim: v.trim ?? undefined,
-    vin: v.vin ?? undefined,
-    mileage: v.mileage ?? undefined,
-    color: v.color ?? undefined,
-    engine: v.engine ?? undefined,
-    identityConfirmationStatus: v.identity_confirmation_status ?? 'unconfirmed',
-    identityConfirmedAt: v.identity_confirmed_at ?? null,
-    identityConfirmationSource: v.identity_confirmation_source ?? null,
-    intelligence: v.intelligence ? mapVehicleIntelligence(v.intelligence) : null,
+    id: rawVehicle.id,
+    role: rawVehicle.role,
+    year: rawVehicle.year,
+    make: rawVehicle.make,
+    model: rawVehicle.model,
+    trim: rawVehicle.trim ?? undefined,
+    cabStyle: rawVehicle.cab_style ?? undefined,
+    bedLength: rawVehicle.bed_length ?? undefined,
+    vin: rawVehicle.vin ?? undefined,
+    mileage: rawVehicle.mileage ?? undefined,
+    color: rawVehicle.color ?? undefined,
+    engine: rawVehicle.engine ?? undefined,
+    identityConfirmationStatus: rawVehicle.identity_confirmation_status ?? 'unconfirmed',
+    identityConfirmedAt: rawVehicle.identity_confirmed_at ?? null,
+    identityConfirmationSource: rawVehicle.identity_confirmation_source ?? null,
+    intelligence: rawVehicle.intelligence ? mapVehicleIntelligence(rawVehicle.intelligence) : null,
   }
 }
 
@@ -210,80 +212,109 @@ function mapVehicleIntelligence(value: any): import('./types').VehicleIntelligen
 }
 
 /** Map a single deal from backend flat fields to frontend Deal type. */
-function mapDeal(d: any): import('./types').Deal {
+function mapDeal(rawDeal: any): import('./types').Deal {
   return {
-    id: d.id,
-    vehicleId: d.vehicle_id,
-    dealerName: d.dealer_name ?? null,
-    phase: d.phase,
+    id: rawDeal.id,
+    vehicleId: rawDeal.vehicle_id,
+    dealerName: rawDeal.dealer_name ?? null,
+    phase: rawDeal.phase,
     numbers: {
-      msrp: d.msrp,
-      invoicePrice: d.invoice_price,
-      listingPrice: d.listing_price,
-      yourTarget: d.your_target,
-      walkAwayPrice: d.walk_away_price,
-      currentOffer: d.current_offer,
-      monthlyPayment: d.monthly_payment,
-      apr: d.apr,
-      loanTermMonths: d.loan_term_months,
-      downPayment: d.down_payment,
-      tradeInValue: d.trade_in_value,
+      msrp: rawDeal.msrp,
+      invoicePrice: rawDeal.invoice_price,
+      listingPrice: rawDeal.listing_price,
+      yourTarget: rawDeal.your_target,
+      walkAwayPrice: rawDeal.walk_away_price,
+      currentOffer: rawDeal.current_offer,
+      monthlyPayment: rawDeal.monthly_payment,
+      apr: rawDeal.apr,
+      loanTermMonths: rawDeal.loan_term_months,
+      downPayment: rawDeal.down_payment,
+      tradeInValue: rawDeal.trade_in_value,
     },
     scorecard: {
-      price: d.score_price,
-      financing: d.score_financing,
-      tradeIn: d.score_trade_in,
-      fees: d.score_fees,
-      overall: d.score_overall,
+      price: rawDeal.score_price,
+      financing: rawDeal.score_financing,
+      tradeIn: rawDeal.score_trade_in,
+      fees: rawDeal.score_fees,
+      overall: rawDeal.score_overall,
     },
-    health: d.health_status
+    health: rawDeal.health_status
       ? {
-          status: d.health_status,
-          summary: d.health_summary ?? '',
-          recommendation: d.recommendation ?? null,
+          status: rawDeal.health_status,
+          summary: rawDeal.health_summary ?? '',
+          recommendation: rawDeal.recommendation ?? null,
         }
       : null,
-    redFlags: (d.red_flags ?? []).map((f: any) => ({
-      id: f.id,
-      severity: f.severity,
-      message: f.message,
+    redFlags: (rawDeal.red_flags ?? []).map((redFlag: any) => ({
+      id: redFlag.id,
+      severity: redFlag.severity,
+      message: redFlag.message,
     })),
-    informationGaps: (d.information_gaps ?? []).map((g: any) => ({
-      label: g.label,
-      reason: g.reason,
-      priority: g.priority,
+    informationGaps: (rawDeal.information_gaps ?? []).map((gap: any) => ({
+      label: gap.label,
+      reason: gap.reason,
+      priority: gap.priority,
     })),
-    firstOffer: d.first_offer ?? null,
-    preFiPrice: d.pre_fi_price ?? null,
-    savingsEstimate: d.savings_estimate ?? null,
+    firstOffer: rawDeal.first_offer ?? null,
+    preFiPrice: rawDeal.pre_fi_price ?? null,
+    savingsEstimate: rawDeal.savings_estimate ?? null,
   }
 }
 
 /** Map an AI panel card from backend snake_case to frontend AiPanelCard type. */
-function mapAiPanelCard(c: any): import('./types').AiPanelCard {
+function mapAiPanelCardContent(
+  template: import('./types').AiCardTemplate,
+  content: any
+): Record<string, any> {
+  if (!content || typeof content !== 'object') return {}
+
+  if (template === 'comparison') {
+    const rawHighlights = Array.isArray(content.highlights) ? content.highlights : []
+    return {
+      ...content,
+      bestDealId: content.best_deal_id ?? content.bestDealId,
+      highlights: rawHighlights.map((highlight: any) => ({
+        label: highlight.label,
+        note: highlight.note ?? undefined,
+        values: (Array.isArray(highlight?.values) ? highlight.values : []).map((value: any) => ({
+          dealId: value.deal_id ?? value.dealId,
+          value: value.value,
+          isWinner: value.is_winner ?? value.isWinner ?? false,
+        })),
+      })),
+    }
+  }
+
+  return content
+}
+
+function mapAiPanelCard(rawCard: any): import('./types').AiPanelCard {
+  const kind = rawCard.kind as import('./types').AiCardKind
+  const template = rawCard.template as import('./types').AiCardTemplate
   return {
-    type: c.type,
-    title: c.title,
-    content: c.content ?? {},
-    priority: c.priority,
+    kind,
+    template,
+    title: rawCard.title,
+    content: mapAiPanelCardContent(template, rawCard.content),
+    priority: rawCard.priority,
   }
 }
 
 /** Map a deal comparison from backend to frontend DealComparison type. */
-function mapDealComparison(dc: any): import('./types').DealComparison | null {
-  if (!dc) return null
+function mapDealComparison(rawComparison: any): import('./types').DealComparison | null {
+  if (!rawComparison) return null
   return {
-    summary: dc.summary,
-    recommendation: dc.recommendation,
-    bestDealId: dc.best_deal_id,
-    highlights: (dc.highlights ?? []).map((h: any) => ({
-      label: h.label,
-      values: (h.values ?? []).map((v: any) => ({
-        dealId: v.deal_id,
-        value: v.value,
-        isWinner: v.is_winner,
+    summary: rawComparison.summary,
+    recommendation: rawComparison.recommendation,
+    bestDealId: rawComparison.best_deal_id,
+    highlights: (rawComparison.highlights ?? []).map((highlight: any) => ({
+      label: highlight.label,
+      values: (highlight.values ?? []).map((comparisonValue: any) => ({
+        dealId: comparisonValue.deal_id,
+        value: comparisonValue.value,
+        isWinner: comparisonValue.is_winner,
       })),
-      note: h.note ?? undefined,
+      note: highlight.note ?? undefined,
     })),
   }
 }
@@ -295,6 +326,8 @@ const VEHICLE_FIELD_MAP: Record<string, string> = {
   make: 'make',
   model: 'model',
   trim: 'trim',
+  cabStyle: 'cab_style',
+  bedLength: 'bed_length',
   vin: 'vin',
   mileage: 'mileage',
   color: 'color',
@@ -374,11 +407,11 @@ class ApiClient implements ApiService {
   ): Promise<Session> {
     const body: Record<string, string | undefined> = { session_type: type, title }
     if (buyerContext) body.buyer_context = buyerContext
-    const s = await request<any>('/sessions', {
+    const sessionResponse = await request<any>('/sessions', {
       method: 'POST',
       body: JSON.stringify(body),
     })
-    return mapSession(s)
+    return mapSession(sessionResponse)
   }
 
   async linkSessions(sessionId: string, linkedIds: string[]): Promise<void> {
@@ -426,7 +459,9 @@ class ApiClient implements ApiService {
     onToolResult?: (toolCall: ToolCall) => void,
     onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
-    onStep?: (data: { step: number }) => void
+    onStep?: (data: { step: number }) => void,
+    onPanelStarted?: () => void,
+    onPanelFinished?: () => void
   ): Promise<Message> {
     // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
     // is buffered by React Native's polyfill and doesn't deliver chunks live.
@@ -447,6 +482,12 @@ class ApiClient implements ApiService {
       let sseError: string | null = null
       let panelStreamActive = false
       const streamedPanelCards: unknown[] = []
+
+      const finishPanelStream = () => {
+        if (!panelStreamActive) return
+        panelStreamActive = false
+        onPanelFinished?.()
+      }
 
       xhr.onprogress = () => {
         const newData = xhr.responseText.slice(processed)
@@ -489,6 +530,7 @@ class ApiClient implements ApiService {
               console.debug('[apiClient] panel stream started', data)
               panelStreamActive = true
               streamedPanelCards.length = 0
+              onPanelStarted?.()
             } else if (eventType === 'panel_card' && data.card) {
               if (!panelStreamActive) {
                 panelStreamActive = true
@@ -509,7 +551,7 @@ class ApiClient implements ApiService {
               if (data.usage) {
                 messageUsage = mergeMessageUsage(messageUsage, data.usage)
               }
-              panelStreamActive = false
+              finishPanelStream()
               const finalCards = (data.cards ?? []) as unknown[]
               // Always reconcile to server-final cards so empty results clear stale UI state.
               const toolCall: ToolCall = {
@@ -520,6 +562,7 @@ class ApiClient implements ApiService {
               onToolResult?.(toolCall)
             } else if (eventType === 'panel_error') {
               console.warn('[apiClient] panel stream error:', data.message ?? data)
+              finishPanelStream()
             } else if (eventType === 'error') {
               console.error('[apiClient] SSE error event:', data.message ?? data)
               sseError = data.message ?? 'An error occurred'
@@ -540,7 +583,11 @@ class ApiClient implements ApiService {
               onToolResult?.(toolCall)
             }
           } catch (e) {
-            console.debug('[apiClient] Skipping malformed SSE data:', dataStr, e)
+            console.debug(
+              '[apiClient] Skipping malformed SSE data',
+              eventType || 'unknown_event',
+              e instanceof Error ? e.message : e
+            )
           }
         }
       }
@@ -550,8 +597,13 @@ class ApiClient implements ApiService {
           // Process any remaining data not caught by onprogress
           xhr.onprogress?.(null as any)
           if (sseError) {
+            finishPanelStream()
             reject(new Error(sseError))
             return
+          }
+          if (panelStreamActive) {
+            console.warn('[apiClient] panel stream ended without terminal event')
+            finishPanelStream()
           }
           resolve({
             id: Math.random().toString(36).substring(2),
@@ -563,12 +615,19 @@ class ApiClient implements ApiService {
             createdAt: new Date().toISOString(),
           })
         } else {
+          finishPanelStream()
           reject(new Error(`Chat API ${xhr.status}`))
         }
       }
 
-      xhr.onerror = () => reject(new Error('Network error'))
-      xhr.ontimeout = () => reject(new Error('Request timed out'))
+      xhr.onerror = () => {
+        finishPanelStream()
+        reject(new Error('Network error'))
+      }
+      xhr.ontimeout = () => {
+        finishPanelStream()
+        reject(new Error('Request timed out'))
+      }
       xhr.send(JSON.stringify({ content, image_url: imageUri }))
     })
   }
@@ -576,29 +635,29 @@ class ApiClient implements ApiService {
   // ─── Deal State ───
 
   async getDealState(sessionId: string): Promise<DealState> {
-    const ds = await request<any>(`/deal/${sessionId}`)
+    const dealStateResponse = await request<any>(`/deal/${sessionId}`)
     return {
-      sessionId: ds.session_id,
-      buyerContext: ds.buyer_context || DEFAULT_BUYER_CONTEXT,
-      activeDealId: ds.active_deal_id ?? null,
-      vehicles: (ds.vehicles ?? []).map(mapVehicle),
-      deals: (ds.deals ?? []).map(mapDeal),
-      redFlags: (ds.red_flags ?? []).map((f: any) => ({
-        id: f.id,
-        severity: f.severity,
-        message: f.message,
+      sessionId: dealStateResponse.session_id,
+      buyerContext: dealStateResponse.buyer_context || DEFAULT_BUYER_CONTEXT,
+      activeDealId: dealStateResponse.active_deal_id ?? null,
+      vehicles: (dealStateResponse.vehicles ?? []).map(mapVehicle),
+      deals: (dealStateResponse.deals ?? []).map(mapDeal),
+      redFlags: (dealStateResponse.red_flags ?? []).map((redFlag: any) => ({
+        id: redFlag.id,
+        severity: redFlag.severity,
+        message: redFlag.message,
       })),
-      informationGaps: (ds.information_gaps ?? []).map((g: any) => ({
-        label: g.label,
-        reason: g.reason,
-        priority: g.priority,
+      informationGaps: (dealStateResponse.information_gaps ?? []).map((gap: any) => ({
+        label: gap.label,
+        reason: gap.reason,
+        priority: gap.priority,
       })),
-      checklist: ds.checklist || [],
-      timerStartedAt: ds.timer_started_at ?? null,
-      aiPanelCards: (ds.ai_panel_cards ?? []).map(mapAiPanelCard),
-      dealComparison: mapDealComparison(ds.deal_comparison),
-      negotiationContext: ds.negotiation_context
-        ? (snakeToCamel(ds.negotiation_context) as DealState['negotiationContext'])
+      checklist: dealStateResponse.checklist || [],
+      timerStartedAt: dealStateResponse.timer_started_at ?? null,
+      aiPanelCards: (dealStateResponse.ai_panel_cards ?? []).map(mapAiPanelCard),
+      dealComparison: mapDealComparison(dealStateResponse.deal_comparison),
+      negotiationContext: dealStateResponse.negotiation_context
+        ? (snakeToCamel(dealStateResponse.negotiation_context) as DealState['negotiationContext'])
         : null,
     }
   }
@@ -642,10 +701,10 @@ class ApiClient implements ApiService {
       healthStatus: res.health_status ?? null,
       healthSummary: res.health_summary ?? null,
       recommendation: res.recommendation ?? null,
-      redFlags: (res.red_flags ?? []).map((f: any) => ({
-        id: f.id,
-        severity: f.severity,
-        message: f.message,
+      redFlags: (res.red_flags ?? []).map((redFlag: any) => ({
+        id: redFlag.id,
+        severity: redFlag.severity,
+        message: redFlag.message,
       })),
     }
   }

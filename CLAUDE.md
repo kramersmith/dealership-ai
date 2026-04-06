@@ -35,6 +35,7 @@ All commands run from the repo root via Make. The Makefile auto-detects the `.ve
 - `make test-backend` — Run all backend tests
 - `make test-backend-specific TEST='tests/test_auth.py::test_signup'` — Single test
 - `make test-backend-watch` — Watch mode
+- `cd apps/mobile && npm test` — Run the focused mobile Vitest suite
 
 ### Linting / Formatting / Type Checking
 - `make lint-backend` / `make format-backend` — Ruff
@@ -68,7 +69,7 @@ Key patterns:
 - After the step loop, a separate panel streaming phase (`stream_ai_panel_cards_with_usage()` in `panel.py`) emits `panel_started` / `panel_card` / `panel_done` / `panel_error` SSE events while preserving chat-first latency (the `done` text event is emitted before panel generation starts). Panel usage is merged into the persisted assistant turn summary.
 - Standalone deal analysis (`analyze_deal()` in `deal_analysis.py`) provides on-demand deal re-assessment outside the chat loop
 - Chat endpoint streams SSE events: `text` (conversation chunks), `tool_result` (deal state updates from step-loop tool execution), `retry` / `step` (recovery and multi-step progress), `done` (final chat text + text-phase usage), and panel lifecycle events (`panel_started`, `panel_card`, `panel_done`, `panel_error`) for asynchronous insights updates.
-- Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, NegotiationStance, AiCardType, AiCardPriority, IdentityConfirmationStatus, IntelligenceProvider, IntelligenceStatus (all `StrEnum`)
+- Backend enums (`app/models/enums.py`): UserRole, SessionType, MessageRole, DealPhase, ScoreStatus, BuyerContext, HealthStatus, RedFlagSeverity, GapPriority, VehicleRole, Difficulty, NegotiationStance, AiCardTemplate, AiCardKind, AiCardPriority, IdentityConfirmationStatus, IntelligenceProvider, IntelligenceStatus (all `StrEnum`)
 - Lifespan handler (not `on_event`) creates tables and seeds dev users on startup
 - Seed users in development: `buyer@test.com` and `dealer@test.com` (password: `password`)
 - Async SQLAlchemy (`AsyncSession`, `async_sessionmaker`, `create_async_engine`) for all application DB access. Sync engine retained only for DDL (`create_all`) at startup and Alembic migrations. SQLite uses `aiosqlite` driver; PostgreSQL uses `psycopg` async mode. All service functions and route handlers are `async def`. Session factory: `AsyncSessionLocal` in `app/db/session.py`. DB queries use `select()` / `await db.execute()` pattern (not legacy `db.query()`).
@@ -88,7 +89,7 @@ React Native + Expo + Tamagui + Zustand:
 Key patterns:
 - ContextPicker component (`components/chat/ContextPicker.tsx`, renamed from WelcomePrompts) shows 3 situation cards when starting a new buyer chat session; user can skip by typing directly. Also supports a VIN submit flow for quick vehicle identification.
 - Buyer context (researching, reviewing_deal, at_dealership) drives static fallback quick actions, system prompt preamble, and hardcoded greeting messages
-- InsightsPanel renders AI-generated cards (`ai_panel_cards` on deal state) with card types: briefing, numbers, vehicle, warning, tip, checklist, success, comparison — replacing the previous fixed-widget tiered layout. SituationBar displays the negotiation context (stance + situation) above cards when present.
+- InsightsPanel renders AI-generated cards (`ai_panel_cards` on deal state) from the backend-owned canonical panel contract (`kind`, `template`, `title`, `content`, `priority`) — replacing the previous fixed-widget tiered layout. SituationBar displays the negotiation context (stance + situation) above cards when present.
 - Card design standardization: all cards use a shared CardTitle component (uppercase muted label, optional icon and right content). Status cards (briefing high/critical, success) use top accent bars instead of left borders.
 - Card reply system: every insight card has a MessageCircle reply icon that opens a CardReplyInput slide-in drawer; submitting sends a chat message with quoted card context (`QuotedCard` type on Message, rendered as `QuotedCardPreview` in chat bubbles). `chatStore.sendMessage` accepts an optional `quotedCard` param.
 - AiVehicleCard is an expandable container (RN primitives, Tamagui workaround) with collapsible Specs, Title Check, and Market Value sections powered by vehicle intelligence data. Shows a VIN prompt when no VIN is available. Uses contextual title labels based on buyer situation. Vehicle identity confirmation flow (confirmed/rejected status) triggers panel card refresh and title update.

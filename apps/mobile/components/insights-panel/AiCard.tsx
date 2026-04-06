@@ -10,6 +10,7 @@ import { AiVehicleCard } from './AiVehicleCard'
 import { WarningCard } from './WarningCard'
 import { AiComparisonCard } from './AiComparisonCard'
 import { TipCard } from './TipCard'
+import { NotesCard } from './NotesCard'
 import { AiChecklistCard } from './AiChecklistCard'
 import { SuccessCard } from './SuccessCard'
 import { CardReplyInput } from './CardReplyInput'
@@ -25,7 +26,7 @@ interface AiCardProps {
 }
 
 function renderCardContent(card: AiPanelCard): React.ReactNode {
-  switch (card.type) {
+  switch (card.template) {
     case 'briefing':
       return <BriefingCard title={card.title} content={card.content} priority={card.priority} />
     case 'numbers':
@@ -38,6 +39,8 @@ function renderCardContent(card: AiPanelCard): React.ReactNode {
       return <AiComparisonCard title={card.title} content={card.content} />
     case 'tip':
       return <TipCard title={card.title} content={card.content} />
+    case 'notes':
+      return <NotesCard title={card.title} content={card.content} />
     case 'checklist':
       return <AiChecklistCard title={card.title} content={card.content} />
     case 'success':
@@ -106,6 +109,9 @@ export function AiCard({ card, onSendReply }: AiCardProps) {
           <TouchableOpacity
             onPress={toggleReply}
             activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel={replyOpen ? 'Close card reply' : 'Reply to insight card'}
+            accessibilityState={{ expanded: replyOpen }}
             style={{
               position: 'absolute',
               top: 4,

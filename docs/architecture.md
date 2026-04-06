@@ -73,13 +73,14 @@ dealership-ai/
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
 │       │       ├── claude.py    # Chat step loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, temporal grounding
-│       │       ├── panel.py     # AI panel card generation (generate_ai_panel_cards), conversation context, panel prompt, card validation
+│       │       ├── panel.py     # AI panel card generation (generate_ai_panel_cards), conversation context, panel prompt, streaming, typed card normalization
+│       │       ├── panel_cards.py # Canonical panel card kinds, render templates, titles, and payload validation
 │       │       ├── deal_analysis.py # Standalone deal analysis (analyze_deal), analyst tool definition
 │       │       ├── deal_state.py # Deal state business logic (apply_extraction, deal_state_to_dict, build_deal_assessment_dict)
 │       │       ├── turn_context.py  # TurnContext dataclass — unified execution context for step loop + tool execution
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
-│       │       ├── vehicle_intelligence.py  # NHTSA vPIC VIN decode, VinAudit history/valuation
+│       │       ├── vehicle_intelligence.py  # NHTSA vPIC VIN decode, VinAudit history/valuation, confirmation-gated decode promotion
 │       │       └── simulation.py # Dealer training AI logic
 │       ├── alembic/             # DB migrations
 │       └── tests/               # Including test_seed.py, test_sessions.py
@@ -98,7 +99,7 @@ dealership-ai/
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, created_at)
 
-**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
+**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, cab_style, bed_length, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in. Canonical identity fields remain user-stated or user-confirmed; VIN decode records stay in `vehicle_decodes` until explicit confirmation promotes them into the main row. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
 
 **vehicle_decodes** — (id, vehicle_id, provider [IntelligenceProvider], status [IntelligenceStatus], vin, year, make, model, trim, engine, body_type, drivetrain, transmission, fuel_type, source_summary, raw_payload JSON, requested_at, fetched_at, expires_at). NHTSA vPIC decode results; raw_payload exposed to LLM context.
 
@@ -149,7 +150,8 @@ All domain values use Python `StrEnum` for type safety:
 | `VehicleRole` | `primary`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 | `NegotiationStance` | `researching`, `preparing`, `engaging`, `negotiating`, `holding`, `walking`, `waiting`, `financing`, `closing`, `post_purchase` |
-| `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
+| `AiCardTemplate` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `notes`, `checklist`, `success`, `comparison` |
+| `AiCardKind` | `vehicle`, `numbers`, `warning`, `notes`, `comparison`, `checklist`, `success`, `what_changed`, `what_still_needs_confirming`, `dealer_read`, `your_leverage`, `next_best_move`, `if_you_say_yes`, `trade_off`, `savings_so_far` |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 | `IdentityConfirmationStatus` | `unconfirmed`, `confirmed`, `rejected` |
 | `IntelligenceProvider` | `nhtsa_vpic`, `vinaudit` |

@@ -1,14 +1,6 @@
 [
   {
     "content": {
-      "body": "Their counter is still above your target. Hold your number and push for the out-the-door total."
-    },
-    "priority": "high",
-    "title": "Stand Firm",
-    "type": "briefing"
-  },
-  {
-    "content": {
       "rows": [
         {
           "field": "your_target",
@@ -24,8 +16,18 @@
         }
       ]
     },
+    "kind": "what_changed",
     "priority": "high",
-    "title": "Price Gap",
-    "type": "numbers"
+    "template": "numbers",
+    "title": "What Changed"
+  },
+  {
+    "content": {
+      "body": "Their counter is still above your target. Hold your number and push for the out-the-door total."
+    },
+    "kind": "next_best_move",
+    "priority": "high",
+    "template": "briefing",
+    "title": "Next Best Move"
   }
 ]

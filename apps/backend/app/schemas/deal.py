@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.models.enums import IdentityConfirmationStatus
+from app.schemas.panel_cards import AiPanelCardResponse
 
 # ─── Vehicle schemas ───
 
@@ -99,6 +100,8 @@ class VehicleResponse(BaseModel):
     make: str | None = None
     model: str | None = None
     trim: str | None = None
+    cab_style: str | None = None
+    bed_length: str | None = None
     vin: str | None = None
     mileage: int | None = None
     color: str | None = None
@@ -120,6 +123,8 @@ class VehicleCorrection(BaseModel):
     make: str | None = Field(None, max_length=100)
     model: str | None = Field(None, max_length=100)
     trim: str | None = Field(None, max_length=100)
+    cab_style: str | None = Field(None, max_length=100)
+    bed_length: str | None = Field(None, max_length=100)
     vin: str | None = Field(None, max_length=17)
     mileage: int | None = None
     color: str | None = Field(None, max_length=50)
@@ -223,7 +228,7 @@ class DealStateResponse(BaseModel):
     information_gaps: list[dict] = []
     checklist: list[dict] = []
     timer_started_at: datetime | None = None
-    ai_panel_cards: list[dict] = []
+    ai_panel_cards: list[AiPanelCardResponse] = []
     deal_comparison: dict | None = None
     negotiation_context: dict | None = None
     updated_at: datetime

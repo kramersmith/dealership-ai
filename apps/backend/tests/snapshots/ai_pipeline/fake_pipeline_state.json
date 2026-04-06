@@ -45,10 +45,10 @@
   ],
   "vehicles": [
     {
-      "make": null,
-      "model": null,
+      "make": "Honda",
+      "model": "Civic",
       "role": "primary",
-      "year": null
+      "year": 2024
     }
   ]
 }

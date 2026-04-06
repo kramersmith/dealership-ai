@@ -21,12 +21,12 @@ const UPDATE_FADE_OUT_MS = 90
 const UPDATE_FADE_IN_MS = 140
 
 function stableCardSignature(card: AiPanelCard): string {
-  return `${card.type}|${card.title}|${card.priority}|${JSON.stringify(card.content ?? {})}`
+  return `${card.kind}|${card.template}|${card.title}|${card.priority}|${JSON.stringify(card.content ?? {})}`
 }
 
-function buildIdentityKey(cardType: AiPanelCard['type'], occurrence: number): string {
+function buildIdentityKey(cardKind: AiPanelCard['kind'], occurrence: number): string {
   // Identity should ignore mutable card content/title so replacements animate in-place.
-  return `${cardType}#${occurrence}`
+  return `${cardKind}#${occurrence}`
 }
 
 interface RenderCard {
@@ -51,7 +51,7 @@ function PanelHeader({ thinking }: { thinking: boolean }) {
 
 // ─── Empty State ───
 
-function EmptyState() {
+function EmptyState({ thinking }: { thinking: boolean }) {
   const opacity = useFadeIn(500)
   return (
     <Animated.View style={{ flex: 1, opacity }}>
@@ -59,10 +59,12 @@ function EmptyState() {
         <BarChart3 size={28} color="$placeholderColor" opacity={0.5} />
         <YStack gap="$1.5" alignItems="center">
           <Text fontSize={14} fontWeight="600" color="$color" textAlign="center">
-            No insights yet
+            {thinking ? 'Analyzing your deal' : 'No insights yet'}
           </Text>
           <Text fontSize={13} color="$placeholderColor" textAlign="center" lineHeight={20}>
-            Share details about your deal and your AI advisor will surface key insights here.
+            {thinking
+              ? 'Your advisor is turning this turn into updated panel cards now.'
+              : 'Share details about your deal and your AI advisor will surface key insights here.'}
           </Text>
         </YStack>
       </YStack>
@@ -210,6 +212,7 @@ export const InsightsPanel = memo(function InsightsPanel({
   const dealState = dealStateOverride ?? storeDealState
   const cards = useMemo(() => dealState?.aiPanelCards ?? [], [dealState])
   const isSending = useChatStore((s) => s.isSending)
+  const isPanelAnalyzing = useChatStore((s) => s.isPanelAnalyzing)
 
   const idCounterRef = useRef(0)
   const idByIdentityRef = useRef<Map<string, string>>(new Map())
@@ -217,32 +220,15 @@ export const InsightsPanel = memo(function InsightsPanel({
   const pendingGrowthQueueRef = useRef<string[]>([])
   const [activeGrowthCardId, setActiveGrowthCardId] = useState<string | null>(null)
 
-  // ─── Thinking indicator: stays until cards actually update ───
-  const awaitingPanelUpdate = useRef(false)
-  const thinkingCardsRef = useRef<string>('')
-
-  const cardsSignature = useMemo(() => cards.map(stableCardSignature).join('||'), [cards])
-
-  if (isSending && !awaitingPanelUpdate.current) {
-    awaitingPanelUpdate.current = true
-  }
-  if (awaitingPanelUpdate.current && cardsSignature !== thinkingCardsRef.current && !isSending) {
-    awaitingPanelUpdate.current = false
-  }
-  if (awaitingPanelUpdate.current && !isSending) {
-    awaitingPanelUpdate.current = false
-  }
-  thinkingCardsRef.current = cardsSignature
-
-  const showThinking = isSending || awaitingPanelUpdate.current
+  const showThinking = isSending || isPanelAnalyzing
 
   const renderCards = useMemo<RenderCard[]>(() => {
     const identityCounts = new Map<string, number>()
     return cards.map((card) => {
-      const base = card.type
+      const base = card.kind
       const count = (identityCounts.get(base) ?? 0) + 1
       identityCounts.set(base, count)
-      const identity = buildIdentityKey(card.type, count)
+      const identity = buildIdentityKey(card.kind, count)
 
       let id = idByIdentityRef.current.get(identity)
       if (!id) {
@@ -318,7 +304,7 @@ export const InsightsPanel = memo(function InsightsPanel({
     return (
       <YStack flex={1} paddingHorizontal="$3.5" paddingVertical="$3">
         <PanelHeader thinking={showThinking} />
-        <EmptyState />
+        <EmptyState thinking={showThinking} />
       </YStack>
     )
   }

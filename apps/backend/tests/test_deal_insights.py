@@ -158,6 +158,39 @@ async def test_apply_extraction_vehicle_updates_existing(adb):
     assert vehicle.model == "Civic"
 
 
+async def test_apply_extraction_vehicle_updates_cab_and_bed_fields(adb):
+    """Vehicle extraction stores cab and bed configuration separately from trim."""
+    user = await async_create_user(adb)
+    _, deal_state = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(
+        adb,
+        deal_state.session_id,
+        make="Ford",
+        model="F-250",
+        trim="Lariat",
+    )
+
+    applied = await apply_extraction(
+        deal_state,
+        {
+            "vehicle": {
+                "vehicle_id": vehicle.id,
+                "cab_style": "SuperCrew",
+                "bed_length": "8 ft",
+            }
+        },
+        adb,
+    )
+
+    tool_call = _find_tool(applied, "set_vehicle")
+    assert tool_call is not None
+    assert tool_call["args"]["cab_style"] == "SuperCrew"
+    assert tool_call["args"]["bed_length"] == "8 ft"
+    assert vehicle.trim == "Lariat"
+    assert vehicle.cab_style == "SuperCrew"
+    assert vehicle.bed_length == "8 ft"
+
+
 async def test_apply_extraction_vehicle_no_auto_deal_when_deals_exist(adb):
     """Vehicle extraction does not auto-create a deal when deals already exist."""
     user = await async_create_user(adb)
@@ -288,7 +321,9 @@ async def test_deal_state_to_dict_includes_vehicle_intelligence(adb):
     assert vehicle_dict["intelligence"]["history_report"]["provider"] == "vinaudit"
 
 
-async def test_deal_state_to_dict_hides_unconfirmed_decoded_identity_from_prompt(adb):
+async def test_deal_state_to_dict_keeps_user_stated_identity_but_hides_unconfirmed_decode(
+    adb,
+):
     user = await async_create_user(adb)
     session, deal_state = await async_create_session_with_deal_state(adb, user)
     vehicle = await async_create_vehicle(
@@ -317,9 +352,10 @@ async def test_deal_state_to_dict_hides_unconfirmed_decoded_identity_from_prompt
 
     result = await deal_state_to_dict(deal_state, adb)
     vehicle_dict = result["vehicles"][0]
-    assert vehicle_dict["make"] is None
-    assert vehicle_dict["model"] is None
-    assert vehicle_dict["trim"] is None
+    assert vehicle_dict["year"] == 2022
+    assert vehicle_dict["make"] == "Ford"
+    assert vehicle_dict["model"] == "F-250"
+    assert vehicle_dict["trim"] == "Lariat"
     assert vehicle_dict["intelligence"]["decode"] is None
 
 
@@ -946,6 +982,24 @@ async def test_apply_extraction_checklist(adb):
     assert deal_state.checklist == items
 
 
+async def test_apply_extraction_checklist_noop_skips_tool_call(adb):
+    """Unchanged checklist extraction does not emit a redundant tool call."""
+    user = await async_create_user(adb)
+    _, deal_state = await async_create_session_with_deal_state(adb, user)
+
+    items = [
+        {"label": "Get pre-approved", "done": False},
+        {"label": "Check credit score", "done": True},
+    ]
+    deal_state.checklist = items
+
+    applied = await apply_extraction(deal_state, {"checklist": items}, adb)
+
+    tool_call = _find_tool(applied, "update_checklist")
+    assert tool_call is None
+    assert deal_state.checklist == items
+
+
 async def test_apply_extraction_checklist_string_input(adb):
     """Checklist extraction handles a JSON string and parses it into a list."""
     import json
@@ -1020,6 +1074,29 @@ async def test_apply_extraction_scorecard(adb):
     assert deal.score_price == "green"
     assert deal.score_financing == "yellow"
     assert deal.score_overall == "green"
+
+
+async def test_apply_extraction_numbers_noop_skips_tool_call(adb):
+    """Unchanged deal numbers do not emit a redundant tool call."""
+    user = await async_create_user(adb)
+    _, deal_state = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(
+        adb, deal_state.session_id, make="Honda", model="Civic"
+    )
+    deal = await async_create_deal(adb, deal_state.session_id, vehicle.id)
+    deal_state.active_deal_id = deal.id
+    deal.listing_price = 35000
+    await adb.flush()
+
+    applied = await apply_extraction(
+        deal_state,
+        {"numbers": {"listing_price": 35000}},
+        adb,
+    )
+
+    tool_call = _find_tool(applied, "update_deal_numbers")
+    assert tool_call is None
+    assert deal.listing_price == 35000
 
 
 # ─── apply_extraction: quick_actions ───
@@ -1163,7 +1240,7 @@ async def test_deal_state_to_dict_empty(adb):
     assert result["session_red_flags"] == []
     assert result["session_information_gaps"] == []
     assert result["checklist"] == []
-    assert result["ai_panel_cards"] == []
+    assert "ai_panel_cards" not in result
 
 
 async def test_deal_state_to_dict_deal_red_flags_and_gaps(adb):
@@ -1511,7 +1588,14 @@ def test_get_deal_state_includes_vehicles_and_deals(client, db):
     session_id = deal_state.session_id
 
     vehicle = create_vehicle(
-        db, session_id, make="Honda", model="Civic", year=2024, trim="EX"
+        db,
+        session_id,
+        make="Honda",
+        model="Civic",
+        year=2024,
+        trim="EX",
+        cab_style="Crew Cab",
+        bed_length="6.5 ft",
     )
     deal = create_deal(
         db,
@@ -1546,6 +1630,8 @@ def test_get_deal_state_includes_vehicles_and_deals(client, db):
     assert len(data["vehicles"]) == 1
     assert data["vehicles"][0]["make"] == "Honda"
     assert data["vehicles"][0]["year"] == 2024
+    assert data["vehicles"][0]["cab_style"] == "Crew Cab"
+    assert data["vehicles"][0]["bed_length"] == "6.5 ft"
     assert len(data["deals"]) == 1
     d = data["deals"][0]
     assert d["current_offer"] == 28000
@@ -1580,6 +1666,87 @@ def test_get_deal_state_empty_session(client, db):
     assert data["information_gaps"] == []
     assert data["checklist"] == []
     assert data["ai_panel_cards"] == []
+
+
+def test_get_deal_state_sanitizes_canonical_panel_cards(client, db):
+    """GET /deal/{session_id} canonicalizes persisted panel cards before returning them."""
+    user, token = create_user_and_token(db)
+    _, deal_state = create_session_with_deal_state(db, user)
+    session_id = deal_state.session_id
+
+    deal_state.ai_panel_cards = [
+        {
+            "kind": "warning",
+            "template": "warning",
+            "title": "Warning",
+            "content": {"message": "Minor concern", "severity": "warning"},
+            "priority": "normal",
+        },
+        {
+            "kind": "warning",
+            "template": "warning",
+            "title": "Warning",
+            "content": {
+                "message": "APR is still far above your pre-approval.",
+                "severity": "critical",
+            },
+            "priority": "critical",
+        },
+        {
+            "kind": "numbers",
+            "template": "numbers",
+            "title": "Numbers",
+            "content": {"rows": [{"label": "Offer", "value": "$30,200"}]},
+            "priority": "high",
+        },
+        {
+            "kind": "notes",
+            "template": "notes",
+            "title": "Notes",
+            "content": {"items": ["Credit union pre-approval at 5.4%"]},
+            "priority": "normal",
+        },
+        {
+            "kind": "vehicle",
+            "template": "vehicle",
+            "title": "Vehicle",
+            "content": {"vehicle": {"year": 2022, "make": "Ford", "model": "F-250"}},
+            "priority": "normal",
+        },
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "content": {
+                "items": [{"label": "Ask for the buyer's order", "done": False}]
+            },
+            "priority": "high",
+        },
+        {
+            "kind": "unknown_kind",
+            "template": "warning",
+            "title": "Invalid",
+            "content": {"message": "ignore me", "severity": "warning"},
+            "priority": "high",
+        },
+    ]
+    db.commit()
+
+    resp = client.get(f"/api/deal/{session_id}", headers=auth_header(token))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [card["kind"] for card in data["ai_panel_cards"]] == [
+        "warning",
+        "numbers",
+        "notes",
+        "vehicle",
+        "checklist",
+    ]
+    assert data["ai_panel_cards"][0]["content"]["message"] == (
+        "APR is still far above your pre-approval."
+    )
+    assert len(data["ai_panel_cards"]) == 5
 
 
 # ─── PATCH /deal/{session_id}: error cases ───
@@ -1894,8 +2061,9 @@ def test_confirm_vehicle_identity_persists_confirmation_and_updates_title(client
         new=AsyncMock(
             return_value=[
                 {
-                    "type": "vehicle",
-                    "title": "Under Consideration",
+                    "kind": "vehicle",
+                    "template": "vehicle",
+                    "title": "Vehicle",
                     "content": {
                         "vehicle": {"year": 2022, "make": "Ford", "model": "F-250"}
                     },
@@ -1919,8 +2087,17 @@ def test_confirm_vehicle_identity_persists_confirmation_and_updates_title(client
     db.refresh(session)
     db.refresh(deal_state)
     assert vehicle.identity_confirmation_status == "confirmed"
+    assert vehicle.year == 2022
+    assert vehicle.make == "Ford"
+    assert vehicle.model == "F-250"
+    assert vehicle.trim == "Lariat"
     assert session.title == "2022 Ford F-250 Lariat"
-    assert deal_state.ai_panel_cards[0]["type"] == "vehicle"
+    assert deal_state.ai_panel_cards[0]["kind"] == "vehicle"
+    assert deal_state.ai_panel_cards[0]["template"] == "vehicle"
+    assert payload["year"] == 2022
+    assert payload["make"] == "Ford"
+    assert payload["model"] == "F-250"
+    assert payload["trim"] == "Lariat"
     assert payload["intelligence"]["decode"]["provider"] == "nhtsa_vpic"
 
 

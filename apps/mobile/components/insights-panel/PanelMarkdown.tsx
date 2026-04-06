@@ -74,5 +74,15 @@ export function PanelMarkdown({ children, fontSize = 13, color }: PanelMarkdownP
     link: { color: palette.brand, textDecorationLine: 'none' },
   })
 
-  return <Markdown style={styles}>{children}</Markdown>
+  return (
+    <Markdown
+      style={styles}
+      onLinkPress={() => false}
+      rules={{
+        image: () => null,
+      }}
+    >
+      {children}
+    </Markdown>
+  )
 }

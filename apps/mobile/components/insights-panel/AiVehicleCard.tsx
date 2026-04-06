@@ -12,7 +12,6 @@ import {
 import { useTheme } from 'tamagui'
 import { AlertTriangle, ChevronDown, Check } from '@tamagui/lucide-icons'
 import { formatMileage, formatCurrency } from '@/lib/utils'
-import { palette } from '@/lib/theme/tokens'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore, normalizeVinCandidate } from '@/stores/chatStore'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
@@ -73,6 +72,8 @@ interface VehicleContent {
     make: string
     model: string
     trim?: string
+    cab_style?: string
+    bed_length?: string
     engine?: string
     mileage?: number
     color?: string
@@ -635,9 +636,11 @@ function VinPrompt({ colors }: { colors: Colors }) {
                 accessibilityLabel="Submit VIN"
               >
                 {submitting ? (
-                  <ActivityIndicator size="small" color={palette.white} />
+                  <ActivityIndicator size="small" color={colors.inverseTextColor} />
                 ) : (
-                  <RNText style={styles.vinSubmitText}>Add</RNText>
+                  <RNText style={[styles.vinSubmitText, { color: colors.inverseTextColor }]}>
+                    Add
+                  </RNText>
                 )}
               </TouchableOpacity>
             </View>
@@ -671,6 +674,7 @@ interface Colors {
   brandColor: string
   successColor: string
   shadowColor: string
+  inverseTextColor: string
 }
 
 // ─── Main Component ───
@@ -713,6 +717,8 @@ export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
     : title
 
   const specs = [
+    vehicle.cab_style,
+    vehicle.bed_length,
     vehicle.engine,
     vehicle.mileage != null ? formatMileage(vehicle.mileage) : null,
     vehicle.color,
@@ -731,6 +737,8 @@ export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
     brandColor: theme.brand?.val as string,
     successColor: theme.positive?.val as string,
     shadowColor: theme.shadowColor?.val as string,
+    inverseTextColor: ((theme.white?.val as string | undefined) ??
+      (theme.color?.val as string | undefined)) as string,
   }
 
   const hasVin = !!vehicle.vin
@@ -1011,7 +1019,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   vinSubmitText: {
-    color: palette.white,
     fontSize: 14,
     fontWeight: '600',
   },

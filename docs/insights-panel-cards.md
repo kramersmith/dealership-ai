@@ -1,8 +1,8 @@
 # Insights Panel Card System
 
-**Last updated:** 2026-03-29
+**Last updated:** 2026-04-04
 
-This document defines the card types, priorities, and visual templates used by the AI-generated Insights Panel. The AI selects card types and priorities; the frontend renders them according to fixed visual templates described here.
+This document defines the exact card kinds, render templates, priorities, and visual rules used by the AI-generated Insights Panel. The model selects exact card kinds and priorities; the backend canonicalizes them into a typed panel-card contract; the frontend renders them with fixed templates described here.
 
 ---
 
@@ -11,7 +11,51 @@ This document defines the card types, priorities, and visual templates used by t
 1. The user chats with the AI advisor (Sonnet streams text)
 2. After the response, Haiku generates a set of panel cards based on the deal state and conversation
 3. The frontend renders each card using the templates below
-4. The AI controls **what** appears and **which template** to use — the frontend controls **how** each template looks
+4. The AI controls **which exact cards** appear
+5. The backend canonicalizes each card into `kind`, `template`, `title`, `content`, and `priority`
+6. The frontend controls **how** each template looks
+
+## Contract
+
+Each persisted panel card now has:
+
+- `kind`: the exact product-facing card identity
+- `template`: the render container used by the frontend
+- `title`: canonical title assigned by the backend
+- `content`: validated card payload
+- `priority`: `critical`, `high`, `normal`, or `low`
+
+The model no longer invents freeform titles or chooses arbitrary templates.
+
+### Exact Card Kinds
+
+- `vehicle`
+- `numbers`
+- `warning`
+- `notes`
+- `comparison`
+- `checklist`
+- `success`
+- `what_changed`
+- `what_still_needs_confirming`
+- `dealer_read`
+- `your_leverage`
+- `next_best_move`
+- `if_you_say_yes`
+- `trade_off`
+- `savings_so_far`
+
+### Render Templates
+
+- `vehicle`
+- `numbers`
+- `warning`
+- `notes`
+- `comparison`
+- `checklist`
+- `success`
+- `briefing`
+- `tip`
 
 ### Core Principles
 

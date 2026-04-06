@@ -17,6 +17,7 @@ from app.services.vehicle_intelligence import (
     _merge_decoded_fields,
     _parse_int,
     _pick,
+    apply_confirmed_decode_to_vehicle,
     build_vehicle_intelligence_response,
     check_history,
     decode_vin,
@@ -319,6 +320,63 @@ async def test_build_vehicle_intelligence_response_empty(adb):
     assert result.valuation is None
 
 
+async def test_decode_vin_does_not_apply_identity_until_confirmation(adb):
+    user, _ = await async_create_user_and_token(adb)
+    session, _ = await async_create_session_with_deal_state(adb, user)
+    vehicle = await async_create_vehicle(adb, session.id, vin="1HGCM82633A004352")
+
+    with patch(
+        "app.services.vehicle_intelligence.fetch_vpic_decode",
+        new=AsyncMock(
+            return_value={
+                "Make": "Honda",
+                "Model": "Civic",
+                "ModelYear": "2022",
+                "Trim": "EX",
+                "DisplacementL": "2.0",
+                "EngineCylinders": "4",
+                "EngineConfiguration": "In-Line",
+            }
+        ),
+    ):
+        decode = await decode_vin(vehicle, adb)
+
+    assert decode.make == "Honda"
+    assert vehicle.vin == "1HGCM82633A004352"
+    assert vehicle.year is None
+    assert vehicle.make is None
+    assert vehicle.model is None
+    assert vehicle.trim is None
+    assert vehicle.engine is None
+
+    applied = await apply_confirmed_decode_to_vehicle(vehicle, adb)
+
+    assert applied is not None
+    assert vehicle.year == 2022
+    assert vehicle.make == "Honda"
+    assert vehicle.model == "Civic"
+    assert vehicle.trim == "EX"
+    assert vehicle.engine == "2.0L I4"
+
+
+def test_merge_decoded_fields_applies_cab_and_bed_from_raw_payload(db):
+    user, _ = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    vehicle = create_vehicle(db, session.id, vin="1FT8W2BT0NEC00001")
+    decode = VehicleDecode(
+        vehicle_id=vehicle.id,
+        provider="nhtsa_vpic",
+        status="success",
+        vin="1FT8W2BT0NEC00001",
+        raw_payload={"BodyCabType": "SuperCrew", "BedLengthIN": "96"},
+    )
+
+    _merge_decoded_fields(vehicle, decode)
+
+    assert vehicle.cab_style == "SuperCrew"
+    assert vehicle.bed_length == "8 ft"
+
+
 async def test_build_vehicle_intelligence_response_with_records(adb):
     """Returns populated response when intelligence records exist."""
     user, _ = await async_create_user_and_token(adb)
@@ -388,7 +446,8 @@ async def test_decode_vin_returns_cached_when_fresh(adb):
     result = await decode_vin(vehicle, adb, vin="1HGCM82633A004352")
 
     assert result.id == existing.id
-    assert vehicle.make == "Honda"
+    assert vehicle.vin == "1HGCM82633A004352"
+    assert vehicle.make is None
 
 
 async def test_decode_vin_fetches_when_expired(adb):
@@ -430,7 +489,8 @@ async def test_decode_vin_fetches_when_expired(adb):
     assert result.make == "Honda"
     assert result.model == "Civic"
     assert result.engine == "2.0L I4 (158 HP)"
-    assert vehicle.make == "Honda"
+    assert vehicle.vin == "1HGCM82633A004352"
+    assert vehicle.make is None
 
 
 async def test_decode_vin_force_refresh_bypasses_cache(adb):

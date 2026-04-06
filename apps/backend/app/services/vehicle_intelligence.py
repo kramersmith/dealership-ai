@@ -54,6 +54,11 @@ def normalize_vin(vin: str) -> str:
     return normalized
 
 
+def _vin_suffix(vin: str | None) -> str:
+    normalized = "".join(ch for ch in (vin or "").upper().strip() if ch.isalnum())
+    return normalized[-4:] if normalized else "unknown"
+
+
 def _is_fresh(expires_at: datetime | None) -> bool:
     if expires_at is None:
         return False
@@ -119,6 +124,51 @@ def _merge_decoded_fields(vehicle: Vehicle, decode: VehicleDecode) -> None:
         vehicle.trim = decode.trim
     if not vehicle.engine and decode.engine:
         vehicle.engine = decode.engine
+    raw_payload = decode.raw_payload or {}
+    if not vehicle.cab_style:
+        cab_style = _pick(raw_payload, "BodyCabType", "CabType")
+        if cab_style:
+            vehicle.cab_style = cab_style
+    if not vehicle.bed_length:
+        bed_length = _pick(raw_payload, "BedLength", "BedLengthIN")
+        if bed_length:
+            normalized_bed_length = bed_length
+            try:
+                bed_length_inches = float(bed_length)
+            except (TypeError, ValueError):
+                pass
+            else:
+                if bed_length_inches > 0:
+                    if (
+                        bed_length_inches.is_integer()
+                        and int(bed_length_inches) % 12 == 0
+                    ):
+                        normalized_bed_length = f"{int(bed_length_inches) // 12} ft"
+                    elif bed_length_inches.is_integer():
+                        normalized_bed_length = f"{int(bed_length_inches)} in"
+                    else:
+                        normalized_bed_length = f"{bed_length_inches:g} in"
+            vehicle.bed_length = normalized_bed_length
+
+
+async def apply_confirmed_decode_to_vehicle(
+    vehicle: Vehicle, db: AsyncSession
+) -> VehicleDecode | None:
+    """Apply the latest decode to the vehicle after explicit user confirmation.
+
+    Unconfirmed decode results remain in the intelligence tables only. This keeps
+    the main Vehicle row limited to user-stated facts until the user confirms the
+    decoded identity.
+    """
+    latest = await _latest(
+        db,
+        VehicleDecode,
+        VehicleDecode.vehicle_id == vehicle.id,
+    )
+    if latest is None:
+        return None
+    _merge_decoded_fields(vehicle, latest)
+    return latest
 
 
 def _pick(payload: dict[str, Any], *keys: str) -> str | None:
@@ -145,9 +195,8 @@ async def _fetch_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "vehicle_intelligence.http_error status=%s body=%s",
+                "vehicle_intelligence.http_error status=%s",
                 exc.response.status_code,
-                exc.response.text[:500],
             )
             raise VehicleIntelligenceError(
                 f"Provider returned HTTP {exc.response.status_code}"
@@ -205,7 +254,7 @@ async def decode_vin(
         VehicleDecode.vin == normalized_vin,
     )
     if latest and not force_refresh and _is_fresh(latest.expires_at):
-        _merge_decoded_fields(vehicle, latest)
+        vehicle.vin = normalized_vin
         return latest
 
     requested_at = datetime.now(timezone.utc)
@@ -258,11 +307,11 @@ async def decode_vin(
         expires_at=fetched_at + DECODE_TTL,
     )
     db.add(decode)
-    _merge_decoded_fields(vehicle, decode)
+    vehicle.vin = normalized_vin
     logger.info(
-        "vehicle_intelligence.decode.completed vehicle_id=%s vin=%s",
+        "vehicle_intelligence.decode.completed vehicle_id=%s vin_suffix=%s",
         vehicle.id,
-        normalized_vin,
+        _vin_suffix(normalized_vin),
     )
     return decode
 
@@ -343,9 +392,9 @@ async def check_history(
     )
     db.add(report)
     logger.info(
-        "vehicle_intelligence.history.completed vehicle_id=%s vin=%s",
+        "vehicle_intelligence.history.completed vehicle_id=%s vin_suffix=%s",
         vehicle.id,
-        normalized_vin,
+        _vin_suffix(normalized_vin),
     )
     return report
 
@@ -400,8 +449,8 @@ async def get_valuation(
     )
     db.add(valuation)
     logger.info(
-        "vehicle_intelligence.valuation.completed vehicle_id=%s vin=%s",
+        "vehicle_intelligence.valuation.completed vehicle_id=%s vin_suffix=%s",
         vehicle.id,
-        normalized_vin,
+        _vin_suffix(normalized_vin),
     )
     return valuation

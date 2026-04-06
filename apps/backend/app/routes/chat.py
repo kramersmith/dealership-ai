@@ -131,6 +131,7 @@ async def send_message(
             turn_context,
             result,
             emit_done_event=False,
+            linked_messages=linked_messages,
         ):
             yield sse_event
 
@@ -159,6 +160,9 @@ async def send_message(
         # Runs after done so chat remains responsive while panel updates stream in.
         if deal_state:
             logger.debug("Streaming AI panel cards, session_id=%s", session_id)
+            panel_started = False
+            panel_finished = False
+            panel_completed = False
             try:
                 await db.refresh(deal_state)
                 updated_state_dict = await deal_state_to_dict(deal_state, db)
@@ -172,11 +176,14 @@ async def send_message(
                     session_id=session_id,
                 ):
                     if panel_event.type == "panel_started":
+                        panel_started = True
                         yield f"event: panel_started\ndata: {json.dumps(panel_event.data)}\n\n"
                     elif panel_event.type == "panel_card":
                         latest_cards.append(panel_event.data["card"])
                         yield f"event: panel_card\ndata: {json.dumps(panel_event.data)}\n\n"
                     elif panel_event.type == "panel_done":
+                        panel_finished = True
+                        panel_completed = True
                         latest_cards = panel_event.data.get("cards", latest_cards)
                         panel_usage_summary = panel_event.data.get("usage_summary")
                         payload = {
@@ -185,12 +192,13 @@ async def send_message(
                         }
                         yield f"event: panel_done\ndata: {json.dumps(payload)}\n\n"
                     elif panel_event.type == "panel_error":
+                        panel_finished = True
                         yield f"event: panel_error\ndata: {json.dumps(panel_event.data)}\n\n"
 
                 if panel_usage_summary:
                     merge_usage_summary(result.usage_summary, panel_usage_summary)
 
-                if latest_cards:
+                if panel_completed:
                     deal_state.ai_panel_cards = latest_cards
                     panel_tool_call = {
                         "name": "update_insights_panel",
@@ -198,7 +206,7 @@ async def send_message(
                     }
                     result.tool_calls.append(panel_tool_call)
                     logger.info(
-                        "Streamed %d AI panel cards, session_id=%s",
+                        "Persisted %d AI panel cards, session_id=%s",
                         len(latest_cards),
                         session_id,
                     )
@@ -206,6 +214,8 @@ async def send_message(
                 logger.exception(
                     "AI panel generation failed: session_id=%s", session_id
                 )
+                if panel_started and not panel_finished:
+                    yield 'event: panel_error\ndata: {"message": "Panel generation failed"}\n\n'
 
         # Persist assistant message (includes full usage with panel costs)
         assistant_msg = Message(

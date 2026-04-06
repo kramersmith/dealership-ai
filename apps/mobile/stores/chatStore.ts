@@ -19,9 +19,9 @@ function buildMessageContent(text: string, quotedCard?: QuotedCard): string {
   if (!quotedCard) return text
   try {
     const cardSummary = JSON.stringify(quotedCard.content)
-    return `[Referring to "${quotedCard.title}" (${quotedCard.type} card): ${cardSummary}]\n\n${text}`
+    return `[Referring to "${quotedCard.title}" (${quotedCard.kind} card): ${cardSummary}]\n\n${text}`
   } catch {
-    return `[Referring to "${quotedCard.title}" (${quotedCard.type} card)]\n\n${text}`
+    return `[Referring to "${quotedCard.title}" (${quotedCard.kind} card)]\n\n${text}`
   }
 }
 
@@ -72,6 +72,8 @@ interface ChatState {
   isRetrying: boolean
   /** True when the agent is processing tools between steps (no text streaming). */
   isThinking: boolean
+  /** True while the backend is generating or streaming insights panel cards. */
+  isPanelAnalyzing: boolean
   vinAssistItems: VinAssistItem[]
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
@@ -124,6 +126,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingText: '',
   isRetrying: false,
   isThinking: false,
+  isPanelAnalyzing: false,
   vinAssistItems: [],
   _sessionJustCreated: false,
   _pendingSend: null,
@@ -310,6 +313,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isSending: true,
         streamingText: '',
         sendError: null,
+        isPanelAnalyzing: false,
       }))
       if (detectedVin) {
         trackVinAssistEvent('detected', { sessionId: activeSessionId, vin: detectedVin })
@@ -320,6 +324,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else {
       // Resume path — message already in chat, just set sending state
       set({ isSending: true, streamingText: '', sendError: null })
+      set({ isPanelAnalyzing: false })
     }
 
     try {
@@ -389,7 +394,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         handleToolResult,
         handleTextDone,
         () => set({ isRetrying: true }),
-        () => set({ isThinking: true })
+        () => set({ isThinking: true }),
+        () => set({ isPanelAnalyzing: true }),
+        () => set({ isPanelAnalyzing: false })
       )
 
       // If no tool results arrived (rare), finalize from onload
@@ -400,9 +407,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             messages: [...state.messages, assistantMessage],
             isSending: false,
             streamingText: '',
+            isPanelAnalyzing: false,
           }))
         } else {
-          set({ isSending: false, streamingText: '' })
+          set({ isSending: false, streamingText: '', isPanelAnalyzing: false })
         }
       }
 
@@ -424,6 +432,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingText: '',
         isRetrying: false,
         isThinking: false,
+        isPanelAnalyzing: false,
         sendError: message,
       }))
     }

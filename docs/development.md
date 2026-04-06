@@ -1,6 +1,6 @@
 # Development Guide
 
-**Last updated:** 2026-04-03
+**Last updated:** 2026-04-06
 
 ---
 
@@ -127,6 +127,7 @@ All commands run from the repo root via Make.
 - `make test-backend` — Run all backend tests
 - `make test-backend-specific TEST='tests/test_auth.py::test_signup'` — Single test
 - `make test-backend-watch` — Watch mode
+- `cd apps/mobile && npm test` — Run the focused mobile Vitest suite for API-client and store behavior
 
 ### Database
 - `make migrate-backend` — Apply Alembic migrations
@@ -164,6 +165,9 @@ For local SQLite development, tables are auto-created on startup. Migrations are
 ```bash
 # Run all backend tests
 make test-backend
+
+# Run mobile/frontend unit tests
+cd apps/mobile && npm test
 
 # Run a specific test
 make test-backend-specific TEST='tests/test_auth.py'

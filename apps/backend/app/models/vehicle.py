@@ -44,6 +44,8 @@ class Vehicle(Base):
     make: Mapped[str | None] = mapped_column(String, nullable=True)
     model: Mapped[str | None] = mapped_column(String, nullable=True)
     trim: Mapped[str | None] = mapped_column(String, nullable=True)
+    cab_style: Mapped[str | None] = mapped_column(String, nullable=True)
+    bed_length: Mapped[str | None] = mapped_column(String, nullable=True)
     vin: Mapped[str | None] = mapped_column(String, nullable=True)
     mileage: Mapped[int | None] = mapped_column(Integer, nullable=True)
     color: Mapped[str | None] = mapped_column(String, nullable=True)

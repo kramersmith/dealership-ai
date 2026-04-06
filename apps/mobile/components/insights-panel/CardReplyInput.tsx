@@ -9,7 +9,7 @@ import {
   type TextInputKeyPressEventData,
 } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
-import { Send } from '@tamagui/lucide-icons'
+import { Send, X } from '@tamagui/lucide-icons'
 import type { AiPanelCard, QuotedCard } from '@/lib/types'
 import { CONFIRMATION_DISPLAY_MS } from '@/lib/constants'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
@@ -49,6 +49,7 @@ export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
   const [text, setText] = useState('')
   const [justSent, setJustSent] = useState(false)
   const sentTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const iconColor = theme.placeholderColor?.val as string
 
   useEffect(() => {
     return () => {
@@ -60,7 +61,12 @@ export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
     const trimmed = text.trim()
     if (!trimmed) return
 
-    const quotedCard: QuotedCard = { title: card.title, type: card.type, content: card.content }
+    const quotedCard: QuotedCard = {
+      title: card.title,
+      kind: card.kind,
+      template: card.template,
+      content: card.content,
+    }
     onSend(trimmed, quotedCard).catch((err) => {
       console.error(
         '[CardReplyInput] sendMessage failed:',
@@ -126,11 +132,11 @@ export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
             flex: 1,
             fontSize: 13,
             color: theme.color?.val as string,
-            minHeight: 36,
+            minHeight: 44,
             maxHeight: 72,
             textAlignVertical: 'top',
-            paddingTop: 8,
-            paddingBottom: 8,
+            paddingTop: 10,
+            paddingBottom: 10,
             paddingLeft: 0,
             paddingRight: 0,
             margin: 0,
@@ -142,6 +148,8 @@ export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
       <TouchableOpacity
         onPress={text.trim() ? handleSend : onClose}
         activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityLabel={text.trim() ? 'Send reply' : 'Close reply'}
         style={{
           width: 44,
           height: 44,
@@ -149,13 +157,7 @@ export function CardReplyInput({ card, onSend, onClose }: CardReplyInputProps) {
           alignItems: 'center',
         }}
       >
-        {text.trim() ? (
-          <Send size={16} color="$placeholderColor" />
-        ) : (
-          <Text fontSize={12} fontWeight="500" color="$placeholderColor">
-            ✕
-          </Text>
-        )}
+        {text.trim() ? <Send size={16} color={iconColor} /> : <X size={16} color={iconColor} />}
       </TouchableOpacity>
     </XStack>
   )

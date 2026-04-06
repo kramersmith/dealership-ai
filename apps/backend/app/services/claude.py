@@ -44,10 +44,29 @@ def _current_utc_date_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def build_prompt_deal_state(deal_state_dict: dict | None) -> dict | None:
+    """Return the source-of-truth subset of deal state used in model prompts."""
+    if not deal_state_dict:
+        return deal_state_dict
+
+    prompt_state = dict(deal_state_dict)
+    prompt_state.pop("ai_panel_cards", None)
+    return prompt_state
+
+
 # ─── Context message configuration ───
 
 LINKED_CONTEXT_MAX_MESSAGES = 10
 LINKED_CONTEXT_MESSAGE_TRUNCATION = 200
+POST_TOOL_CONTINUATION_REMINDER = (
+    "<system-reminder>"
+    "Tool results above reflect committed state updates. "
+    "If the user's request is already answerable, reply directly to the user in your next message. "
+    "Do not make another tool-only pass just to add quick actions. "
+    "If any remaining tool updates are still genuinely needed, include them alongside the final user-facing answer."
+    "</system-reminder>"
+)
+TEXT_ONLY_RECOVERY_TOOL_NAMES = {"update_quick_actions"}
 
 CONTEXT_PREAMBLES = {
     BuyerContext.RESEARCHING: (
@@ -87,6 +106,9 @@ TOOL USAGE:
 - Extract facts only from USER messages. Never persist data from your own suggestions or assistant responses.
 - Only call tools when data has actually changed or is newly mentioned. Omit unchanged fields.
 - You may call multiple tools in a single response. Do NOT narrate tool usage to the user — just respond naturally.
+- Prefer one batched tool pass per buyer message whenever possible.
+- If one user message updates multiple parts of state, emit all relevant tools in the SAME response: extraction, assessment updates, negotiation context, checklist updates, and quick actions.
+- Do not spread obvious updates across multiple tool-only follow-up turns if you already have enough information to update everything now.
 - For update_negotiation_context: update when the buyer's situation meaningfully changes (new offer, arrived at dealership, walked out, etc.). Preserve information from the previous context that is still relevant.
 
 ASSESSMENT TOOLS — WHEN TO CALL:
@@ -111,7 +133,7 @@ CRITICAL RULES FOR FINANCIAL NUMBERS:
 VEHICLE EXTRACTION RULES:
 - Only create vehicles from user-provided information, not assistant suggestions
 - Do NOT create vehicles from casual mentions ("my neighbor got a Tesla")
-- If the user only supplied a VIN, you may extract the VIN itself, but do NOT infer or persist year/make/model/trim/engine from that VIN
+- If the user only supplied a VIN, you may extract the VIN itself, but do NOT infer or persist year/make/model/trim/engine/cab_style/bed_length from that VIN
 
 MULTI-VEHICLE AND MULTI-DEAL BEHAVIOR:
 - Sessions can have multiple vehicles and multiple deals.
@@ -176,6 +198,8 @@ CHAT_TOOLS: list[dict] = [
                 "make": {"type": "string"},
                 "model": {"type": "string"},
                 "trim": {"type": "string"},
+                "cab_style": {"type": "string"},
+                "bed_length": {"type": "string"},
                 "vin": {"type": "string"},
                 "mileage": {"type": "integer"},
                 "color": {"type": "string"},
@@ -666,8 +690,8 @@ async def _stream_step_with_retry(  # noqa: C901
     max_tokens: int,
     system: list[dict],
     messages: list[dict],
-    tools: list[dict],
-    tool_choice: dict,
+    tools: list[dict] | None = None,
+    tool_choice: dict | None = None,
     idle_timeout: int = settings.CLAUDE_STREAM_IDLE_TIMEOUT,
     max_retries: int = settings.CLAUDE_STREAM_MAX_RETRIES,
 ) -> AsyncGenerator[tuple[str, Any], None]:
@@ -686,13 +710,19 @@ async def _stream_step_with_retry(  # noqa: C901
 
     for attempt in range(1 + max_retries):
         try:
+            stream_kwargs: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "system": system,
+                "messages": messages,
+            }
+            if tools is not None:
+                stream_kwargs["tools"] = tools
+            if tool_choice is not None:
+                stream_kwargs["tool_choice"] = tool_choice
+
             async with client.messages.stream(
-                model=model,
-                max_tokens=max_tokens,
-                system=system,  # type: ignore[arg-type]
-                messages=messages,  # type: ignore[arg-type]
-                tools=tools,  # type: ignore[arg-type]
-                tool_choice=tool_choice,  # type: ignore[arg-type]
+                **stream_kwargs,
             ) as stream:
                 stream_iter = stream.__aiter__()
                 while True:
@@ -759,13 +789,19 @@ async def _stream_step_with_retry(  # noqa: C901
     # All stream retries exhausted — fall back to non-streaming
     logger.warning("Stream retries exhausted, falling back to non-streaming API call")
     try:
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+        }
+        if tools is not None:
+            create_kwargs["tools"] = tools
+        if tool_choice is not None:
+            create_kwargs["tool_choice"] = tool_choice
+
         response = await client.messages.create(  # type: ignore[call-overload]
-            model=model,
-            max_tokens=max_tokens,
-            system=system,  # type: ignore[arg-type]
-            messages=messages,  # type: ignore[arg-type]
-            tools=tools,  # type: ignore[arg-type]
-            tool_choice=tool_choice,
+            **create_kwargs,
         )
         # Convert non-streaming response to the same event shape
         for block in response.content:
@@ -888,6 +924,117 @@ async def _execute_tool_batch(
             next_index += 1
 
 
+async def _generate_text_only_recovery_response(
+    client: anthropic.AsyncAnthropic,
+    *,
+    system: list[dict],
+    messages: list[dict],
+) -> dict[str, Any] | None:
+    current_max_tokens = settings.CLAUDE_MAX_TOKENS
+    truncation_retry_count = 0
+    usage_summary = empty_usage_summary()
+
+    while True:
+        recovery_text = ""
+        stop_reason = None
+
+        try:
+            async for event_type, event_data in _stream_step_with_retry(
+                client,
+                model=settings.CLAUDE_MODEL,
+                max_tokens=current_max_tokens,
+                system=system,
+                messages=messages,
+            ):
+                if event_type == "retry":
+                    recovery_text = ""
+                    continue
+
+                if event_type == "final_message":
+                    stop_reason = event_data.stop_reason
+                    merge_usage_summary(
+                        usage_summary,
+                        summarize_usage(event_data.usage),
+                    )
+                    logger.info(
+                        "Cache [chat_loop recovery]: creation=%d read=%d uncached=%d stop=%s max_tokens=%d",
+                        getattr(event_data.usage, "cache_creation_input_tokens", 0)
+                        or 0,
+                        getattr(event_data.usage, "cache_read_input_tokens", 0) or 0,
+                        event_data.usage.input_tokens,
+                        stop_reason,
+                        current_max_tokens,
+                    )
+                    continue
+
+                event = event_data
+                if (
+                    event.type == "content_block_delta"
+                    and getattr(event.delta, "type", None) == "text_delta"
+                ):
+                    recovery_text += event.delta.text
+
+        except Exception:
+            logger.exception("Chat loop recovery response failed")
+            return None
+
+        if stop_reason == "max_tokens":
+            next_max_tokens = _get_escalated_max_tokens(current_max_tokens)
+            if (
+                truncation_retry_count < settings.CLAUDE_MAX_TOKENS_RETRIES
+                and next_max_tokens > current_max_tokens
+            ):
+                truncation_retry_count += 1
+                logger.warning(
+                    "Chat loop recovery hit max_tokens at %d, retrying with %d (%d/%d)",
+                    current_max_tokens,
+                    next_max_tokens,
+                    truncation_retry_count,
+                    settings.CLAUDE_MAX_TOKENS_RETRIES,
+                )
+                current_max_tokens = next_max_tokens
+                continue
+
+            logger.warning(
+                "Chat loop recovery exhausted max_tokens retries at budget=%d",
+                current_max_tokens,
+            )
+
+        stripped_text = recovery_text.strip()
+        if stripped_text:
+            return {
+                "text": stripped_text,
+                "usage_summary": usage_summary,
+            }
+        return None
+
+
+def _replace_context_message(
+    messages: list[dict],
+    context_message: dict | None,
+) -> None:
+    """Replace the current-turn synthetic context block in-place if present."""
+    context_text = context_message.get("content") if context_message else None
+    if not isinstance(context_text, str):
+        return
+
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list) or not content:
+            continue
+        first_block = content[0]
+        if (
+            isinstance(first_block, dict)
+            and first_block.get("type") == "text"
+            and isinstance(first_block.get("text"), str)
+            and first_block["text"].startswith("<system-reminder>")
+        ):
+            content[0] = {**first_block, "text": context_text}
+            return
+
+
 async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     system_prompt: list[dict],
     messages: list[dict],
@@ -897,6 +1044,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     max_steps: int = CHAT_LOOP_MAX_STEPS,
     session_factory=None,
     emit_done_event: bool = True,
+    linked_messages: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Step loop: call Claude with tools, execute tool calls, repeat until text response.
 
@@ -907,7 +1055,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
     Populates `result` with accumulated full_text and all tool_calls.
     """
-    from app.services.deal_state import build_execution_plan
+    from app.services.deal_state import build_execution_plan, deal_state_to_dict
 
     if session_factory is None:
         from app.db.session import AsyncSessionLocal
@@ -1126,9 +1274,11 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
         # Execute tool calls and emit SSE events
         tool_result_content: list[dict] = []
+        had_tool_errors = False
 
         # Send error tool_results for any tool_use blocks with malformed JSON
         for err_block in json_error_blocks:
+            had_tool_errors = True
             error_msg = f"Tool '{err_block['name']}' received malformed JSON input"
             tool_result_content.append(
                 {
@@ -1168,6 +1318,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                     )
 
                     if isinstance(outcome, Exception):
+                        had_tool_errors = True
                         error_msg = f"Tool '{tool_name}' failed: {outcome}"
                         tool_result_content.append(
                             {
@@ -1195,6 +1346,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         else:
             for tool_block in tool_use_blocks:
                 tool_name = tool_block["name"]
+                had_tool_errors = True
                 error_msg = f"Tool '{tool_name}' cannot execute: no deal state exists for this session"
                 logger.warning(
                     "Step %d: tool [%s] called but no deal_state", step, tool_name
@@ -1212,15 +1364,109 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         # Append assistant response + all tool results in a single user message
         messages.append({"role": "assistant", "content": assistant_content_blocks})
         if tool_result_content:
+            tool_result_content.append(
+                {
+                    "type": "text",
+                    "text": POST_TOOL_CONTINUATION_REMINDER,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
             messages.append({"role": "user", "content": tool_result_content})
+
+        if turn_context.deal_state is not None:
+            await turn_context.db.refresh(turn_context.deal_state)
+            updated_state_dict = await deal_state_to_dict(
+                turn_context.deal_state,
+                turn_context.db,
+            )
+            updated_context_message = build_context_message(
+                updated_state_dict,
+                linked_messages,
+            )
+            _replace_context_message(messages, updated_context_message)
+
+        should_force_text_recovery = (
+            not step_text.strip()
+            and bool(tool_use_blocks)
+            and not had_tool_errors
+            and not json_error_blocks
+            and {tool_block["name"] for tool_block in tool_use_blocks}
+            <= TEXT_ONLY_RECOVERY_TOOL_NAMES
+        )
+        if should_force_text_recovery:
+            logger.info(
+                "Step %d completed with ancillary tools only; forcing final text recovery",
+                step,
+            )
+            recovery_system_prompt = [
+                *system_prompt,
+                {
+                    "type": "text",
+                    "text": (
+                        "RECOVERY MODE: Ancillary tool updates are already complete. "
+                        "Do not call tools. Reply directly to the buyer with one complete final answer."
+                    ),
+                },
+            ]
+            recovery = await _generate_text_only_recovery_response(
+                client,
+                system=recovery_system_prompt,
+                messages=messages,
+            )
+            if recovery is not None:
+                merge_usage_summary(result.usage_summary, recovery["usage_summary"])
+                result.full_text = recovery["text"]
+                result.completed = True
+                if emit_done_event:
+                    yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+                logger.info(
+                    "Chat loop fast recovery complete after ancillary tools: text_length=%d, tool_calls=%d",
+                    len(result.full_text),
+                    len(result.tool_calls),
+                )
+                return
 
         # Move the cache breakpoint to the last message so the next step's
         # API call caches everything up to this point (two-breakpoint caching).
         _move_message_cache_breakpoint(messages)
 
-    # Max steps exceeded — emit whatever we have
-    logger.warning("Chat loop hit max steps (%d), emitting partial response", max_steps)
+    # Max steps exceeded — try one final tools-disabled answer recovery.
+    logger.warning(
+        "Chat loop hit max steps (%d), attempting final text-only recovery",
+        max_steps,
+    )
+    recovery_system_prompt = [
+        *system_prompt,
+        {
+            "type": "text",
+            "text": (
+                "RECOVERY MODE: Any necessary tool updates are already complete. "
+                "Do not call tools. Reply directly to the buyer with one complete final answer. "
+                "Rewrite the answer from scratch as a full response, not a continuation or explanation of tool usage."
+            ),
+        },
+    ]
+    recovery = await _generate_text_only_recovery_response(
+        client,
+        system=recovery_system_prompt,
+        messages=messages,
+    )
+
     result.completed = True
+    if recovery is not None:
+        merge_usage_summary(result.usage_summary, recovery["usage_summary"])
+        result.full_text = recovery["text"]
+        if emit_done_event:
+            yield f"event: retry\ndata: {json.dumps({'attempt': 1, 'reason': 'max_steps_recovery', 'reset_text': True})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+        logger.info(
+            "Chat loop recovery complete after max steps: text_length=%d, tool_calls=%d",
+            len(result.full_text),
+            len(result.tool_calls),
+        )
+        return
+
+    logger.warning("Chat loop max-step recovery failed, emitting partial response")
     if emit_done_event:
         yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
 
@@ -1283,14 +1529,16 @@ def build_context_message(
     """
     context_parts: list[str] = [f"Current date (UTC): {_current_utc_date_iso()}."]
 
-    if deal_state_dict:
-        buyer_context = deal_state_dict.get("buyer_context", BuyerContext.RESEARCHING)
+    prompt_deal_state = build_prompt_deal_state(deal_state_dict)
+
+    if prompt_deal_state:
+        buyer_context = prompt_deal_state.get("buyer_context", BuyerContext.RESEARCHING)
         preamble = CONTEXT_PREAMBLES.get(BuyerContext(buyer_context))
         if preamble:
             context_parts.append(f"Buyer situation: {preamble}")
 
         # Negotiation context summary for primary model awareness
-        negotiation_context = deal_state_dict.get("negotiation_context")
+        negotiation_context = prompt_deal_state.get("negotiation_context")
         if negotiation_context and isinstance(negotiation_context, dict):
             stance = negotiation_context.get("stance", "")
             situation = negotiation_context.get("situation", "")
@@ -1306,8 +1554,8 @@ def build_context_message(
                 context_parts.append(f"Pending actions: {pending_summary}")
 
         # Health/flags summary from active deal
-        active_deal_id = deal_state_dict.get("active_deal_id")
-        deals = deal_state_dict.get("deals", [])
+        active_deal_id = prompt_deal_state.get("active_deal_id")
+        deals = prompt_deal_state.get("deals", [])
         active_deal = None
         if active_deal_id and deals:
             for deal in deals:
@@ -1321,8 +1569,8 @@ def build_context_message(
         deal_red_flags = active_deal.get("red_flags", []) if active_deal else []
         deal_info_gaps = active_deal.get("information_gaps", []) if active_deal else []
 
-        session_red_flags = deal_state_dict.get("session_red_flags", [])
-        session_info_gaps = deal_state_dict.get("session_information_gaps", [])
+        session_red_flags = prompt_deal_state.get("session_red_flags", [])
+        session_info_gaps = prompt_deal_state.get("session_information_gaps", [])
 
         all_red_flags = deal_red_flags + session_red_flags
         all_info_gaps = deal_info_gaps + session_info_gaps
@@ -1350,7 +1598,7 @@ def build_context_message(
 
         context_parts.append(
             f"Current deal state:\n```json\n"
-            f"{json.dumps(deal_state_dict, indent=2, default=str)}\n```"
+            f"{json.dumps(prompt_deal_state, indent=2, default=str)}\n```"
         )
 
     if linked_messages:

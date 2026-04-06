@@ -8,12 +8,75 @@
  *   runMockPanelUpdates()
  */
 import { useDealStore } from '@/stores/dealStore'
-import type { AiPanelCard } from '@/lib/types'
+import type { AiCardKind, AiCardTemplate, AiPanelCard } from '@/lib/types'
+
+type LegacyMockCard = Omit<AiPanelCard, 'kind' | 'template'> & { type: AiCardTemplate }
+
+function mockKind(type: AiCardTemplate, title: string): AiCardKind {
+  const normalizedTitle = title.trim().toLowerCase()
+
+  if (type === 'vehicle') return 'vehicle'
+  if (type === 'numbers') return normalizedTitle === 'price breakdown' ? 'what_changed' : 'numbers'
+  if (type === 'warning')
+    return normalizedTitle === 'monthly payment misdirection' ? 'if_you_say_yes' : 'warning'
+  if (type === 'notes') return 'notes'
+  if (type === 'comparison') return normalizedTitle === 'trade-off' ? 'trade_off' : 'comparison'
+  if (type === 'checklist') {
+    return normalizedTitle.includes('post-purchase') || normalizedTitle.includes('research')
+      ? 'checklist'
+      : 'what_still_needs_confirming'
+  }
+  if (type === 'success') return normalizedTitle === 'deal closed' ? 'success' : 'savings_so_far'
+  if (type === 'tip') return 'your_leverage'
+  return normalizedTitle.includes('offer') || normalizedTitle.includes('hold')
+    ? 'next_best_move'
+    : 'dealer_read'
+}
+
+function templateForMockKind(kind: AiCardKind): AiCardTemplate {
+  switch (kind) {
+    case 'vehicle':
+      return 'vehicle'
+    case 'numbers':
+    case 'what_changed':
+      return 'numbers'
+    case 'warning':
+    case 'if_you_say_yes':
+      return 'warning'
+    case 'notes':
+      return 'notes'
+    case 'comparison':
+    case 'trade_off':
+      return 'comparison'
+    case 'checklist':
+    case 'what_still_needs_confirming':
+      return 'checklist'
+    case 'success':
+    case 'savings_so_far':
+      return 'success'
+    case 'dealer_read':
+    case 'next_best_move':
+      return 'briefing'
+    case 'your_leverage':
+      return 'tip'
+  }
+}
+
+function normalizeMockCard(card: LegacyMockCard): AiPanelCard {
+  const kind = mockKind(card.type, card.title)
+  return {
+    kind,
+    template: templateForMockKind(kind),
+    title: card.title,
+    content: card.content,
+    priority: card.priority,
+  }
+}
 
 // ─── Mock Card Sets ───
 
 // Step 1: Initial research cards
-const STEP_1_INITIAL: AiPanelCard[] = [
+const STEP_1_INITIAL: LegacyMockCard[] = [
   {
     type: 'vehicle',
     title: 'Target Vehicle',
@@ -60,7 +123,7 @@ const STEP_1_INITIAL: AiPanelCard[] = [
 
 // Step 2: Minor update — user got pre-approved, checklist ticks + briefing tweaks
 // Same card set, just content changes
-const STEP_2_MINOR: AiPanelCard[] = [
+const STEP_2_MINOR: LegacyMockCard[] = [
   {
     type: 'vehicle',
     title: 'Target Vehicle',
@@ -107,7 +170,7 @@ const STEP_2_MINOR: AiPanelCard[] = [
 ]
 
 // Step 3: Another minor — checked fair price, updated numbers
-const STEP_3_MINOR: AiPanelCard[] = [
+const STEP_3_MINOR: LegacyMockCard[] = [
   {
     type: 'vehicle',
     title: 'Target Vehicle',
@@ -154,7 +217,7 @@ const STEP_3_MINOR: AiPanelCard[] = [
 ]
 
 // Step 4: Major change — dealer offer received, new card types appear
-const STEP_4_MAJOR: AiPanelCard[] = [
+const STEP_4_MAJOR: LegacyMockCard[] = [
   {
     type: 'vehicle',
     title: 'Target Vehicle',
@@ -209,7 +272,7 @@ const STEP_4_MAJOR: AiPanelCard[] = [
 ]
 
 // Step 5: Minor — counter offer, numbers update
-const STEP_5_MINOR: AiPanelCard[] = [
+const STEP_5_MINOR: LegacyMockCard[] = [
   {
     type: 'vehicle',
     title: 'Target Vehicle',
@@ -264,7 +327,7 @@ const STEP_5_MINOR: AiPanelCard[] = [
 ]
 
 // Step 6: Major — warning card appears, negotiation escalation
-const STEP_6_MAJOR: AiPanelCard[] = [
+const STEP_6_MAJOR: LegacyMockCard[] = [
   {
     type: 'warning',
     title: 'Monthly Payment Misdirection',
@@ -323,7 +386,7 @@ const STEP_6_MAJOR: AiPanelCard[] = [
 ]
 
 // Step 7: Major — deal closed
-const STEP_7_CLOSED: AiPanelCard[] = [
+const STEP_7_CLOSED: LegacyMockCard[] = [
   {
     type: 'success',
     title: 'Deal Closed',
@@ -367,14 +430,14 @@ const STEP_7_CLOSED: AiPanelCard[] = [
   },
 ]
 
-const MOCK_STEPS = [
-  STEP_1_INITIAL, // new cards appear
-  STEP_2_MINOR, // pre-approval done, checklist + briefing update
-  STEP_3_MINOR, // fair price checked, risk flag added, numbers tweak
-  STEP_4_MAJOR, // dealer offer — new briefing title, tip card added
-  STEP_5_MINOR, // counter offer — numbers update, checklist tick
-  STEP_6_MAJOR, // warning card appears, full restructure
-  STEP_7_CLOSED, // deal closed — success card, full restructure
+const MOCK_STEPS: AiPanelCard[][] = [
+  STEP_1_INITIAL.map(normalizeMockCard),
+  STEP_2_MINOR.map(normalizeMockCard),
+  STEP_3_MINOR.map(normalizeMockCard),
+  STEP_4_MAJOR.map(normalizeMockCard),
+  STEP_5_MINOR.map(normalizeMockCard),
+  STEP_6_MAJOR.map(normalizeMockCard),
+  STEP_7_CLOSED.map(normalizeMockCard),
 ]
 
 // ─── Runner ───

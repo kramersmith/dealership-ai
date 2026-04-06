@@ -8,14 +8,16 @@ interface QuotedCardPreviewProps {
 /** Extract a compact 2-3 line summary based on card type. */
 function getSummaryLines(card: QuotedCard): string[] {
   const cardContent = card.content
-  switch (card.type) {
-    case 'numbers': {
+  switch (card.kind) {
+    case 'numbers':
+    case 'what_changed': {
       const groups = (cardContent.groups as any[]) ?? []
       const rows = (cardContent.rows as any[]) ?? []
       const allRows = groups.length > 0 ? groups.flatMap((group: any) => group.rows ?? []) : rows
       return allRows.slice(0, 3).map((row: any) => `${row.label}  ${row.value ?? '—'}`)
     }
     case 'warning':
+    case 'if_you_say_yes':
       return [
         cardContent.message ? String(cardContent.message).split('\n')[0].slice(0, 80) : '',
       ].filter(Boolean)
@@ -27,25 +29,35 @@ function getSummaryLines(card: QuotedCard): string[] {
         .join(' ')
       return [summary].filter(Boolean)
     }
-    case 'briefing':
-    case 'tip':
-    case 'success': {
-      const text = cardContent.message ?? cardContent.body ?? cardContent.summary ?? ''
+    case 'dealer_read':
+    case 'your_leverage':
+    case 'next_best_move':
+    case 'success':
+    case 'savings_so_far': {
+      const text =
+        cardContent.message ?? cardContent.body ?? cardContent.headline ?? cardContent.summary ?? ''
       if (!text) return []
       const first = String(text).split(/[.\n]/)[0].slice(0, 100)
       return [first].filter(Boolean)
     }
-    case 'comparison': {
-      const items = (cardContent.items as any[]) ?? []
-      return items.slice(0, 2).map((item: any) => item.label ?? item.name ?? '')
+    case 'notes': {
+      const items = (cardContent.items as Array<string | { text?: string }>) ?? []
+      return items
+        .slice(0, 3)
+        .map((item) => (typeof item === 'string' ? item : (item.text ?? '')))
+        .filter(Boolean)
     }
-    case 'checklist': {
+    case 'comparison':
+    case 'trade_off': {
+      const highlights = (cardContent.highlights as any[]) ?? []
+      return highlights.slice(0, 2).map((item: any) => item.label ?? item.name ?? '')
+    }
+    case 'checklist':
+    case 'what_still_needs_confirming': {
       const items = (cardContent.items as any[]) ?? []
       return items
         .slice(0, 2)
-        .map(
-          (item: any) => `${item.checked ? '\u2713' : '\u2022'} ${item.label ?? item.text ?? ''}`
-        )
+        .map((item: any) => `${item.done ? '\u2713' : '\u2022'} ${item.label ?? item.text ?? ''}`)
     }
     default:
       return []
@@ -57,16 +69,11 @@ export function QuotedCardPreview({ card }: QuotedCardPreviewProps) {
   const lines = getSummaryLines(card)
 
   return (
-    <YStack
-      backgroundColor="rgba(255,255,255,0.08)"
-      borderRadius="$2"
-      padding="$2"
-      marginBottom="$2"
-    >
+    <YStack backgroundColor="$brandPressed" borderRadius="$2" padding="$2" marginBottom="$2">
       <Text
         fontSize={10}
         fontWeight="600"
-        color="white"
+        color="$white"
         opacity={0.5}
         textTransform="uppercase"
         letterSpacing={0.5}
@@ -74,7 +81,7 @@ export function QuotedCardPreview({ card }: QuotedCardPreviewProps) {
         {card.title}
       </Text>
       {lines.map((line, i) => (
-        <Text key={i} fontSize={11} color="white" opacity={0.6} numberOfLines={1}>
+        <Text key={i} fontSize={11} color="$white" opacity={0.6} numberOfLines={1}>
           {line}
         </Text>
       ))}

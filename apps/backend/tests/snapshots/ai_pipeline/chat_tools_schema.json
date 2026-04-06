@@ -3,6 +3,12 @@
     "description": "Create or update a vehicle. Include vehicle_id to update existing, omit to create new. Only extract from user messages \u2014 never from assistant suggestions.",
     "input_schema": {
       "properties": {
+        "bed_length": {
+          "type": "string"
+        },
+        "cab_style": {
+          "type": "string"
+        },
         "color": {
           "type": "string"
         },

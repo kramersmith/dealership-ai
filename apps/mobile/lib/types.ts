@@ -88,6 +88,8 @@ export interface Vehicle {
   make: string
   model: string
   trim?: string
+  cabStyle?: string
+  bedLength?: string
   vin?: string
   mileage?: number
   color?: string
@@ -195,15 +197,34 @@ export interface DealComparison {
 
 // ─── AI Panel ───
 
-export type AiCardType =
+export type AiCardTemplate =
   | 'briefing'
   | 'numbers'
   | 'comparison'
   | 'vehicle'
   | 'warning'
   | 'tip'
+  | 'notes'
   | 'checklist'
   | 'success'
+
+export type AiCardKind =
+  | 'vehicle'
+  | 'numbers'
+  | 'warning'
+  | 'notes'
+  | 'comparison'
+  | 'checklist'
+  | 'success'
+  | 'what_changed'
+  | 'what_still_needs_confirming'
+  | 'dealer_read'
+  | 'your_leverage'
+  | 'next_best_move'
+  | 'if_you_say_yes'
+  | 'trade_off'
+  | 'savings_so_far'
+
 export type AiCardPriority = 'critical' | 'high' | 'normal' | 'low'
 
 export const PANEL_UPDATE_MODE = {
@@ -214,7 +235,8 @@ export const PANEL_UPDATE_MODE = {
 export type PanelUpdateMode = (typeof PANEL_UPDATE_MODE)[keyof typeof PANEL_UPDATE_MODE]
 
 export interface AiPanelCard {
-  type: AiCardType
+  kind: AiCardKind
+  template: AiCardTemplate
   title: string
   content: Record<string, any>
   priority: AiCardPriority
@@ -313,7 +335,8 @@ export interface ToolCall {
 
 export interface QuotedCard {
   title: string
-  type: AiCardType
+  kind: AiCardKind
+  template: AiCardTemplate
   content: Record<string, any>
 }
 
@@ -454,7 +477,9 @@ export interface ApiService {
     onToolResult?: (toolCall: ToolCall) => void,
     onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
-    onStep?: (data: { step: number }) => void
+    onStep?: (data: { step: number }) => void,
+    onPanelStarted?: () => void,
+    onPanelFinished?: () => void
   ): Promise<Message>
 
   // Deal state

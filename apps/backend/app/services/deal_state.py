@@ -19,7 +19,18 @@ from app.services.vehicle_intelligence import build_vehicle_intelligence_respons
 
 logger = logging.getLogger(__name__)
 
-VEHICLE_FIELDS = ("year", "make", "model", "trim", "vin", "mileage", "color", "engine")
+VEHICLE_FIELDS = (
+    "year",
+    "make",
+    "model",
+    "trim",
+    "cab_style",
+    "bed_length",
+    "vin",
+    "mileage",
+    "color",
+    "engine",
+)
 
 DEAL_NUMBER_FIELDS = (
     "msrp",
@@ -34,6 +45,12 @@ DEAL_NUMBER_FIELDS = (
     "down_payment",
     "trade_in_value",
 )
+
+
+def _json_like_equal(current, new) -> bool:
+    return json.dumps(current, sort_keys=True, default=str) == json.dumps(
+        new, sort_keys=True, default=str
+    )
 
 
 def _is_vehicle_identity_confirmed(vehicle: Vehicle) -> bool:
@@ -68,14 +85,16 @@ async def _build_prompt_vehicle_dict(vehicle: Vehicle, db: AsyncSession) -> dict
     return {
         "id": vehicle.id,
         "role": vehicle.role,
-        "year": vehicle.year if _is_vehicle_identity_confirmed(vehicle) else None,
-        "make": vehicle.make if _is_vehicle_identity_confirmed(vehicle) else None,
-        "model": vehicle.model if _is_vehicle_identity_confirmed(vehicle) else None,
-        "trim": vehicle.trim if _is_vehicle_identity_confirmed(vehicle) else None,
+        "year": vehicle.year,
+        "make": vehicle.make,
+        "model": vehicle.model,
+        "trim": vehicle.trim,
+        "cab_style": vehicle.cab_style,
+        "bed_length": vehicle.bed_length,
         "vin": vehicle.vin,
         "mileage": vehicle.mileage,
         "color": vehicle.color,
-        "engine": vehicle.engine if _is_vehicle_identity_confirmed(vehicle) else None,
+        "engine": vehicle.engine,
         "identity_confirmation_status": vehicle.identity_confirmation_status,
         "identity_confirmed_at": vehicle.identity_confirmed_at.isoformat()
         if vehicle.identity_confirmed_at
@@ -87,15 +106,22 @@ async def _build_prompt_vehicle_dict(vehicle: Vehicle, db: AsyncSession) -> dict
 
 async def _build_assessment_vehicle_dict(vehicle: Vehicle, db: AsyncSession) -> dict:
     """Build a compact vehicle dict for deal assessment, gating identity fields."""
-    confirmed = _is_vehicle_identity_confirmed(vehicle)
     result = {
-        field: getattr(vehicle, field) if field == "mileage" or confirmed else None
-        for field in ("year", "make", "model", "trim", "mileage")
+        field: getattr(vehicle, field)
+        for field in (
+            "year",
+            "make",
+            "model",
+            "trim",
+            "cab_style",
+            "bed_length",
+            "mileage",
+        )
     }
     intelligence = (
         await build_vehicle_intelligence_response(vehicle.id, db)
     ).model_dump(mode="json")
-    if not confirmed:
+    if not _is_vehicle_identity_confirmed(vehicle):
         intelligence["decode"] = None
     result["intelligence"] = intelligence
     result["identity_confirmation_status"] = vehicle.identity_confirmation_status
@@ -147,7 +173,7 @@ def build_execution_plan(tool_blocks: list[dict]) -> list[list[dict]]:
     for block in tool_blocks:
         priority = TOOL_PRIORITY.get(block["name"], DEFAULT_TOOL_PRIORITY)
         buckets.setdefault(priority, []).append(block)
-    return [buckets[p] for p in sorted(buckets)]
+    return [buckets[priority] for priority in sorted(buckets)]
 
 
 async def execute_tool(
@@ -166,6 +192,9 @@ async def execute_tool(
     db = context.db
 
     if tool_name == "update_negotiation_context":
+        if _json_like_equal(deal_state.negotiation_context, tool_input):
+            logger.debug("Skipped negotiation context update: no changes")
+            return []
         deal_state.negotiation_context = tool_input
         return [{"name": "update_negotiation_context", "args": tool_input}]
 
@@ -235,7 +264,11 @@ async def apply_extraction(
                 logger.debug(
                     "Updated vehicle %s: fields=%s",
                     vehicle_id,
-                    [f for f in vehicle_data if f not in ("vehicle_id", "role")],
+                    [
+                        field_name
+                        for field_name in vehicle_data
+                        if field_name not in ("vehicle_id", "role")
+                    ],
                 )
             else:
                 logger.warning(
@@ -326,7 +359,7 @@ async def apply_extraction(
                 logger.debug(
                     "Updated deal %s: fields=%s",
                     deal_id,
-                    [k for k in deal_data if k != "deal_id"],
+                    [field_name for field_name in deal_data if field_name != "deal_id"],
                 )
             else:
                 logger.warning("create_deal: deal %s not found for update", deal_id)
@@ -364,24 +397,33 @@ async def apply_extraction(
             deal = await get_active_deal(deal_state, db)
         if deal:
             numbers = extraction["numbers"]
-            for field in DEAL_NUMBER_FIELDS:
-                if field in numbers:
+            changed_fields = [
+                field
+                for field in DEAL_NUMBER_FIELDS
+                if field in numbers and getattr(deal, field) != numbers[field]
+            ]
+            if not changed_fields:
+                logger.debug("Skipped deal numbers update: deal=%s no changes", deal.id)
+            else:
+                for field in changed_fields:
                     setattr(deal, field, numbers[field])
-            if (
-                "current_offer" in numbers
-                and deal.first_offer is None
-                and deal.current_offer is not None
-            ):
-                deal.first_offer = deal.current_offer
+                if (
+                    "current_offer" in changed_fields
+                    and deal.first_offer is None
+                    and deal.current_offer is not None
+                ):
+                    deal.first_offer = deal.current_offer
+                    logger.debug(
+                        "Snapshot first_offer=%s for deal %s",
+                        deal.current_offer,
+                        deal.id,
+                    )
+                applied_tools.append({"name": "update_deal_numbers", "args": numbers})
                 logger.debug(
-                    "Snapshot first_offer=%s for deal %s", deal.current_offer, deal.id
+                    "Updated deal numbers: deal=%s, fields=%s",
+                    deal.id,
+                    changed_fields,
                 )
-            applied_tools.append({"name": "update_deal_numbers", "args": numbers})
-            logger.debug(
-                "Updated deal numbers: deal=%s, fields=%s",
-                deal.id,
-                list(numbers.keys()),
-            )
         else:
             logger.warning("update_deal_numbers: no active deal found")
 
@@ -393,18 +435,28 @@ async def apply_extraction(
             deal = await get_active_deal(deal_state, db)
         if deal:
             scorecard_data = extraction["scorecard"]
+            changed_score_fields: list[str] = []
             for field in ("price", "financing", "trade_in", "fees", "overall"):
                 prefixed = f"score_{field}"
                 if prefixed in scorecard_data:
-                    setattr(deal, prefixed, scorecard_data[prefixed])
+                    if getattr(deal, prefixed) != scorecard_data[prefixed]:
+                        setattr(deal, prefixed, scorecard_data[prefixed])
+                        changed_score_fields.append(prefixed)
                 elif field in scorecard_data:
-                    setattr(deal, f"score_{field}", scorecard_data[field])
-            applied_tools.append({"name": "update_scorecard", "args": scorecard_data})
-            logger.debug(
-                "Updated scorecard: deal=%s, fields=%s",
-                deal.id,
-                list(scorecard_data.keys()),
-            )
+                    if getattr(deal, prefixed) != scorecard_data[field]:
+                        setattr(deal, prefixed, scorecard_data[field])
+                        changed_score_fields.append(prefixed)
+            if changed_score_fields:
+                applied_tools.append(
+                    {"name": "update_scorecard", "args": scorecard_data}
+                )
+                logger.debug(
+                    "Updated scorecard: deal=%s, fields=%s",
+                    deal.id,
+                    changed_score_fields,
+                )
+            else:
+                logger.debug("Skipped scorecard update: deal=%s no changes", deal.id)
         else:
             logger.warning("update_scorecard: no active deal found")
 
@@ -418,25 +470,37 @@ async def apply_extraction(
             health_data = extraction["health"]
             if "status" in health_data:
                 try:
-                    deal.health_status = HealthStatus(health_data["status"])
+                    next_status = HealthStatus(health_data["status"])
                 except ValueError:
                     logger.warning(
                         "Invalid health_status from extraction: %s",
                         health_data["status"],
                     )
                 else:
-                    if "summary" in health_data:
-                        deal.health_summary = health_data["summary"]
-                    if "recommendation" in health_data:
-                        deal.recommendation = health_data["recommendation"]
-                    applied_tools.append(
-                        {"name": "update_deal_health", "args": health_data}
+                    next_summary = health_data.get("summary", deal.health_summary)
+                    next_recommendation = health_data.get(
+                        "recommendation", deal.recommendation
                     )
-                    logger.debug(
-                        "Updated deal health: deal=%s, status=%s",
-                        deal.id,
-                        health_data["status"],
-                    )
+                    if (
+                        deal.health_status == next_status
+                        and deal.health_summary == next_summary
+                        and deal.recommendation == next_recommendation
+                    ):
+                        logger.debug(
+                            "Skipped deal health update: deal=%s no changes", deal.id
+                        )
+                    else:
+                        deal.health_status = next_status
+                        deal.health_summary = next_summary
+                        deal.recommendation = next_recommendation
+                        applied_tools.append(
+                            {"name": "update_deal_health", "args": health_data}
+                        )
+                        logger.debug(
+                            "Updated deal health: deal=%s, status=%s",
+                            deal.id,
+                            health_data["status"],
+                        )
         else:
             logger.warning("update_deal_health: no active deal found")
 
@@ -452,39 +516,51 @@ async def apply_extraction(
             deal = await get_active_deal(deal_state, db)
         if deal:
             flags_data = extraction["deal_red_flags"]
-            deal.red_flags = (
+            next_flags = (
                 flags_data.get("flags", flags_data)
                 if isinstance(flags_data, dict)
                 else flags_data
             )
-            applied_tools.append(
-                {
-                    "name": "update_deal_red_flags",
-                    "args": {"deal_id": deal.id, "flags": deal.red_flags},
-                }
-            )
-            logger.debug(
-                "Updated deal red flags: deal=%s, count=%d",
-                deal.id,
-                len(deal.red_flags),
-            )
+            if _json_like_equal(deal.red_flags or [], next_flags):
+                logger.debug(
+                    "Skipped deal red flags update: deal=%s no changes", deal.id
+                )
+            else:
+                deal.red_flags = next_flags
+                applied_tools.append(
+                    {
+                        "name": "update_deal_red_flags",
+                        "args": {"deal_id": deal.id, "flags": deal.red_flags},
+                    }
+                )
+                logger.debug(
+                    "Updated deal red flags: deal=%s, count=%d",
+                    deal.id,
+                    len(deal.red_flags),
+                )
         else:
             logger.warning("update_deal_red_flags: no active deal found")
 
     if "session_red_flags" in extraction:
         flags_data = extraction["session_red_flags"]
-        deal_state.red_flags = (
+        next_flags = (
             flags_data.get("flags", flags_data)
             if isinstance(flags_data, dict)
             else flags_data
         )
-        applied_tools.append(
-            {
-                "name": "update_session_red_flags",
-                "args": {"flags": deal_state.red_flags},
-            }
-        )
-        logger.debug("Updated session red flags: count=%d", len(deal_state.red_flags))
+        if _json_like_equal(deal_state.red_flags or [], next_flags):
+            logger.debug("Skipped session red flags update: no changes")
+        else:
+            deal_state.red_flags = next_flags
+            applied_tools.append(
+                {
+                    "name": "update_session_red_flags",
+                    "args": {"flags": deal_state.red_flags},
+                }
+            )
+            logger.debug(
+                "Updated session red flags: count=%d", len(deal_state.red_flags)
+            )
 
     if "deal_information_gaps" in extraction:
         gaps_deal_id = (
@@ -498,42 +574,53 @@ async def apply_extraction(
             deal = await get_active_deal(deal_state, db)
         if deal:
             gaps_data = extraction["deal_information_gaps"]
-            deal.information_gaps = (
+            next_gaps = (
                 gaps_data.get("gaps", gaps_data)
                 if isinstance(gaps_data, dict)
                 else gaps_data
             )
-            applied_tools.append(
-                {
-                    "name": "update_deal_information_gaps",
-                    "args": {"deal_id": deal.id, "gaps": deal.information_gaps},
-                }
-            )
-            logger.debug(
-                "Updated deal information gaps: deal=%s, count=%d",
-                deal.id,
-                len(deal.information_gaps),
-            )
+            if _json_like_equal(deal.information_gaps or [], next_gaps):
+                logger.debug(
+                    "Skipped deal information gaps update: deal=%s no changes",
+                    deal.id,
+                )
+            else:
+                deal.information_gaps = next_gaps
+                applied_tools.append(
+                    {
+                        "name": "update_deal_information_gaps",
+                        "args": {"deal_id": deal.id, "gaps": deal.information_gaps},
+                    }
+                )
+                logger.debug(
+                    "Updated deal information gaps: deal=%s, count=%d",
+                    deal.id,
+                    len(deal.information_gaps),
+                )
         else:
             logger.warning("update_deal_information_gaps: no active deal found")
 
     if "session_information_gaps" in extraction:
         gaps_data = extraction["session_information_gaps"]
-        deal_state.information_gaps = (
+        next_gaps = (
             gaps_data.get("gaps", gaps_data)
             if isinstance(gaps_data, dict)
             else gaps_data
         )
-        applied_tools.append(
-            {
-                "name": "update_session_information_gaps",
-                "args": {"gaps": deal_state.information_gaps},
-            }
-        )
-        logger.debug(
-            "Updated session information gaps: count=%d",
-            len(deal_state.information_gaps),
-        )
+        if _json_like_equal(deal_state.information_gaps or [], next_gaps):
+            logger.debug("Skipped session information gaps update: no changes")
+        else:
+            deal_state.information_gaps = next_gaps
+            applied_tools.append(
+                {
+                    "name": "update_session_information_gaps",
+                    "args": {"gaps": deal_state.information_gaps},
+                }
+            )
+            logger.debug(
+                "Updated session information gaps: count=%d",
+                len(deal_state.information_gaps),
+            )
 
     if "checklist" in extraction:
         checklist_data = extraction["checklist"]
@@ -545,26 +632,34 @@ async def apply_extraction(
                     "Checklist extraction contained unparseable string, resetting to empty"
                 )
                 checklist_data = []
-        deal_state.checklist = (
+        next_checklist = (
             checklist_data.get("items", checklist_data)
             if isinstance(checklist_data, dict)
             else checklist_data
         )
-        applied_tools.append(
-            {"name": "update_checklist", "args": {"items": deal_state.checklist}}
-        )
-        logger.debug("Updated checklist: count=%d", len(deal_state.checklist))
+        if _json_like_equal(deal_state.checklist or [], next_checklist):
+            logger.debug("Skipped checklist update: no changes")
+        else:
+            deal_state.checklist = next_checklist
+            applied_tools.append(
+                {"name": "update_checklist", "args": {"items": deal_state.checklist}}
+            )
+            logger.debug("Updated checklist: count=%d", len(deal_state.checklist))
 
     if "buyer_context" in extraction:
         try:
-            deal_state.buyer_context = BuyerContext(extraction["buyer_context"])
-            applied_tools.append(
-                {
-                    "name": "update_buyer_context",
-                    "args": {"buyer_context": extraction["buyer_context"]},
-                }
-            )
-            logger.debug("Updated buyer context: %s", extraction["buyer_context"])
+            next_buyer_context = BuyerContext(extraction["buyer_context"])
+            if deal_state.buyer_context == next_buyer_context:
+                logger.debug("Skipped buyer context update: no changes")
+            else:
+                deal_state.buyer_context = next_buyer_context
+                applied_tools.append(
+                    {
+                        "name": "update_buyer_context",
+                        "args": {"buyer_context": extraction["buyer_context"]},
+                    }
+                )
+                logger.debug("Updated buyer context: %s", extraction["buyer_context"])
         except ValueError:
             logger.warning(
                 "Invalid buyer_context from extraction: %s", extraction["buyer_context"]
@@ -627,22 +722,27 @@ async def apply_extraction(
         deal = await get_active_deal(deal_state, db)
         if deal:
             phase_val = extraction["phase"]
-            if (
-                phase_val == DealPhase.FINANCING
-                and deal.pre_fi_price is None
-                and deal.current_offer is not None
-            ):
-                deal.pre_fi_price = deal.current_offer
-                logger.debug(
-                    "Snapshot pre_fi_price=%s for deal %s",
-                    deal.current_offer,
-                    deal.id,
+            if deal.phase == phase_val:
+                logger.debug("Skipped deal phase update: deal=%s no changes", deal.id)
+            else:
+                if (
+                    phase_val == DealPhase.FINANCING
+                    and deal.pre_fi_price is None
+                    and deal.current_offer is not None
+                ):
+                    deal.pre_fi_price = deal.current_offer
+                    logger.debug(
+                        "Snapshot pre_fi_price=%s for deal %s",
+                        deal.current_offer,
+                        deal.id,
+                    )
+                deal.phase = phase_val
+                applied_tools.append(
+                    {"name": "update_deal_phase", "args": {"phase": phase_val}}
                 )
-            deal.phase = phase_val
-            applied_tools.append(
-                {"name": "update_deal_phase", "args": {"phase": phase_val}}
-            )
-            logger.debug("Updated deal phase: deal=%s, phase=%s", deal.id, phase_val)
+                logger.debug(
+                    "Updated deal phase: deal=%s, phase=%s", deal.id, phase_val
+                )
         else:
             logger.warning("update_phase: no active deal found")
 
@@ -660,11 +760,18 @@ async def apply_extraction(
         )
 
     if "deal_comparison" in extraction:
-        deal_state.deal_comparison = extraction["deal_comparison"]
-        applied_tools.append(
-            {"name": "update_deal_comparison", "args": extraction["deal_comparison"]}
-        )
-        logger.debug("Updated deal comparison")
+        next_comparison = extraction["deal_comparison"]
+        if _json_like_equal(deal_state.deal_comparison, next_comparison):
+            logger.debug("Skipped deal comparison update: no changes")
+        else:
+            deal_state.deal_comparison = next_comparison
+            applied_tools.append(
+                {
+                    "name": "update_deal_comparison",
+                    "args": extraction["deal_comparison"],
+                }
+            )
+            logger.debug("Updated deal comparison")
 
     return applied_tools
 
@@ -717,7 +824,6 @@ async def deal_state_to_dict(deal_state: DealState, db: AsyncSession) -> dict:
         "session_red_flags": deal_state.red_flags or [],
         "session_information_gaps": deal_state.information_gaps or [],
         "checklist": deal_state.checklist or [],
-        "ai_panel_cards": deal_state.ai_panel_cards or [],
         "negotiation_context": deal_state.negotiation_context,
     }
 

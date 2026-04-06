@@ -80,15 +80,34 @@ class NegotiationStance(StrEnum):
     POST_PURCHASE = "post_purchase"
 
 
-class AiCardType(StrEnum):
+class AiCardTemplate(StrEnum):
     BRIEFING = "briefing"
     NUMBERS = "numbers"
     VEHICLE = "vehicle"
     WARNING = "warning"
     TIP = "tip"
+    NOTES = "notes"
     CHECKLIST = "checklist"
     SUCCESS = "success"
     COMPARISON = "comparison"
+
+
+class AiCardKind(StrEnum):
+    VEHICLE = "vehicle"
+    NUMBERS = "numbers"
+    WARNING = "warning"
+    NOTES = "notes"
+    COMPARISON = "comparison"
+    CHECKLIST = "checklist"
+    SUCCESS = "success"
+    WHAT_CHANGED = "what_changed"
+    WHAT_STILL_NEEDS_CONFIRMING = "what_still_needs_confirming"
+    DEALER_READ = "dealer_read"
+    YOUR_LEVERAGE = "your_leverage"
+    NEXT_BEST_MOVE = "next_best_move"
+    IF_YOU_SAY_YES = "if_you_say_yes"
+    TRADE_OFF = "trade_off"
+    SAVINGS_SO_FAR = "savings_so_far"
 
 
 class AiCardPriority(StrEnum):
