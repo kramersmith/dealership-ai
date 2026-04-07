@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   BuyerContext,
+  ContextPressure,
   Message,
   MessageUsage,
   QuickAction,
@@ -13,6 +14,13 @@ import type {
 import { MAX_QUICK_ACTIONS } from '@/lib/constants'
 import { api } from '@/lib/api'
 import { useDealStore } from './dealStore'
+
+/** Default values for compaction-related state, shared across all session-reset paths. */
+const COMPACTION_RESET_SLICE = {
+  contextPressure: null as ContextPressure | null,
+  isCompacting: false,
+  suppressContextWarningUntilUsageRefresh: false,
+} as const
 
 /** Build the message content sent to the backend, optionally prefixing with quoted card context. */
 function buildMessageContent(text: string, quotedCard?: QuotedCard): string {
@@ -81,10 +89,16 @@ interface ChatState {
   _sessionJustCreated: boolean
   /** Stashed send params when a VIN intercept pauses the message send. */
   _pendingSend: { content: string; imageUri?: string; quotedCard?: QuotedCard } | null
+  /** Estimated model context use for the next turn (from GET messages). */
+  contextPressure: ContextPressure | null
+  /** Backend is summarizing older turns before streaming the reply. */
+  isCompacting: boolean
+  /** Hide the context-usage banner until messages refresh after a send. */
+  suppressContextWarningUntilUsageRefresh: boolean
 
   loadSessions: () => Promise<void>
   searchSessions: (query: string) => Promise<Session[]>
-  loadMessages: (sessionId: string) => Promise<void>
+  loadMessages: (sessionId: string, opts?: { silent?: boolean }) => Promise<void>
   setActiveSession: (sessionId: string) => Promise<void>
   createSession: (
     type: 'buyer_chat' | 'dealer_sim',
@@ -130,6 +144,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   vinAssistItems: [],
   _sessionJustCreated: false,
   _pendingSend: null,
+  ...COMPACTION_RESET_SLICE,
 
   loadSessions: async () => {
     // Only show loading state if we have no sessions yet (initial load).
@@ -156,14 +171,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  loadMessages: async (sessionId) => {
-    set({ isLoading: true })
+  loadMessages: async (sessionId, opts) => {
+    if (!opts?.silent) set({ isLoading: true })
     try {
-      const messages = await api.getMessages(sessionId)
-      set({ messages, isLoading: false })
+      const { messages, contextPressure } = await api.getMessages(sessionId)
+      set((s) => ({
+        messages,
+        contextPressure,
+        isLoading: opts?.silent ? s.isLoading : false,
+      }))
     } catch (err) {
       console.error('[chatStore] loadMessages failed:', err instanceof Error ? err.message : err)
-      set({ isLoading: false })
+      if (!opts?.silent) set({ isLoading: false })
     }
   },
 
@@ -187,13 +206,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isLoading: true,
       _sessionJustCreated: false,
       _pendingSend: null,
+      ...COMPACTION_RESET_SLICE,
     })
     try {
-      const [messages] = await Promise.all([
+      const [{ messages, contextPressure }] = await Promise.all([
         api.getMessages(sessionId),
         useDealStore.getState().loadDealState(sessionId),
       ])
-      set({ messages, isLoading: false })
+      set({ messages, contextPressure, isLoading: false })
     } catch (err) {
       console.error(
         '[chatStore] setActiveSession failed:',
@@ -218,6 +238,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         quickActionsUpdatedAtResponse: 0,
         isCreatingSession: false,
         _sessionJustCreated: true,
+        ...COMPACTION_RESET_SLICE,
       }))
       useDealStore.getState().resetDealState(session.id, buyerContext)
       return session
@@ -241,6 +262,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         aiResponseCount: isActive ? 0 : state.aiResponseCount,
         quickActionsUpdatedAtResponse: isActive ? 0 : state.quickActionsUpdatedAtResponse,
         _pendingSend: isActive ? null : state._pendingSend,
+        contextPressure: isActive ? null : state.contextPressure,
+        isCompacting: isActive ? false : state.isCompacting,
+        suppressContextWarningUntilUsageRefresh: isActive
+          ? false
+          : state.suppressContextWarningUntilUsageRefresh,
       }))
     } catch (err) {
       console.error('[chatStore] deleteSession failed:', err instanceof Error ? err.message : err)
@@ -328,6 +354,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     try {
+      set({ suppressContextWarningUntilUsageRefresh: true, isCompacting: false })
       // Track response count for staleness
       const newResponseCount = get().aiResponseCount + 1
       let messageFinalized = false
@@ -395,7 +422,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         () => set({ isRetrying: true }),
         () => set({ isThinking: true }),
         () => set({ isPanelAnalyzing: true }),
-        () => set({ isPanelAnalyzing: false })
+        () => set({ isPanelAnalyzing: false }),
+        (phase) => {
+          set({ isCompacting: phase === 'started' })
+        }
       )
 
       // If no tool results arrived (rare), finalize from onload
@@ -417,6 +447,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get()
         .loadSessions()
         .catch(() => {})
+      await get()
+        .loadMessages(activeSessionId, { silent: true })
+        .catch(() => {})
+      set({ suppressContextWarningUntilUsageRefresh: false, isCompacting: false })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
       console.error('[chatStore] sendMessage failed:', message)
@@ -432,6 +466,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isRetrying: false,
         isThinking: false,
         isPanelAnalyzing: false,
+        ...COMPACTION_RESET_SLICE,
         sendError: message,
       }))
     }

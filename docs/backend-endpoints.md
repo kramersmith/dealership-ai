@@ -418,7 +418,25 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. The core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for unrecoverable API failures. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`.
+The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. Core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for unrecoverable API failures. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`.
+
+**`compaction_started` event** — Compaction began (heuristic input estimate crossed auto threshold):
+```
+event: compaction_started
+data: {"reason": "input_budget", "estimated_input_tokens": 195000, "input_budget": 180000}
+```
+
+**`compaction_done` event** — Rolling summary updated; model-facing tail starts at `first_kept_message_id`:
+```
+event: compaction_done
+data: {"first_kept_message_id": "uuid"}
+```
+
+**`compaction_error` event** — Summarization failed; the turn continues without compacting:
+```
+event: compaction_error
+data: {"message": "Context summarization failed; continuing without compacting.", "detail": "APIStatusError"}
+```
 
 **`text` event** — Incremental text chunks from the AI:
 ```
@@ -475,8 +493,9 @@ data: {"message": "AI response failed. Please try again."}
 ```
 
 **Side effects:**
-- Message history is loaded before the user message is saved (prevents duplicate user messages in Claude context)
-- User message is persisted before streaming begins; deleted on stream failure or failed step loop to prevent duplicate history on retry
+- Full message history is loaded before the new user turn is persisted
+- Optional auto-compaction may run first inside the stream: can persist `Message(role=system)` notice, update `ChatSession.compaction_state`, and `commit` before the user message is saved
+- The new user message is persisted after any compaction side effects, then chat streaming runs; the user message is deleted on stream failure or failed step loop to prevent duplicate history on retry (compaction state and system notices are not rolled back on chat failure; see ADR 0016 / ADR 0017)
 - The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
 - Panel generation runs after `done`; incremental cards are streamed via `panel_card`, and panel-phase usage is reported on `panel_done`
 - Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals
@@ -496,7 +515,7 @@ data: {"message": "AI response failed. Please try again."}
 
 ### GET /api/chat/{session_id}/messages
 
-Get the full message history for a session, ordered by creation time.
+Get the full message history for a session, ordered by creation time, plus **context pressure** for the next model turn (heuristic token estimate vs budget).
 
 **Auth required:** Yes
 
@@ -509,39 +528,47 @@ Get the full message history for a session, ordered by creation time.
 **Response:** `200 OK`
 
 ```json
-[
-  {
-    "id": "uuid",
-    "session_id": "uuid",
-    "role": "user",
-    "content": "I'm looking at a 2024 Camry",
-    "image_url": null,
-    "tool_calls": null,
-    "created_at": "2026-03-24T12:00:00Z"
-  },
-  {
-    "id": "uuid",
-    "session_id": "uuid",
-    "role": "assistant",
-    "content": "Great choice. What's the asking price?",
-    "image_url": null,
-    "tool_calls": [
-      {
-        "name": "set_vehicle",
-        "args": {"year": 2024, "make": "Toyota", "model": "Camry"}
-      }
-    ],
-    "usage": {
-      "requests": 2,
-      "inputTokens": 1240,
-      "outputTokens": 188,
-      "cacheCreationInputTokens": 0,
-      "cacheReadInputTokens": 620,
-      "totalTokens": 1428
+{
+  "messages": [
+    {
+      "id": "uuid",
+      "session_id": "uuid",
+      "role": "user",
+      "content": "I'm looking at a 2024 Camry",
+      "image_url": null,
+      "tool_calls": null,
+      "usage": null,
+      "created_at": "2026-03-24T12:00:00Z"
     },
-    "created_at": "2026-03-24T12:00:01Z"
+    {
+      "id": "uuid",
+      "session_id": "uuid",
+      "role": "assistant",
+      "content": "Great choice. What's the asking price?",
+      "image_url": null,
+      "tool_calls": [
+        {
+          "name": "set_vehicle",
+          "args": {"year": 2024, "make": "Toyota", "model": "Camry"}
+        }
+      ],
+      "usage": {
+        "requests": 2,
+        "inputTokens": 1240,
+        "outputTokens": 188,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 620,
+        "totalTokens": 1428
+      },
+      "created_at": "2026-03-24T12:00:01Z"
+    }
+  ],
+  "context_pressure": {
+    "level": "ok",
+    "estimated_input_tokens": 42000,
+    "input_budget": 180000
   }
-]
+}
 ```
 
 Message-level `usage` remains per assistant turn. Session-wide totals are exposed on the session resource. Stream usage is phase-specific (`done` for chat phase, `panel_done` for panel phase).

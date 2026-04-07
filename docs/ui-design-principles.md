@@ -1,6 +1,6 @@
 # UI Design Principles for Dealership AI
 
-**Last updated:** 2026-03-25
+**Last updated:** 2026-04-06
 
 This document explains core UX concepts that drive the frontend design. AI agents and engineers should reference it when building or refining interfaces to ensure consistent, trustworthy, and low-friction user experiences.
 
@@ -194,3 +194,4 @@ When building or refining UI:
 5. **Micro-interactions** – Add tap/active feedback, entrance animations, and loading states. Keep them fast and subtle. Touch is primary; hover is enhancement only.
 6. **Theme compliance** – No hardcoded hex values. Use Tamagui theme tokens (`$background`, `$color`, etc.), `useTheme()` for JS values, and `<Theme name="danger|warning|success">` wrappers for status surfaces. All colors defined in `lib/theme/tokens.ts`.
 7. **Touch targets** – All interactive elements must be at least 44×44px.
+8. **Chat status surfaces** – Context pressure warnings and `system`-role messages (e.g. context compaction notices) use theme tokens and subdued typography so they read as meta-information, not assistant advice.

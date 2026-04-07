@@ -22,6 +22,9 @@ const baseState = {
   vinAssistItems: [] as VinAssistItem[],
   _sessionJustCreated: false,
   _pendingSend: null,
+  contextPressure: null,
+  isCompacting: false,
+  suppressContextWarningUntilUsageRefresh: false,
 }
 
 describe('useChatStore.sendMessage', () => {
@@ -127,5 +130,77 @@ describe('useChatStore.sendMessage', () => {
     expect(state.isPanelAnalyzing).toBe(false)
     expect(state.isSending).toBe(false)
     expect(state.sendError).toBe('panel request failed')
+  })
+
+  it('sets isCompacting during compaction and clears it after send completes', async () => {
+    let compactionCallback: ((phase: 'started' | 'done' | 'error') => void) | undefined
+
+    api.sendMessage = vi.fn(
+      async (
+        sessionId,
+        content,
+        imageUri,
+        onChunk,
+        onToolResult,
+        onTextDone,
+        onRetry,
+        onStep,
+        onPanelStarted,
+        onPanelFinished,
+        onCompaction
+      ) => {
+        void sessionId
+        void content
+        void imageUri
+        void onChunk
+        void onToolResult
+        void onRetry
+        void onStep
+        void onPanelStarted
+        void onPanelFinished
+
+        compactionCallback = onCompaction
+        onCompaction?.('started')
+        // Simulate compaction completing before text streaming
+        onCompaction?.('done')
+        onTextDone?.('Reply after compaction')
+
+        return {
+          id: 'a-compact',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'Reply after compaction',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+
+    const state = useChatStore.getState()
+    expect(state.isCompacting).toBe(false)
+    expect(state.suppressContextWarningUntilUsageRefresh).toBe(false)
+    expect(compactionCallback).toBeDefined()
+  })
+
+  it('sets suppressContextWarningUntilUsageRefresh during send and clears after', async () => {
+    api.sendMessage = vi.fn(
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
+        // During send, suppressContextWarningUntilUsageRefresh should be true
+        expect(useChatStore.getState().suppressContextWarningUntilUsageRefresh).toBe(true)
+        onTextDone?.('reply')
+        return {
+          id: 'a-suppress',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'reply',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+
+    expect(useChatStore.getState().suppressContextWarningUntilUsageRefresh).toBe(false)
   })
 })

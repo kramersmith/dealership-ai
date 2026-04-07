@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Animated, Platform } from 'react-native'
-import { YStack, XStack, Text, useTheme, Button } from 'tamagui'
+import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
 import { RefreshCw } from '@tamagui/lucide-icons'
 import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
@@ -31,6 +31,7 @@ export const ChatBubble = memo(function ChatBubble({
   skipAnimation = false,
 }: ChatBubbleProps) {
   const isUser = message.role === 'user'
+  const isSystem = message.role === 'system'
   const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
   const theme = useTheme()
   const assistantColors = getAssistantMarkdownColors(theme)
@@ -53,6 +54,37 @@ export const ChatBubble = memo(function ChatBubble({
         }
       : assistantColors
   )
+
+  if (isSystem) {
+    return (
+      <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+        <XStack justifyContent="center" paddingHorizontal="$4" paddingVertical="$1">
+          <Theme name="warning">
+            <YStack
+              maxWidth={CHAT_BUBBLE_MAX_WIDTH}
+              width="100%"
+              backgroundColor="$background"
+              borderRadius="$3"
+              paddingHorizontal="$3"
+              paddingVertical="$2.5"
+              borderWidth={1}
+              borderColor="$borderColor"
+            >
+              <Text fontSize={13} lineHeight={19} color="$color" textAlign="center">
+                {message.content}
+              </Text>
+              <Text fontSize={10} color="$placeholderColor" textAlign="center" marginTop="$1">
+                {new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </YStack>
+          </Theme>
+        </XStack>
+      </Animated.View>
+    )
+  }
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>

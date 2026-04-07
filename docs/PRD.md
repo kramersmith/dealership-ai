@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-06
 
 ---
 
@@ -178,7 +178,8 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 - Assistant messages render as Markdown (bold, lists, code blocks, links) via `react-native-markdown-display`; user messages render as plain text
 - Automatically calls tools to update the persistent dashboard when deal information changes
 - Server-side quick action generation via Haiku when Claude doesn't suggest them
-- Maintains conversation history within a session (last 20 messages sent to Claude)
+- Maintains full conversation history in the database; the model receives a projected window (rolling summary when compaction has run, plus up to the last 20 user/assistant turns). Long sessions can trigger automatic summarization with a visible system notice (ADR 0017).
+- **Context pressure** — the chat screen can surface when estimated context use is approaching limits (from `context_pressure` on the messages API), nudging the user without blocking chat.
 - Voice input via device speech-to-text
 - Context-aware system prompt preambles adapt AI tone and advice style based on buyer context (researching, reviewing a deal, at the dealership)
 
@@ -207,7 +208,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 **Card reply system:** Every insight card has a MessageCircle reply icon. Tapping it opens a slide-in input drawer attached to the card. Submitting sends a chat message with the card context quoted, so the AI can respond with full awareness of what the user is referencing. A QuotedCardPreview renders a compact summary of the referenced card inside the user's chat bubble.
 
-**Inline editing:** Users can tap to correct dealer name. Corrections are sent as structured payloads to `PATCH /api/deal/{session_id}`, which triggers a Haiku re-assessment. AiVehicleCard inline editing is temporarily disabled (Tamagui web runtime workaround). Users can ask about or correct values via the card reply system instead.
+**Inline editing:** Users can tap to correct dealer name. Corrections are sent as structured payloads to `PATCH /api/deal/{session_id}`, which triggers a Sonnet re-assessment via `analyze_deal()`. AiVehicleCard inline editing is temporarily disabled (Tamagui web runtime workaround). Users can ask about or correct values via the card reply system instead.
 
 **Negotiation context:** The backend maintains a structured negotiation context (stance, situation, key numbers, scripts, pending actions, leverage) via a situation assessor subagent that runs in parallel with other extraction subagents. The SituationBar component displays the current stance and situation summary above the card list. Negotiation context is persisted on the deal state and emitted as `update_negotiation_context` tool_result events.
 
@@ -274,7 +275,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 **Implementation status:** Built. Auth, sessions, chat (SSE streaming), deals, and simulations routes all implemented.
 
 **Key details:**
-- Claude API integration with two models: Sonnet (primary, with 10 tool definitions) and Haiku (fast, for quick action generation, session titles, and deal assessment safety net)
+- Claude API integration with two models: Sonnet (primary chat, tools, panel generation, deal re-analysis, and context compaction summarization) and Haiku (fast, for quick action generation and session titles)
 - Two-pass response architecture: tool-only responses trigger a follow-up text generation call
 - SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (two-pass text), `done` events
 - SQLite for local development, PostgreSQL via Docker for production

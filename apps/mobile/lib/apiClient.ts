@@ -1,6 +1,7 @@
 import type {
   ApiService,
   BuyerContext,
+  ContextPressure,
   Session,
   Message,
   DealState,
@@ -432,21 +433,33 @@ class ApiClient implements ApiService {
 
   // ─── Chat ───
 
-  async getMessages(sessionId: string): Promise<Message[]> {
-    const msgs = await request<any[]>(`/chat/${sessionId}/messages`)
-    return msgs.map((m) => ({
-      id: m.id,
-      sessionId: m.session_id,
-      role: m.role,
-      content: m.content,
-      imageUri: m.image_url,
-      toolCalls: m.tool_calls?.map((tc: any) => ({
-        name: tc.name as ToolCall['name'],
-        args: tc.args,
+  async getMessages(sessionId: string): Promise<{
+    messages: Message[]
+    contextPressure: ContextPressure
+  }> {
+    const res = await request<any>(`/chat/${sessionId}/messages`)
+    const raw = res.messages ?? []
+    const cp = res.context_pressure ?? {}
+    return {
+      messages: raw.map((m: any) => ({
+        id: m.id,
+        sessionId: m.session_id,
+        role: m.role,
+        content: m.content,
+        imageUri: m.image_url,
+        toolCalls: m.tool_calls?.map((tc: any) => ({
+          name: tc.name as ToolCall['name'],
+          args: tc.args,
+        })),
+        usage: m.usage,
+        createdAt: m.created_at,
       })),
-      usage: m.usage,
-      createdAt: m.created_at,
-    }))
+      contextPressure: {
+        level: cp.level === 'warn' || cp.level === 'critical' ? cp.level : 'ok',
+        estimatedInputTokens: Number(cp.estimated_input_tokens ?? 0),
+        inputBudget: Number(cp.input_budget ?? 0),
+      },
+    }
   }
 
   sendMessage(
@@ -459,7 +472,8 @@ class ApiClient implements ApiService {
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,
-    onPanelFinished?: () => void
+    onPanelFinished?: () => void,
+    onCompaction?: (phase: 'started' | 'done' | 'error') => void
   ): Promise<Message> {
     // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
     // is buffered by React Native's polyfill and doesn't deliver chunks live.
@@ -585,6 +599,12 @@ class ApiClient implements ApiService {
               onRetry?.(data)
             } else if (eventType === 'step') {
               onStep?.(data)
+            } else if (eventType === 'compaction_started') {
+              onCompaction?.('started')
+            } else if (eventType === 'compaction_done') {
+              onCompaction?.('done')
+            } else if (eventType === 'compaction_error') {
+              onCompaction?.('error')
             } else if (eventType === 'tool_error') {
               console.warn('[apiClient] Tool execution error:', data.tool, data.error)
             } else if (eventType === 'tool_result' && data.tool) {

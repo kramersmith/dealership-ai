@@ -38,6 +38,7 @@ class ChatSession(Base):
     )
     linked_session_ids: Mapped[list] = mapped_column(JSON, default=list)
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    compaction_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
     )

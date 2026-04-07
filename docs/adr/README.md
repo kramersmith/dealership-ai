@@ -26,3 +26,4 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0014](0014-confirmed-vin-decode-promotion.md) | Confirmed VIN decode promotion | Accepted | 2026-04 |
 | [0015](0015-prompt-cache-break-detection.md) | Prompt cache break detection via request fingerprinting | Accepted | 2026-04 |
 | [0016](0016-chat-error-resilience-and-orphan-cleanup.md) | Chat error resilience — API error mapping and orphan cleanup | Accepted | 2026-04 |
+| [0017](0017-context-compaction-custom.md) | Custom context compaction (buyer chat) | Accepted | 2026-04 |

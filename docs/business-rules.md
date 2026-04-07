@@ -191,12 +191,12 @@ Sessions can be linked to other sessions via `linked_session_ids`. When a sessio
 
 ### Message History Limits
 
-The Claude API context window includes the most recent **20 messages** from the current session (`CLAUDE_MAX_HISTORY = 20`). Older messages are persisted in the database but not sent to the AI.
+The database stores the **full** transcript. For each Claude request, the backend builds a **projection**: optional rolling-summary prefix from `ChatSession.compaction_state` (after auto-compaction) plus at most the last **20 user/assistant turns** in the logical tail (`CLAUDE_MAX_HISTORY = 20`). When a heuristic input-token estimate exceeds policy thresholds, **auto context compaction** may summarize older dialogue into that rolling summary using the primary model (`CLAUDE_MODEL`), persist a `system` notice message, and emit `compaction_*` SSE events (see ADR 0017). `GET /api/chat/{session_id}/messages` returns `context_pressure` using the same estimate so the client can warn before limits are hit.
 
 ### Message Structure
 
 Each message stores:
-- `role` — `user` or `assistant`
+- `role` — `user`, `assistant`, or `system` (`system` is used for user-visible compaction notices and similar)
 - `content` — The message text
 - `image_url` — Optional image attachment (e.g., photo of a deal sheet)
 - `tool_calls` — For assistant messages, the list of tool calls made (name + args)
@@ -490,14 +490,26 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 | `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR` | `2` | Multiplier used for each bounded truncation retry |
 | `CLAUDE_MAX_TOKENS_CAP` | `8192` | Hard cap for escalated truncation retries |
 | `CLAUDE_MAX_TOKENS` | `4096` | Maximum tokens per response |
-| `CLAUDE_MAX_HISTORY` | `20` | Messages included in context window |
+| `CLAUDE_MAX_HISTORY` | `20` | User/assistant turns in the projected tail sent to the model |
+| `CLAUDE_COMPACTION_ENABLED` | `true` | When true, auto-compaction may run on `POST /api/chat/.../message` |
+| `CLAUDE_CONTEXT_INPUT_BUDGET` | `180000` | Policy input-token budget for compaction triggers and `context_pressure` |
+| `CLAUDE_COMPACTION_WARN_BUFFER_TOKENS` | `20000` | Warn tier: pressure when estimate ≥ budget minus this |
+| `CLAUDE_COMPACTION_AUTO_BUFFER_TOKENS` | `13000` | Auto-compact when estimate ≥ budget minus this |
+| `CLAUDE_COMPACTION_VERBATIM_MESSAGES` | `8` | User/assistant turns kept verbatim after a fold |
+| `CLAUDE_COMPACTION_SUMMARY_MAX_TOKENS` | `2048` | Max output tokens for compaction summarization call |
+| `CLAUDE_COMPACTION_MAX_CONSECUTIVE_FAILURES` | `3` | Circuit breaker — skip auto-compaction after this many failures |
+| `CLAUDE_COMPACTION_PTL_MAX_RETRIES` | `3` | Retries when summarizer hits prompt-too-long (with segment shrink) |
+| `CLAUDE_COMPACTION_STATIC_OVERHEAD_TOKENS` | `12000` | Estimated static overhead in pressure math |
 
 ### Streaming
 
-Chat responses are streamed via Server-Sent Events (SSE) with core chat and panel lifecycle events:
+Chat responses are streamed via Server-Sent Events (SSE) with optional compaction, core chat, and panel lifecycle events:
 
 | Event | Data | Description |
 |---|---|---|
+| `compaction_started` | `{"reason", "estimated_input_tokens", "input_budget"}` | Auto-compaction began for this turn |
+| `compaction_done` | `{"first_kept_message_id"}` | Rolling summary updated; tail pointer moved |
+| `compaction_error` | `{"message": "...", "detail": "..."}` (detail optional) | Summarization failed; chat continues without compacting |
 | `text` | `{"chunk": "..."}` | Incremental text from the AI response |
 | `tool_result` | `{"tool": "...", "data": {...}}` | A tool call result for dashboard updates |
 | `retry` | `{"attempt": 1, "reason": "max_tokens", "reset_text": true, ...}` | Stream recovery or bounded truncation replay |
@@ -533,7 +545,8 @@ If Claude doesn't call `update_quick_actions` during the primary response, the b
 - Max tokens capped at 4096 per response (primary model)
 - Quick action generation capped at 256 tokens (fast model)
 - Session title generation capped at 30 tokens (fast model)
-- Message history limited to 20 messages to control context size
+- Projected chat history limited to 20 user/assistant turns plus optional rolling-summary prefix; full history stays in the database
+- Compaction summarization uses the primary model and `CLAUDE_COMPACTION_SUMMARY_MAX_TOKENS` (additional cost on long sessions when compaction runs)
 - Linked session context limited to last 10 messages, each truncated to 200 characters
 - Assistant message `usage` is persisted per turn, while `ChatSession.usage` stores the cumulative per-session ledger with per-model totals and USD cost
 

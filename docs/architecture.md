@@ -1,5 +1,7 @@
 # Dealership AI MVP — Technical Architecture Plan
 
+**Last updated:** 2026-04-06
+
 ## Context
 Greenfield build of a unified AI-powered smartphone app for the car buying experience, serving both buyers and dealers within a single app with role-based access. Solo developer, tight budget, targeting iOS/Android/web. Stack: React Native (Expo) → FastAPI → Claude API (claude-sonnet-4-6) → PostgreSQL.
 
@@ -97,7 +99,7 @@ dealership-ai/
 
 **users** — (id, email, hashed_password, role [UserRole enum: buyer/dealer], display_name, created_at)
 
-**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, usage JSON, timestamps). `usage` stores the cumulative per-session Claude ledger: request counts, token totals, cache token totals, per-model totals, and computed USD cost. Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
+**chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, usage JSON, compaction_state JSON nullable, timestamps). `usage` stores the cumulative per-session Claude ledger: request counts, token totals, cache token totals, per-model totals, and computed USD cost. `compaction_state` holds rolling summary + verbatim-tail pointer for long-chat projection (ADR 0017). Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, created_at)
 
@@ -175,9 +177,9 @@ These are used with the quick sign-in buttons on the login screen (visible only 
 ## FastAPI Routes
 
 ```
-POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/error/done + panel_started/panel_card/panel_done/panel_error)
+POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/error/done + compaction_* + panel_started/panel_card/panel_done/panel_error)
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
-GET    /chat/{session_id}/messages    # Message history
+GET    /chat/{session_id}/messages    # { messages, context_pressure } — history + estimated context use (see ADR 0017)
 
 GET    /sessions                      # List sessions (optional ?q= search)
 POST   /sessions                      # Create session
@@ -203,6 +205,8 @@ POST   /simulations/{id}/complete     # End + score
 ---
 
 ## Core Architecture: Step Loop → AI Panel Cards
+
+**Context compaction (buyer chat, long sessions):** Before persisting the new user message on `POST /api/chat/{id}/message`, the stream may run `run_auto_compaction_if_needed()` (`compaction.py`) when heuristic input estimates exceed policy thresholds. That updates `ChatSession.compaction_state`, may insert a `system` notice row, and emits `compaction_*` SSE events. `build_messages()` accepts an optional `compaction_prefix` so the rolling summary participates in the model-facing transcript without deleting DB history (ADR 0017). `GET .../messages` returns `context_pressure` for the same estimate.
 
 **Extraction architecture:** The backend uses a two-pass extraction approach with parallel subagents:
 1. **Factual extractor** — extracts structured data (vehicle, deal numbers, scorecard, phase, buyer context, checklist, quick actions) from conversation

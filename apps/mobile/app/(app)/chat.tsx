@@ -183,6 +183,11 @@ export default function ChatScreen() {
     useChat(activeSessionId)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
   const isRetrying = useChatStore((state) => state.isRetrying)
+  const contextPressure = useChatStore((state) => state.contextPressure)
+  const isCompacting = useChatStore((state) => state.isCompacting)
+  const suppressContextWarningUntilUsageRefresh = useChatStore(
+    (state) => state.suppressContextWarningUntilUsageRefresh
+  )
 
   // Mobile entrance animation — fade + slide up when the chat screen mounts
   const mobileEntrance = useSlideIn(isDesktop ? 0 : 260, 40)
@@ -222,6 +227,9 @@ export default function ChatScreen() {
         aiResponseCount: 0,
         quickActionsUpdatedAtResponse: 0,
         _sessionJustCreated: false,
+        contextPressure: null,
+        isCompacting: false,
+        suppressContextWarningUntilUsageRefresh: false,
       })
     },
   })
@@ -343,6 +351,9 @@ export default function ChatScreen() {
       aiResponseCount: 0,
       quickActionsUpdatedAtResponse: 0,
       _sessionJustCreated: false,
+      contextPressure: null,
+      isCompacting: false,
+      suppressContextWarningUntilUsageRefresh: false,
     })
   }
 
@@ -553,6 +564,34 @@ export default function ChatScreen() {
           ) : null}
         </YStack>
       )}
+      {isCompacting ? (
+        <YStack paddingHorizontal="$3" paddingVertical="$2" backgroundColor="$backgroundHover">
+          <Text fontSize={12} lineHeight={18} color="$placeholderColor">
+            Summarizing earlier messages so the assistant can keep full context…
+          </Text>
+        </YStack>
+      ) : null}
+      {!suppressContextWarningUntilUsageRefresh &&
+      contextPressure &&
+      (contextPressure.level === 'warn' || contextPressure.level === 'critical') ? (
+        <Theme name="warning">
+          <YStack
+            paddingHorizontal="$3"
+            paddingVertical="$2"
+            borderTopWidth={1}
+            borderTopColor="$borderColor"
+            backgroundColor="$background"
+          >
+            <Text fontSize={12} lineHeight={18} color="$color">
+              {contextPressure.level === 'critical'
+                ? 'Context usage is very high. The assistant may summarize older turns automatically on your next message.'
+                : 'Context usage is getting high. Consider starting a fresh chat for a new vehicle or deal if replies degrade.'}{' '}
+              (about {contextPressure.estimatedInputTokens.toLocaleString()} /{' '}
+              {contextPressure.inputBudget.toLocaleString()} tokens)
+            </Text>
+          </YStack>
+        </Theme>
+      ) : null}
       <ChatInput
         onSend={handleDirectSend}
         disabled={isSending}

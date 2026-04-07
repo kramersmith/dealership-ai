@@ -60,6 +60,8 @@ make dev-backend
 
 The backend uses SQLite by default for local development. No PostgreSQL setup needed unless you want to use Docker.
 
+If you pull schema changes (e.g. new columns such as `chat_sessions.compaction_state`) and keep an existing SQLite file, `create_all` will not alter tables — remove `dealership.db` or apply an `ALTER TABLE` manually for that column.
+
 ### Frontend
 
 ```bash
@@ -84,6 +86,15 @@ make dev-frontend
 | `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for quick actions, titles, deal assessment |
 | `CLAUDE_MAX_TOKENS` | `4096` | Max tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages to include in context |
+| `CLAUDE_COMPACTION_ENABLED` | `true` | Auto-summarize older turns when context estimate exceeds budget |
+| `CLAUDE_CONTEXT_INPUT_BUDGET` | `180000` | Effective input token budget for compaction / pressure |
+| `CLAUDE_COMPACTION_WARN_BUFFER_TOKENS` | `20000` | Warn when estimated input ≥ budget minus this |
+| `CLAUDE_COMPACTION_AUTO_BUFFER_TOKENS` | `13000` | Auto-compact when estimated input ≥ budget minus this |
+| `CLAUDE_COMPACTION_VERBATIM_MESSAGES` | `8` | User/assistant turns kept verbatim after compaction |
+| `CLAUDE_COMPACTION_SUMMARY_MAX_TOKENS` | `2048` | Compaction summary max output tokens (`CLAUDE_MODEL`) |
+| `CLAUDE_COMPACTION_MAX_CONSECUTIVE_FAILURES` | `3` | Circuit breaker — skip auto-compaction after this many failures |
+| `CLAUDE_COMPACTION_PTL_MAX_RETRIES` | `3` | Retries when summarizer hits prompt-too-long |
+| `CLAUDE_COMPACTION_STATIC_OVERHEAD_TOKENS` | `12000` | Estimated system + tools + overhead in pressure math |
 | `CLAUDE_MAX_TOKENS_RETRIES` | `1` | Retry count when Claude stops at `max_tokens` |
 | `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR` | `2` | Multiplier for each truncation retry budget |
 | `CLAUDE_MAX_TOKENS_CAP` | `8192` | Hard cap for escalated retry budgets |

@@ -1,6 +1,6 @@
 # Site Map and User Flows
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-06
 
 ---
 
@@ -66,7 +66,7 @@ flowchart TD
 | `/(auth)/login` | Login | -- | -- | None | Email/password login with quick sign-in buttons |
 | `/(auth)/register` | Register | -- | -- | None | Account creation with "Buying"/"Selling" role selection |
 | `/(app)/chats` | Chats | Yes | -- | RoleGuard(buyer) | Buyer home screen; session list with search, Active/Past sections, SessionCard (phase dot, preview, deal summary); single-session fast-path; ContextPicker empty state |
-| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist); back button to chats list; dynamic title from session |
+| `/(app)/chat` | Chat | Yes | -- | RoleGuard(buyer) | AI chat with deal dashboard (phase, numbers, scorecard, vehicle, checklist); context pressure banner from messages API; system-role bubbles for compaction notices; back button to chats list; dynamic title from session |
 | `/(app)/simulations` | Simulations | -- | Yes | RoleGuard(dealer) | Browse AI training scenarios; start a new simulation |
 | `/(app)/sim/[id]` | Simulation Chat | -- | Yes | RoleGuard(dealer) | Live chat session for a selected training scenario |
 | `/(app)/settings` | Settings | Yes | Yes | None (shared) | App settings (theme toggle, logout); back button with animated icon entrance |

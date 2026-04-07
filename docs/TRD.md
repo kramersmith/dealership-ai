@@ -95,12 +95,13 @@ graph TB
 ### Request Flow: Chat Message with Tool Use
 
 1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL).
-2. Backend saves the user message to the `messages` table.
-3. Backend loads message history (last 20 messages) and current deal state.
-4. Backend constructs a `TurnContext` (session, deal state, DB session) and builds the message list. A per-turn context message — deal state, context-aware preamble based on `buyer_context`, negotiation context summary, linked session context, and current UTC date for temporal grounding — is merged into the user message as content blocks (no synthetic assistant reply). The system prompt stays stable and cacheable across turns.
+2. Backend loads persisted message history for the session, deal state, and (if configured) linked-session messages **before** saving the new user turn.
+3. Inside the SSE stream, **optional auto context compaction** may run first when a heuristic input-token estimate crosses a policy threshold (see ADR 0017): the backend can call the primary model (`CLAUDE_MODEL`) to refresh a rolling summary, update `ChatSession.compaction_state`, persist a `Message(role=system)` notice, emit `compaction_started` / `compaction_done` or `compaction_error`, and refresh history for projection.
+4. Backend persists the new user message, constructs a `TurnContext` (session, deal state, DB session), and builds the Claude message list: projected dialogue (rolling-summary prefix when present, then up to `CLAUDE_MAX_HISTORY` user/assistant turns) plus the new user turn. A per-turn context message — deal state, context-aware preamble based on `buyer_context`, negotiation context summary, linked session context, and current UTC date for temporal grounding — is merged into the user message as content blocks (no synthetic assistant reply). The system prompt stays stable and cacheable across turns.
 5. Backend opens a streaming connection to the Claude API (Sonnet) with the current tool set.
 6. Claude streams back text chunks and tool calls.
 7. Backend relays SSE events to the client as the turn progresses:
+    - `event: compaction_started` / `event: compaction_done` / `event: compaction_error` -- optional context compaction lifecycle **before** chat streaming when auto-compaction runs
     - `event: text` -- conversation text chunks
     - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
     - `event: retry` -- stream recovery or `max_tokens` replay signal, including `reset_text` when the client should discard partial text
@@ -199,7 +200,7 @@ graph TB
 | `PATCH`  | `/api/sessions/{session_id}`      | Yes  | Update title or linked sessions     |
 | `DELETE` | `/api/sessions/{session_id}`      | Yes  | Delete session                      |
 | `POST`   | `/api/chat/{session_id}/message`  | Yes  | Send message, receive SSE stream    |
-| `GET`    | `/api/chat/{session_id}/messages` | Yes  | Get message history for session     |
+| `GET`    | `/api/chat/{session_id}/messages` | Yes  | Message history plus `context_pressure` (estimated next-turn input vs budget) |
 | `GET`    | `/api/deal/{session_id}`          | Yes  | Get deal state for session          |
 | `PATCH`  | `/api/deal/{session_id}`          | Yes  | User corrections → Sonnet re-assessment |
 | `GET`    | `/api/simulations/scenarios`      | Yes  | List available simulation scenarios |
@@ -215,6 +216,15 @@ data: {"chunk": "Here's what I think about..."}
 
 event: tool_result
 data: {"tool": "update_deal_numbers", "data": {"msrp": 35000, "listing_price": 33500}}
+
+event: compaction_started
+data: {"reason": "input_budget", "estimated_input_tokens": 195000, "input_budget": 180000}
+
+event: compaction_done
+data: {"first_kept_message_id": "uuid-of-first-verbatim-turn"}
+
+event: compaction_error
+data: {"message": "Context summarization failed; continuing without compacting.", "detail": "OptionalErrorClassName"}
 
 event: retry
 data: {"attempt": 1, "reason": "max_tokens", "reset_text": true, "max_tokens": 8192}
@@ -297,7 +307,8 @@ Sessions can reference other sessions via `linked_session_ids` (JSON array). Whe
 
 ### Message History Limits
 
-- Claude receives at most the **last 20 messages** from the current session (`CLAUDE_MAX_HISTORY`).
+- Full transcripts remain in the database. For each model request, the backend sends a **projection**: an optional rolling-summary prefix (from `ChatSession.compaction_state` when compaction has run) plus at most the **last 20 user/assistant turns** from the logical tail (`CLAUDE_MAX_HISTORY`). Auto-compaction folds older dialogue into the rolling summary when a heuristic input estimate crosses configured thresholds (ADR 0017).
+- `GET /api/chat/{session_id}/messages` returns the same projection inputs as metadata: `context_pressure` (`level`, `estimated_input_tokens`, `input_budget`) for buyer-chat UX (warn vs critical vs ok).
 - Claude `max_tokens` per response: **4096** (configurable via `CLAUDE_MAX_TOKENS`).
 
 ### Simulation Scenarios
@@ -341,6 +352,8 @@ erDiagram
         string last_message_preview
         string session_type "buyer_chat | dealer_sim"
         json linked_session_ids
+        json usage "cumulative session usage ledger"
+        json compaction_state "rolling summary + tail pointer; nullable"
         datetime created_at
         datetime updated_at
     }
@@ -348,7 +361,7 @@ erDiagram
     messages {
         string id PK
         string session_id FK
-        string role "user | assistant"
+        string role "user | assistant | system"
         text content
         string image_url
         json tool_calls
@@ -463,6 +476,7 @@ erDiagram
 | `session_type`         | String   | Not Null, default "buyer_chat"    | `buyer_chat` or `dealer_sim` |
 | `linked_session_ids`   | JSON     | default empty list                | Array of session UUIDs       |
 | `usage`                | JSON     | Nullable                          | Cumulative per-session usage ledger with per-model totals and USD cost |
+| `compaction_state`     | JSON     | Nullable                          | Rolling summary, first kept message id, version, failure counters (context compaction); see ADR 0017 |
 | `created_at`           | DateTime | default now(UTC)                  |                              |
 | `updated_at`           | DateTime | default now(UTC), on update       |                              |
 
@@ -474,7 +488,7 @@ erDiagram
 | ------------ | -------- | ----------------------------------------- | -------------------------------- |
 | `id`         | String   | PK, default UUID                          |                                  |
 | `session_id` | String   | FK -> chat_sessions.id, Not Null, Indexed |                                  |
-| `role`       | String   | Not Null                                  | `user`, `assistant`, or `system` |
+| `role`       | String   | Not Null                                  | `user`, `assistant`, or `system` (system = e.g. compaction notices) |
 | `content`    | Text     | Not Null                                  |                                  |
 | `image_url`  | String   | Nullable                                  | URL for image analysis           |
 | `tool_calls` | JSON     | Nullable                                  | Array of {name, args} objects    |
@@ -601,7 +615,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation and session title generation |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation and session title generation (not used for context compaction summarization) |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
 | Tool use       | 10 tool definitions (primary model only)   |
 | Streaming      | Yes (messages.stream)  |
@@ -609,7 +623,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness, then AI panel generation runs asynchronously in the same SSE stream via `panel_started` / `panel_card` / `panel_done` / `panel_error`. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage aggregates chat and panel phases. Prompt cache break detection (`prompt_cache_signature.py`) fingerprints system prompt, tools, and model via SHA-256 and logs INFO-level cache breaks across turns; break counts and last-known fingerprints are persisted on `SessionUsageSummary`.
+The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. **Context compaction** (when enabled) uses the same primary model (`CLAUDE_MODEL`) for summarization, separate from the chat step loop, and may precede chat streaming in the same SSE response (ADR 0017). The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness, then AI panel generation runs asynchronously in the same SSE stream via `panel_started` / `panel_card` / `panel_done` / `panel_error`. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage aggregates chat and panel phases. Prompt cache break detection (`prompt_cache_signature.py`) fingerprints system prompt, tools, and model via SHA-256 and logs INFO-level cache breaks across turns; break counts and last-known fingerprints are persisted on `SessionUsageSummary`.
 
 ### No Other External Integrations (v1)
 
@@ -669,8 +683,8 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 - **snake_case to camelCase mapping**: The `snakeToCamel` utility (`lib/utils.ts`) converts backend snake_case keys to frontend camelCase, replacing hand-mapped field assignments in the deal store.
 - **Markdown rendering**: Assistant chat bubbles render content as Markdown via `react-native-markdown-display`, supporting bold, italic, lists, code blocks, blockquotes, and links. User messages render as plain text.
 - **Optimistic message rollback**: When sending a chat message, the user message is added to the store optimistically. If the backend request fails, the message is removed from the store.
-- **Duplicate user message prevention**: Message history is loaded BEFORE the user message is saved to the database, so the current message is not duplicated in the Claude context.
-- **Event-based SSE parsing**: The `useChat` hook uses an event-based approach to parse SSE streams, dispatching `text`, `tool_result`, `retry`, `step`, and `done` events to the appropriate store handlers.
+- **Duplicate user message prevention**: Message history is loaded before the new user turn is persisted; optional compaction may persist a system notice first, then the user message is saved so the current turn is not duplicated in the constructed Claude context.
+- **Event-based SSE parsing**: The `useChat` hook parses SSE streams, dispatching `compaction_*`, `text`, `tool_result`, `retry`, `step`, `done`, and panel lifecycle events to store handlers. Message list fetches receive `context_pressure` alongside `messages` for UI context warnings.
 - **Error handling in stores and auth screens**: All Zustand stores and auth screens include try/catch error handling with user-facing error state.
 - **Chats list as buyer home screen**: The `/(app)/chats` screen is the buyer's landing page, showing sessions in Active/Past sections with search, pull-to-refresh, and SessionCard components displaying phase dot, message preview, and deal summary line.
 - **Auto-generated session titles**: Sessions receive automatic titles — deterministic vehicle titles when a vehicle is set, LLM-generated via Haiku as a fallback. Manual renames via PATCH set `auto_title=false`, preventing further auto-updates.

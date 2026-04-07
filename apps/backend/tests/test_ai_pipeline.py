@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -16,7 +16,7 @@ from app.core.security import create_access_token
 from app.main import app
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext
+from app.models.enums import BuyerContext, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.services.claude import (
@@ -717,6 +717,31 @@ def test_build_messages_cache_breakpoint_with_list_content():
     assert last_block.get("cache_control") == {"type": "ephemeral"}
     # First block should NOT
     assert "cache_control" not in messages[0]["content"][0]
+
+
+def test_build_messages_compaction_prefix_before_history_cache_on_last_history_only():
+    """Rolling-summary prefix is not part of the history cache breakpoint."""
+    prefix = [
+        {
+            "role": "user",
+            "content": "<system-reminder>Prior summary</system-reminder>",
+        }
+    ]
+    history = [
+        {"role": "user", "content": "h1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    messages = build_messages(history, "New question", compaction_prefix=prefix)
+
+    assert messages[0] == prefix[0]
+    assert isinstance(messages[0]["content"], str)
+    last_history = messages[2]
+    assert last_history["role"] == "assistant"
+    assert last_history["content"][-1].get("cache_control") == {"type": "ephemeral"}
+    new_user = messages[-1]
+    if isinstance(new_user["content"], list):
+        for block in new_user["content"]:
+            assert "cache_control" not in block
 
 
 def test_move_message_cache_breakpoint_moves_to_last():
@@ -1963,7 +1988,14 @@ async def test_send_message_sse_done_before_panel_updates(
     )
     assert history_response.status_code == 200
     history_payload = history_response.json()
-    assert history_payload[-1]["usage"] == {
+    assert "messages" in history_payload
+    assert "context_pressure" in history_payload
+    cp = history_payload["context_pressure"]
+    assert cp["level"] in ("ok", "warn", "critical")
+    assert isinstance(cp["estimated_input_tokens"], int)
+    assert isinstance(cp["input_budget"], int)
+    msgs = history_payload["messages"]
+    assert msgs[-1]["usage"] == {
         "requests": 2,
         "inputTokens": 360,
         "outputTokens": 136,
@@ -1971,6 +2003,125 @@ async def test_send_message_sse_done_before_panel_updates(
         "cacheReadInputTokens": 240,
         "totalTokens": 496,
     }
+
+
+async def test_send_message_runs_compaction_before_chat_when_over_budget(
+    async_client, adb, async_buyer_user
+):
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
+    for i in range(10):
+        role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
+        adb.add(Message(session_id=session.id, role=role, content=f"hist-{i}"))
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    block = MagicMock()
+    block.text = "Session summary from primary model."
+    summarizer_resp = MagicMock()
+    summarizer_resp.content = [block]
+    mock_summarizer = MagicMock()
+    mock_summarizer.messages.create = AsyncMock(return_value=summarizer_resp)
+
+    async def fake_stream_chat_loop(*args, **kwargs):
+        result = args[4]
+        result.full_text = "After compaction assistant text."
+        merge_usage_summary(
+            result.usage_summary,
+            summarize_usage(
+                SimpleNamespace(
+                    input_tokens=10,
+                    output_tokens=20,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                )
+            ),
+        )
+        result.tool_calls.append(
+            {
+                "name": "update_quick_actions",
+                "args": {"actions": [{"label": "X", "prompt": "Y"}]},
+            }
+        )
+        result.completed = True
+        yield ('event: text\ndata: {"chunk": "After compaction assistant text."}\n\n')
+        yield (
+            "event: tool_result\n"
+            'data: {"tool": "update_quick_actions", "data": {"actions": [{"label": "X", "prompt": "Y"}]}}\n\n'
+        )
+
+    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
+        yield SimpleNamespace(
+            type="panel_done",
+            data={
+                "cards": [],
+                "usage_summary": {
+                    "requests": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "total_tokens": 0,
+                },
+            },
+        )
+
+    with (
+        patch(
+            "app.services.compaction.estimate_turn_input_tokens",
+            return_value=500_000,
+        ),
+        patch(
+            "app.services.compaction.create_anthropic_client",
+            return_value=mock_summarizer,
+        ),
+        patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
+        patch(
+            "app.routes.chat.stream_ai_panel_cards_with_usage",
+            new=fake_stream_panel_cards_with_usage,
+        ),
+        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/message",
+            json={"content": "Latest buyer turn"},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    names = [n for n, _ in events]
+    assert names[:2] == ["compaction_started", "compaction_done"]
+    assert "text" in names
+    started = next(d for n, d in events if n == "compaction_started")
+    assert started["reason"] == "input_budget"
+    assert "estimated_input_tokens" in started
+    mock_summarizer.messages.create.assert_awaited_once()
+
+    async with TestingAsyncSessionLocal() as check_db:
+        sess_row = (
+            await check_db.execute(
+                select(ChatSession).where(ChatSession.id == session.id)
+            )
+        ).scalar_one()
+        assert sess_row.compaction_state is not None
+        assert (
+            sess_row.compaction_state["rolling_summary"]
+            == "Session summary from primary model."
+        )
+
+        message_result = await check_db.execute(
+            select(Message)
+            .where(Message.session_id == session.id)
+            .order_by(Message.created_at)
+        )
+        rows = list(message_result.scalars().all())
+        assert any(m.role == MessageRole.SYSTEM for m in rows)
+        assert rows[-1].role == MessageRole.ASSISTANT
 
 
 async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(

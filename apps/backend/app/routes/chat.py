@@ -14,7 +14,12 @@ from app.models.enums import MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
-from app.schemas.chat import ChatMessageRequest, MessageResponse
+from app.schemas.chat import (
+    ChatMessageRequest,
+    ContextPressureResponse,
+    MessageResponse,
+    MessagesListResponse,
+)
 from app.services.claude import (
     CHAT_TOOLS,
     ChatLoopResult,
@@ -23,6 +28,11 @@ from app.services.claude import (
     build_system_prompt,
     merge_usage_summary,
     stream_chat_loop,
+)
+from app.services.compaction import (
+    compute_session_context_pressure,
+    project_for_model,
+    run_auto_compaction_if_needed,
 )
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import stream_ai_panel_cards_with_usage
@@ -36,6 +46,30 @@ from app.services.usage_tracking import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _load_deal_and_linked_context(
+    session: ChatSession,
+    db: AsyncSession,
+) -> tuple[DealState | None, dict | None, list[dict] | None]:
+    """Load deal state dict and linked session messages for context building."""
+    deal_state_result = await db.execute(
+        select(DealState).where(DealState.session_id == session.id)
+    )
+    deal_state = deal_state_result.scalar_one_or_none()
+    deal_state_dict = await deal_state_to_dict(deal_state, db) if deal_state else None
+
+    linked_messages = None
+    if session.linked_session_ids:
+        linked_result = await db.execute(
+            select(Message)
+            .where(Message.session_id.in_(session.linked_session_ids))
+            .order_by(Message.created_at)
+        )
+        linked_msgs = list(linked_result.scalars().all())
+        linked_messages = [{"role": m.role, "content": m.content} for m in linked_msgs]
+
+    return deal_state, deal_state_dict, linked_messages
 
 
 def _message_usage_payload(summary: dict[str, int]) -> dict[str, int]:
@@ -69,51 +103,20 @@ async def send_message(
 
     logger.info("Chat message received: session_id=%s, user_id=%s", session_id, user.id)
 
-    # Load message history BEFORE saving the new user message
-    # (build_messages will append the current message separately)
+    # Load message history before the new user turn (compaction + projection use this)
     history_result = await db.execute(
         select(Message)
         .where(Message.session_id == session_id)
         .order_by(Message.created_at)
     )
     history = list(history_result.scalars().all())
-    history_dicts = [{"role": m.role, "content": m.content} for m in history]
 
-    # Save user message
-    user_msg = Message(
-        session_id=session_id,
-        role=MessageRole.USER,
-        content=body.content,
-        image_url=body.image_url,
+    deal_state, deal_state_dict, linked_messages = await _load_deal_and_linked_context(
+        session, db
     )
-    db.add(user_msg)
-    await db.commit()
-    await db.refresh(user_msg)
 
-    # Load deal state
-    deal_state_result = await db.execute(
-        select(DealState).where(DealState.session_id == session_id)
-    )
-    deal_state = deal_state_result.scalar_one_or_none()
-    deal_state_dict = await deal_state_to_dict(deal_state, db) if deal_state else None
-
-    # Load linked session context (if any)
-    linked_messages = None
-    if session.linked_session_ids:
-        linked_result = await db.execute(
-            select(Message)
-            .where(Message.session_id.in_(session.linked_session_ids))
-            .order_by(Message.created_at)
-        )
-        linked_msgs = list(linked_result.scalars().all())
-        linked_messages = [{"role": m.role, "content": m.content} for m in linked_msgs]
-
-    # Build Claude request — system prompt is static, dynamic context goes in messages
     system_prompt = build_system_prompt()
     context_message = build_context_message(deal_state_dict, linked_messages)
-    messages = build_messages(
-        history_dicts, body.content, body.image_url, context_message
-    )
 
     async def generate():
         result = ChatLoopResult()
@@ -122,6 +125,59 @@ async def send_message(
             session=session,
             deal_state=deal_state,
             db=db,
+        )
+
+        history_local = history
+
+        compaction_result = await run_auto_compaction_if_needed(
+            session,
+            history_local,
+            body.content,
+            body.image_url,
+            context_message,
+            linked_messages,
+        )
+        for chunk in compaction_result.sse_chunks:
+            yield chunk
+
+        if compaction_result.updated_state is not None:
+            session.compaction_state = compaction_result.updated_state
+        if compaction_result.system_notice_content:
+            notice = Message(
+                session_id=session_id,
+                role=MessageRole.SYSTEM,
+                content=compaction_result.system_notice_content,
+            )
+            db.add(notice)
+        if (
+            compaction_result.updated_state is not None
+            or compaction_result.system_notice_content
+        ):
+            await db.commit()
+            refreshed = await db.execute(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.created_at)
+            )
+            history_local = list(refreshed.scalars().all())
+
+        user_msg = Message(
+            session_id=session_id,
+            role=MessageRole.USER,
+            content=body.content,
+            image_url=body.image_url,
+        )
+        db.add(user_msg)
+        await db.commit()
+        await db.refresh(user_msg)
+
+        prefix, tail = project_for_model(history_local, session.compaction_state)
+        messages = build_messages(
+            tail,
+            body.content,
+            body.image_url,
+            context_message,
+            compaction_prefix=prefix or None,
         )
 
         async def _remove_orphan_user_message(reason: str) -> None:
@@ -174,8 +230,17 @@ async def send_message(
         # are added to the persisted message but not to this SSE event).
         yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary)})}\n\n"
 
-        # Build full message list for panel generation and metadata
-        all_messages = [*history_dicts, {"role": "user", "content": body.content}]
+        panel_history = await db.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.created_at)
+        )
+        panel_rows = list(panel_history.scalars().all())
+        all_messages = [
+            {"role": m.role, "content": m.content}
+            for m in panel_rows
+            if m.role in (MessageRole.USER, MessageRole.ASSISTANT)
+        ]
         if result.full_text:
             all_messages.append({"role": "assistant", "content": result.full_text})
 
@@ -306,7 +371,7 @@ async def send_message(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-@router.get("/{session_id}/messages", response_model=list[MessageResponse])
+@router.get("/{session_id}/messages", response_model=MessagesListResponse)
 async def get_messages(
     session_id: str,
     user: User = Depends(get_current_user),
@@ -327,4 +392,17 @@ async def get_messages(
         .where(Message.session_id == session_id)
         .order_by(Message.created_at)
     )
-    return list(messages_result.scalars().all())
+    rows = list(messages_result.scalars().all())
+
+    _, deal_state_dict, linked_messages = await _load_deal_and_linked_context(
+        session, db
+    )
+
+    context_message = build_context_message(deal_state_dict, linked_messages)
+    pressure = compute_session_context_pressure(
+        rows, session.compaction_state, context_message, linked_messages
+    )
+    return MessagesListResponse(
+        messages=[MessageResponse.model_validate(m) for m in rows],
+        context_pressure=ContextPressureResponse(**pressure),
+    )

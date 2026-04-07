@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"
     CLAUDE_MAX_TOKENS: int = 4096
     CLAUDE_MAX_HISTORY: int = 20  # messages to include in context
+
+    # Custom context compaction (see docs/adr/0017-context-compaction-custom.md)
+    CLAUDE_COMPACTION_ENABLED: bool = True
+    # Opus/Sonnet 4.6 support up to ~1M tokens on the API; this is our *policy* budget for
+    # compaction triggers and UI pressure — not the model maximum (tune via env if needed).
+    CLAUDE_CONTEXT_INPUT_BUDGET: int = 180_000
+    CLAUDE_COMPACTION_WARN_BUFFER_TOKENS: int = 20_000
+    CLAUDE_COMPACTION_AUTO_BUFFER_TOKENS: int = 13_000
+    CLAUDE_COMPACTION_VERBATIM_MESSAGES: int = 8
+    CLAUDE_COMPACTION_SUMMARY_MAX_TOKENS: int = 2048
+    CLAUDE_COMPACTION_MAX_CONSECUTIVE_FAILURES: int = 3
+    CLAUDE_COMPACTION_PTL_MAX_RETRIES: int = 3
+    CLAUDE_COMPACTION_STATIC_OVERHEAD_TOKENS: int = (
+        12_000  # system + tools + context estimate
+    )
     CLAUDE_MAX_TOKENS_RETRIES: int = 1  # retries after stop_reason=max_tokens
     CLAUDE_MAX_TOKENS_ESCALATION_FACTOR: int = 2  # per-retry budget multiplier
     CLAUDE_MAX_TOKENS_CAP: int = 8192  # hard cap for escalated budgets

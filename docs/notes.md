@@ -1,6 +1,6 @@
 # AI Car Buying App — Project Notes
 
-## Last updated: March 31, 2026
+## Last updated: April 6, 2026
 
 ---
 
@@ -58,6 +58,7 @@ The buyer can skip the cards entirely by typing or uploading directly (defaults 
 - **"New chat" feature** — start a fresh conversation for a new vehicle or dealer. Users can choose to add previous chats as context (e.g. "I already analyzed this vehicle last night" or "here's what happened at the first dealer").
 - Multiple active deals supported — shopping two dealers at once is common.
 - Deal history persists — dealer calls a week later, user can pick up where they left off.
+- **Long-chat context compaction** — very long buyer chats can trigger automatic rolling summarization (primary model) while keeping full transcripts in the database; the UI may show a context pressure indicator and a short system notice when compaction runs (see ADR 0017).
 
 ---
 

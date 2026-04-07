@@ -131,3 +131,9 @@ class IntelligenceProvider(StrEnum):
 class IntelligenceStatus(StrEnum):
     SUCCESS = "success"
     PARTIAL = "partial"
+
+
+class ContextPressureLevel(StrEnum):
+    OK = "ok"
+    WARN = "warn"
+    CRITICAL = "critical"

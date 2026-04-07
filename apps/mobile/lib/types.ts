@@ -370,6 +370,12 @@ export interface SessionUsage {
   perModel: Record<string, ModelUsageSummary>
 }
 
+export interface ContextPressure {
+  level: 'ok' | 'warn' | 'critical'
+  estimatedInputTokens: number
+  inputBudget: number
+}
+
 export interface Message {
   id: string
   sessionId: string
@@ -468,7 +474,7 @@ export interface ApiService {
   deleteSession(sessionId: string): Promise<void>
 
   // Chat
-  getMessages(sessionId: string): Promise<Message[]>
+  getMessages(sessionId: string): Promise<{ messages: Message[]; contextPressure: ContextPressure }>
   sendMessage(
     sessionId: string,
     content: string,
@@ -479,7 +485,8 @@ export interface ApiService {
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,
-    onPanelFinished?: () => void
+    onPanelFinished?: () => void,
+    onCompaction?: (phase: 'started' | 'done' | 'error') => void
   ): Promise<Message>
 
   // Deal state

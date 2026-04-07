@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiClient } from '@/lib/apiClient'
+import { ApiClient, setAuthToken } from '@/lib/apiClient'
 import { PANEL_UPDATE_MODE } from '@/lib/types'
 
 class FakeXMLHttpRequest {
@@ -201,5 +201,93 @@ describe('ApiClient.sendMessage', () => {
       role: 'assistant',
     })
     expect(onPanelFinished).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ApiClient.getMessages', () => {
+  afterEach(() => {
+    setAuthToken(null)
+    vi.unstubAllGlobals()
+  })
+
+  it('maps wrapped messages and context_pressure from snake_case JSON', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          messages: [
+            {
+              id: 'm1',
+              session_id: 's1',
+              role: 'user',
+              content: 'hi',
+              image_url: null,
+              tool_calls: null,
+              usage: null,
+              created_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+          context_pressure: {
+            level: 'warn',
+            estimated_input_tokens: 120000,
+            input_budget: 180000,
+          },
+        }),
+      })
+    )
+
+    const out = await apiClient.getMessages('s1')
+    expect(out.messages).toHaveLength(1)
+    expect(out.messages[0].sessionId).toBe('s1')
+    expect(out.contextPressure.level).toBe('warn')
+    expect(out.contextPressure.estimatedInputTokens).toBe(120000)
+    expect(out.contextPressure.inputBudget).toBe(180000)
+  })
+})
+
+describe('ApiClient.sendMessage compaction SSE', () => {
+  const originalXmlHttpRequest = globalThis.XMLHttpRequest
+
+  beforeEach(() => {
+    FakeXMLHttpRequest.instances = []
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+  })
+
+  afterEach(() => {
+    globalThis.XMLHttpRequest = originalXmlHttpRequest
+  })
+
+  it('invokes onCompaction started then done for compaction events', async () => {
+    const apiClient = new ApiClient()
+    const phases: string[] = []
+    const onCompaction = vi.fn((p: 'started' | 'done' | 'error') => phases.push(p))
+
+    const sendPromise = apiClient.sendMessage(
+      'session-c',
+      'Hi',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onCompaction
+    )
+
+    const xhr = FakeXMLHttpRequest.instances.at(-1)
+    xhr?.pushEvent('compaction_started', { reason: 'input_budget' })
+    xhr?.pushEvent('compaction_done', { first_kept_message_id: 'x' })
+    xhr?.pushEvent('text', { chunk: 'Hello.' })
+    xhr?.pushEvent('done', { text: 'Hello.' })
+    xhr?.complete()
+
+    await sendPromise
+    expect(onCompaction).toHaveBeenCalledTimes(2)
+    expect(phases).toEqual(['started', 'done'])
   })
 })

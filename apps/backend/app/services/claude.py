@@ -2053,14 +2053,23 @@ def build_messages(
     user_content: str,
     image_url: str | None = None,
     context_message: dict | None = None,
+    compaction_prefix: list[dict] | None = None,
 ) -> list[dict]:
     """Build the messages array for Claude API from message history.
 
     Conversation history comes first (stable, cacheable prefix) with a cache
     breakpoint on the last history message. Dynamic context and the new user
     message come after the breakpoint (uncached, change every turn/request).
+
+    Optional ``compaction_prefix`` (e.g. rolling summary wrapped in
+    system-reminder) is prepended before history and is not given the history
+    cache breakpoint.
     """
     messages: list[dict] = []
+
+    if compaction_prefix:
+        for block in compaction_prefix:
+            messages.append({"role": block["role"], "content": block["content"]})
 
     # History FIRST — stable prefix, cacheable across turns/requests
     max_history = settings.CLAUDE_MAX_HISTORY

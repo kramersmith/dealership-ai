@@ -29,8 +29,13 @@
 | `DATABASE_URL` | No | SQLite | PostgreSQL in Docker |
 | `SECRET_KEY` | Yes (prod) | `dev-secret` | Must change in production |
 | `ANTHROPIC_API_KEY` | Yes | `` | Required for chat functionality |
-| `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model for AI interactions |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model for AI interactions (also used for context compaction summarization when enabled) |
 | `CLAUDE_FAST_MODEL` | No | `claude-haiku-4-5-20251001` | Fast Claude model for lightweight tasks |
+| `CLAUDE_COMPACTION_ENABLED` | No | `true` | Disable with `false` to turn off auto context compaction |
+| `CLAUDE_CONTEXT_INPUT_BUDGET` | No | `180000` | Policy input-token budget for compaction triggers and UI pressure |
+| `CLAUDE_COMPACTION_WARN_BUFFER_TOKENS` | No | `20000` | Warn tier for `context_pressure` |
+| `CLAUDE_COMPACTION_AUTO_BUFFER_TOKENS` | No | `13000` | Auto-compact threshold buffer |
+| `CLAUDE_COMPACTION_VERBATIM_MESSAGES` | No | `8` | Verbatim tail size after a compaction fold |
 | `CLAUDE_STREAM_IDLE_TIMEOUT` | No | `30` | Idle timeout before retrying stalled Claude streams |
 | `CLAUDE_STREAM_MAX_RETRIES` | No | `2` | Stream retry budget before non-streaming fallback |
 | `CLAUDE_API_TIMEOUT` | No | `120` | Anthropic API timeout in seconds |
@@ -82,7 +87,7 @@ See `docs/logging-guidelines.md` for log level reference, PII rules, and configu
 - Default model: `claude-sonnet-4-6` (balances cost and quality)
 - Fast model: `claude-haiku-4-5-20251001` for titles and other lightweight tasks
 - Max tokens per response: 4096
-- Message history truncated to last 20 messages per request
+- Model-facing history is a projected tail (last 20 user/assistant turns) plus optional rolling summary; full history stays in the database. Compaction uses the primary model when it runs (see `docs/adr/0017-context-compaction-custom.md`)
 - Bounded `max_tokens` retries use configurable escalation rather than silently truncating responses
 - Per-turn assistant usage is persisted on messages, and cumulative per-session usage is persisted on `ChatSession.usage` with per-model token and cost totals
 - Pricing is tracked server-side from a fixed backend pricing table for deterministic accounting; it is not fetched dynamically at runtime
