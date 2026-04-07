@@ -115,7 +115,7 @@ Functions that make Claude calls outside the step loop (title generation, deal a
 ## References
 
 - [Usage tracking service](../../apps/backend/app/services/usage_tracking.py) — `RequestUsage`, `ModelUsageSummary`, `SessionUsageSummary`, `MODEL_PRICING`, cost calculation
-- [Chat step loop](../../apps/backend/app/services/claude.py) — `summarize_usage()`, `merge_usage_summary()`, `ChatLoopResult.usage_summary`
+- [Claude usage rollups](../../apps/backend/app/services/claude/usage_stats.py) — `summarize_usage()`, `merge_usage_summary()`; [`ChatLoopResult.usage_summary`](../../apps/backend/app/services/claude/chat_loop.py) on the step-loop result object
 - [Chat route](../../apps/backend/app/routes/chat.py) — session usage lifecycle, SSE `done` event, message persistence
 - [Message model](../../apps/backend/app/models/message.py) — `usage` JSON column
 - [ChatSession model](../../apps/backend/app/models/session.py) — `usage` JSON column

@@ -6,7 +6,7 @@ from app.models.enums import HealthStatus, VehicleRole
 from app.models.session import ChatSession
 from app.models.user import User
 from app.models.vehicle import Vehicle
-from app.services.claude import ChatLoopResult
+from app.services.claude import ChatLoopResult, execute_tool_batch
 from app.services.deal_state import build_execution_plan
 from app.services.turn_context import TurnContext
 from sqlalchemy import select
@@ -115,7 +115,7 @@ def test_build_execution_plan_empty_input():
     assert build_execution_plan([]) == []
 
 
-# ─── _execute_tool_batch (real async DB via shared test.db) ───
+# ─── execute_tool_batch (real async DB via shared test.db) ───
 
 
 async def _setup_session_with_deal(adb) -> tuple[User, DealState, Deal]:
@@ -152,8 +152,6 @@ async def _setup_session_with_deal(adb) -> tuple[User, DealState, Deal]:
 
 async def test_execute_tool_batch_single_tool(adb):
     """Single tool executes and commits in isolated session."""
-    from app.services.claude import _execute_tool_batch
-
     _, deal_state, deal = await _setup_session_with_deal(adb)
 
     batch = [
@@ -166,7 +164,7 @@ async def test_execute_tool_batch_single_tool(adb):
 
     results = []
     turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
-    async for block, outcome in _execute_tool_batch(
+    async for block, outcome in execute_tool_batch(
         batch,
         turn_context.for_step(0),
         session_factory=TestingAsyncSessionLocal,
@@ -186,8 +184,6 @@ async def test_execute_tool_batch_single_tool(adb):
 
 async def test_execute_tool_batch_multiple_independent_tools(adb):
     """Multiple tools in a batch all succeed and commit."""
-    from app.services.claude import _execute_tool_batch
-
     _, deal_state, deal = await _setup_session_with_deal(adb)
 
     batch = [
@@ -210,7 +206,7 @@ async def test_execute_tool_batch_multiple_independent_tools(adb):
 
     results = []
     turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
-    async for block, outcome in _execute_tool_batch(
+    async for block, outcome in execute_tool_batch(
         batch,
         turn_context.for_step(0),
         session_factory=TestingAsyncSessionLocal,
@@ -234,8 +230,6 @@ async def test_execute_tool_batch_multiple_independent_tools(adb):
 
 async def test_execute_tool_batch_error_isolation(adb):
     """One tool fails but others' changes persist."""
-    from app.services.claude import _execute_tool_batch
-
     _, deal_state, deal = await _setup_session_with_deal(adb)
 
     batch = [
@@ -253,7 +247,7 @@ async def test_execute_tool_batch_error_isolation(adb):
 
     results = []
     turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
-    async for block, outcome in _execute_tool_batch(
+    async for block, outcome in execute_tool_batch(
         batch,
         turn_context.for_step(0),
         session_factory=TestingAsyncSessionLocal,
@@ -273,8 +267,6 @@ async def test_execute_tool_batch_error_isolation(adb):
 
 async def test_execute_tool_batch_ordered_yielding(adb):
     """Results yield in original call order regardless of completion order."""
-    from app.services.claude import _execute_tool_batch
-
     _, deal_state, _ = await _setup_session_with_deal(adb)
 
     batch = [
@@ -289,7 +281,7 @@ async def test_execute_tool_batch_ordered_yielding(adb):
 
     result_ids = []
     turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
-    async for block, _ in _execute_tool_batch(
+    async for block, _ in execute_tool_batch(
         batch,
         turn_context.for_step(0),
         session_factory=TestingAsyncSessionLocal,
@@ -302,7 +294,6 @@ async def test_execute_tool_batch_ordered_yielding(adb):
 
 async def test_execute_tool_batch_health_runs_after_numbers_batch(adb):
     """Priority 3 health runs in a later batch so DB has committed numbers."""
-    from app.services.claude import _execute_tool_batch
     from app.services.deal_state import build_execution_plan
 
     _, deal_state, deal = await _setup_session_with_deal(adb)
@@ -330,7 +321,7 @@ async def test_execute_tool_batch_health_runs_after_numbers_batch(adb):
         0
     )
     for batch in plan:
-        async for block, outcome in _execute_tool_batch(
+        async for block, outcome in execute_tool_batch(
             batch,
             turn_ctx,
             session_factory=TestingAsyncSessionLocal,
@@ -350,7 +341,6 @@ async def test_batches_execute_in_priority_order(adb):
     # Set up session without a vehicle/deal — set_vehicle will create them
     from app.core.security import hash_password
     from app.models.enums import UserRole
-    from app.services.claude import _execute_tool_batch
 
     user = User(
         email="seq@test.com",
@@ -378,7 +368,7 @@ async def test_batches_execute_in_priority_order(adb):
     ]
     results_0 = []
     turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
-    async for block, outcome in _execute_tool_batch(
+    async for block, outcome in execute_tool_batch(
         batch_0,
         turn_context.for_step(0),
         session_factory=TestingAsyncSessionLocal,
@@ -406,7 +396,7 @@ async def test_batches_execute_in_priority_order(adb):
     ]
     results_2 = []
     turn_context = TurnContext.create(session=None, deal_state=deal_state, db=adb)
-    async for block, outcome in _execute_tool_batch(
+    async for block, outcome in execute_tool_batch(
         batch_2,
         turn_context.for_step(0),
         session_factory=TestingAsyncSessionLocal,

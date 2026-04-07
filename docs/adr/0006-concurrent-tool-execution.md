@@ -6,7 +6,7 @@
 
 ## Context
 
-The chat step loop (`stream_chat_loop()` in `claude.py`) calls Claude with up to 17 operational tools. Claude frequently returns multiple `tool_use` blocks in a single response — for example, `set_vehicle`, `update_deal_numbers`, `update_scorecard`, `update_deal_health`, and `update_quick_actions` in one turn. Under the original sequential implementation, each tool was executed one at a time against the shared `AsyncSession`. This worked but introduced unnecessary latency: most tools update disjoint state (different DB rows or JSON columns) and have no data dependency on each other. A typical multi-tool response took the sum of all individual tool execution times rather than the maximum.
+The chat step loop (`stream_chat_loop()` in `claude/chat_loop.py`) calls Claude with up to 17 operational tools. Claude frequently returns multiple `tool_use` blocks in a single response — for example, `set_vehicle`, `update_deal_numbers`, `update_scorecard`, `update_deal_health`, and `update_quick_actions` in one turn. Under the original sequential implementation, each tool was executed one at a time against the shared `AsyncSession`. This worked but introduced unnecessary latency: most tools update disjoint state (different DB rows or JSON columns) and have no data dependency on each other. A typical multi-tool response took the sum of all individual tool execution times rather than the maximum.
 
 However, not all tools are independent. Some tools produce state that others depend on:
 
@@ -33,7 +33,7 @@ Tools are assigned a priority in `TOOL_PRIORITY` (`deal_state.py`). Lower number
 
 ### Isolated session pattern
 
-`_execute_tool_batch()` spawns one `asyncio.Task` per tool in a batch. Each task:
+`execute_tool_batch()` spawns one `asyncio.Task` per tool in a batch. Each task:
 
 1. Opens a fresh `AsyncSession` from the session factory (`AsyncSessionLocal`)
 2. Loads the `DealState` from the database within its own session
@@ -45,7 +45,7 @@ This mirrors the pre-concurrency behavior where individual tool errors were alre
 
 ### Result ordering
 
-Results are yielded in the original batch order regardless of task completion order. `_execute_tool_batch()` uses `asyncio.as_completed()` internally but buffers results and yields them sequentially by index. This ensures deterministic SSE event ordering for the frontend.
+Results are yielded in the original batch order regardless of task completion order. `execute_tool_batch()` uses `asyncio.as_completed()` internally but buffers results and yields them sequentially by index. This ensures deterministic SSE event ordering for the frontend.
 
 ## Alternatives Considered
 
@@ -82,7 +82,7 @@ Results are yielded in the original batch order regardless of task completion or
 
 ## References
 
-- [Tool execution implementation](../../apps/backend/app/services/claude.py) — `_execute_tool_batch()`, `stream_chat_loop()`
+- [Tool execution implementation](../../apps/backend/app/services/claude/tool_runner.py) — `execute_tool_batch()`; orchestration in [`chat_loop.py`](../../apps/backend/app/services/claude/chat_loop.py) — `stream_chat_loop()`
 - [Priority definitions and execution plan](../../apps/backend/app/services/deal_state.py) — `TOOL_PRIORITY`, `build_execution_plan()`, `execute_tool()`
 - [Introducing commit](https://github.com) — `a4e4361 feat(chat): add async tool execution and retry UX`
 - [SQLAlchemy async session docs](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-asyncsession-with-concurrent-tasks)

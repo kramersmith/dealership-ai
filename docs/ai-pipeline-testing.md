@@ -128,7 +128,7 @@ Current route coverage includes:
 
 ### Production seams these tests protect
 
-- `apps/backend/app/services/claude.py`
+- `apps/backend/app/services/claude/` (e.g. `chat_loop.py`, `streaming.py`, `tool_runner.py`, `messages.py`, `tool_schemas.py`)
 - `apps/backend/app/services/deal_state.py`
 - `apps/backend/app/services/panel.py`
 - `apps/backend/app/routes/chat.py`
@@ -157,7 +157,7 @@ cd apps/backend
 
 Use this when changing:
 
-- `claude.py`
+- `app/services/claude/`
 - `deal_state.py`
 - `panel.py`
 - `routes/chat.py`

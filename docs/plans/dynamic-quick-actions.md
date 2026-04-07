@@ -63,7 +63,7 @@ Why no visual priority:
 
 ### Backend
 
-**New tool: `update_quick_actions`** in `claude.py`:
+**New tool: `update_quick_actions`** in `claude/tool_schemas.py` (and matching `deal_state.apply_extraction`):
 
 ```python
 {
@@ -178,7 +178,7 @@ interface QuickAction {
 
 | File | Change |
 |------|--------|
-| `apps/backend/app/services/claude.py` | Add `update_quick_actions` tool definition, system prompt instruction |
+| `apps/backend/app/services/claude/tool_schemas.py`, `prompt_static.py` | Add `update_quick_actions` tool definition, system prompt instruction |
 | `apps/mobile/lib/types.ts` | Add `QuickAction` interface, update `ToolCall` union |
 | `apps/mobile/stores/chatStore.ts` | Add `quickActions` + `quickActionsMessageIndex` state, handle tool call |
 | `apps/mobile/components/dashboard/QuickActions.tsx` | Accept dynamic `QuickAction[]`, uniform styling |

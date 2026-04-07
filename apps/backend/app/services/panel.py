@@ -9,12 +9,12 @@ from typing import Any, cast
 
 from app.core.config import settings
 from app.services.claude import (
-    _get_escalated_max_tokens,
     build_prompt_deal_state,
     build_temporal_hint_line,
     create_anthropic_client,
     current_utc_date_iso,
     empty_usage_summary,
+    get_escalated_max_tokens,
     merge_usage_summary,
     summarize_usage,
 )
@@ -216,7 +216,7 @@ async def _create_panel_message_with_retry(
         if stop_reason != "max_tokens":
             return response
 
-        next_max_tokens = _get_escalated_max_tokens(current_max_tokens)
+        next_max_tokens = get_escalated_max_tokens(current_max_tokens)
         if (
             attempt >= settings.CLAUDE_MAX_TOKENS_RETRIES
             or next_max_tokens <= current_max_tokens
@@ -570,7 +570,7 @@ async def stream_ai_panel_cards_with_usage(
             )
 
             if stop_reason == "max_tokens":
-                next_max_tokens = _get_escalated_max_tokens(current_max_tokens)
+                next_max_tokens = get_escalated_max_tokens(current_max_tokens)
                 if (
                     emitted_this_attempt == 0
                     and attempt < settings.CLAUDE_MAX_TOKENS_RETRIES

@@ -106,7 +106,7 @@ The reason is architectural, not cosmetic: structural extraction turns often req
 - [ADR-0007: AI-generated panel cards](0007-ai-generated-panel-cards.md)
 - [ADR-0012: Two-phase chat/panel SSE contract](0012-two-phase-chat-panel-sse-contract.md)
 - [Panel card canonicalization service](../../apps/backend/app/services/panel_cards.py)
-- [Chat loop prompt-state handling](../../apps/backend/app/services/claude.py)
+- [Chat loop prompt-state handling](../../apps/backend/app/services/claude/chat_loop.py) (context: [`context_message.py`](../../apps/backend/app/services/claude/context_message.py), [`prompt_deal_state.py`](../../apps/backend/app/services/claude/prompt_deal_state.py))
 - [Panel generation service](../../apps/backend/app/services/panel.py)
 - [Typed panel-card schema](../../apps/backend/app/schemas/panel_cards.py)
 - [Insights Panel card contract docs](../insights-panel-cards.md)

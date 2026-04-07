@@ -52,7 +52,7 @@ dealership-ai/
 │       │   │   ├── deals.py
 │       │   │   └── simulations.py
 │       │   └── services/
-│       │       ├── claude.py
+│       │       ├── claude/        # package: chat loop, streaming, tools, prompts
 │       │       ├── post_chat_processing.py
 │       │       ├── title_generator.py
 │       │       └── simulation.py

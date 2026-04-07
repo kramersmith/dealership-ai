@@ -74,7 +74,7 @@ dealership-ai/
 │       │   ├── schemas/         # Pydantic request/response
 │       │   ├── routes/          # auth, chat, sessions, deals, simulations
 │       │   └── services/
-│       │       ├── claude.py    # Chat step loop (stream_chat_loop), message building, system prompt, context preambles, CHAT_TOOLS, ChatLoopResult, temporal grounding, API error mapping
+│       │       ├── claude/      # Anthropic chat: chat_loop, streaming, tool_runner, tool_schemas, prompts, messages, client, recovery
 │       │       ├── panel.py     # AI panel card generation (generate_ai_panel_cards), conversation context, panel prompt, streaming, typed card normalization
 │       │       ├── panel_cards.py # Canonical panel card kinds, render templates, titles, and payload validation
 │       │       ├── deal_analysis.py # Standalone deal analysis (analyze_deal), analyst tool definition
@@ -225,7 +225,7 @@ POST   /simulations/{id}/complete     # End + score
 3. Backend builds a `TurnContext` (session, deal state, DB session) and constructs the message list. The per-turn context message (deal state, linked sessions, current UTC date for temporal grounding) is merged into the user message as content blocks — no synthetic assistant reply is injected. The backend then starts the Claude chat step loop with tools.
 4. Each step streams `text` chunks and accumulates `tool_use` blocks. If the transport stalls or the model hits `stop_reason == "max_tokens"`, the backend emits a `retry` SSE event and replays the step with a reset signal for the client.
 5. When a step finishes with tool calls, the backend groups them into priority-ordered batches (structural → context switches → field updates → deal health) and executes each batch concurrently. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction. Results are emitted as `tool_result` SSE events, appended back into the Claude transcript, and the loop continues.
-6. Step-control logic (`_chat_tool_choice_for_step`) bounds tool rounds per buyer message: step 0 uses `auto` tool choice, step 1 conditionally allows tools (only if the previous step had errors or produced no visible text and no dashboard-only tools), and step 2+ forces `none` (text-only). This prevents model self-dialogue loops.
+6. Step-control logic (`chat_tool_choice_for_step` in `claude/tool_policy.py`) bounds tool rounds per buyer message: step 0 uses `auto` tool choice, step 1 conditionally allows tools (only if the previous step had errors or produced no visible text and no dashboard-only tools), and step 2+ forces `none` (text-only). This prevents model self-dialogue loops.
 7. When the step loop reaches a text-only completion, the backend emits `done` immediately so input can unblock, then starts asynchronous panel generation in the same SSE stream.
 8. Panel generation emits explicit lifecycle events: `panel_started`, incremental `panel_card`, and terminal `panel_done` or `panel_error`.
 9. Backend persists the assistant message with its tool calls and aggregated usage summary (chat phase + panel phase) and folds that turn into the session-level usage ledger.

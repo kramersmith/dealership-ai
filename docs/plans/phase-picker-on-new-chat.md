@@ -125,8 +125,8 @@ class BuyerContext(StrEnum):
 
 | Change | File |
 |--------|------|
-| Add `update_buyer_context` tool definition | `app/services/claude.py` |
-| Add context-specific preambles to system prompt | `app/services/claude.py` |
+| Add `update_buyer_context` tool definition | `app/services/claude/tool_schemas.py` |
+| Add context-specific preambles to system prompt | `app/services/claude/prompt_static.py` |
 | Include `buyer_context` in deal state dict passed to prompt | `app/routes/chat.py` |
 | Handle `update_buyer_context` tool call | `app/routes/chat.py` |
 | Add AI greeting endpoint (generates first message without user input) | `app/routes/chat.py` |
@@ -246,7 +246,7 @@ This is a small change to the existing `dashboardWidgets` array — sort based o
 | `apps/backend/app/schemas/deal.py` | Add `buyer_context` to `DealStateResponse` |
 | `apps/backend/app/routes/sessions.py` | Apply `buyer_context` on creation |
 | `apps/backend/app/routes/chat.py` | Include context in prompt, handle tool call |
-| `apps/backend/app/services/claude.py` | Add context preambles, `update_buyer_context` tool |
+| `apps/backend/app/services/claude/prompt_static.py`, `tool_schemas.py` | Add context preambles, `update_buyer_context` tool |
 | `apps/backend/alembic/versions/` | Migration for `buyer_context` column |
 | `apps/mobile/components/chat/WelcomePrompts.tsx` | **New** — situation cards for new sessions |
 | `apps/mobile/app/(app)/chat.tsx` | Welcome state conditional render |

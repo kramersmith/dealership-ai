@@ -38,7 +38,7 @@ This is safe because:
 
 ### API error mapping
 
-A new `_user_visible_message_for_anthropic_error()` function maps known `anthropic.APIStatusError` subclasses to safe, non-leaking user-visible messages:
+A new `user_visible_message_for_anthropic_error()` function (in `claude/errors.py`) maps known `anthropic.APIStatusError` subclasses to safe, non-leaking user-visible messages:
 
 | API condition | User-visible message |
 |---|---|
@@ -82,6 +82,6 @@ API errors emit a new `event: error` SSE event with a `message` field containing
 ## References
 
 - [Chat route](../../apps/backend/app/routes/chat.py) — orphan cleanup in `send_message()` generator
-- [Error mapping](../../apps/backend/app/services/claude.py) — `_user_visible_message_for_anthropic_error()`, `_is_anthropic_low_credit_error()`
+- [Error mapping](../../apps/backend/app/services/claude/errors.py) — `user_visible_message_for_anthropic_error()`, `is_anthropic_low_credit_error()`
 - [ADR-0009](0009-streaming-resilience.md) — streaming resilience (retry/fallback for transient errors; this ADR covers unrecoverable errors)
 - [ADR-0002](0002-sse-over-websockets.md) — SSE architecture that the `error` event extends

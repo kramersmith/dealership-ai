@@ -209,7 +209,7 @@ async def validate_tool_input(
 ) -> None:
     """Raise ToolValidationError if tool_input is semantically invalid.
 
-    Callers (_execute_tool_batch) are responsible for logging; this function
+    Callers (execute_tool_batch) are responsible for logging; this function
     raises without logging to avoid double-logging the same event.
     """
     if tool_name == "update_deal_numbers":

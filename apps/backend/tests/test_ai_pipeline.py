@@ -23,20 +23,21 @@ from app.services.claude import (
     CHAT_TOOLS,
     POST_TOOL_CONTINUATION_REMINDER,
     ChatLoopResult,
-    _calendar_years_since_model_year,
-    _move_message_cache_breakpoint,
-    _primary_vehicle_model_year,
-    _strip_redundant_continuation_opener,
-    _SyntheticBlockStopEvent,
-    _SyntheticTextEvent,
-    _SyntheticToolJsonEvent,
-    _SyntheticToolStartEvent,
+    SyntheticBlockStopEvent,
+    SyntheticTextEvent,
+    SyntheticToolJsonEvent,
+    SyntheticToolStartEvent,
     build_context_message,
     build_messages,
     build_system_prompt,
     build_temporal_hint_line,
+    calendar_years_since_model_year,
+    chat_tool_choice_for_step,
     merge_usage_summary,
+    move_message_cache_breakpoint,
+    primary_vehicle_model_year,
     stream_chat_loop,
+    strip_redundant_continuation_opener,
     summarize_usage,
 )
 from app.services.deal_state import deal_state_to_dict
@@ -147,7 +148,7 @@ class FakeClaudeResponse:
     @classmethod
     def text(cls, *chunks: str, stop_reason: str = "end_turn") -> "FakeClaudeResponse":
         items: list[tuple[str, object]] = [
-            ("stream_event", _SyntheticTextEvent(chunk)) for chunk in chunks
+            ("stream_event", SyntheticTextEvent(chunk)) for chunk in chunks
         ]
         items.append(("final_message", FakeClaudeFinalMessage(stop_reason)))
         return cls(items)
@@ -161,20 +162,20 @@ class FakeClaudeResponse:
         stop_reason: str = "tool_use",
     ) -> "FakeClaudeResponse":
         items: list[tuple[str, object]] = [
-            ("stream_event", _SyntheticTextEvent(chunk)) for chunk in text_chunks
+            ("stream_event", SyntheticTextEvent(chunk)) for chunk in text_chunks
         ]
         for call in calls:
             items.extend(
                 [
                     (
                         "stream_event",
-                        _SyntheticToolStartEvent(call["id"], call["name"]),
+                        SyntheticToolStartEvent(call["id"], call["name"]),
                     ),
                     (
                         "stream_event",
-                        _SyntheticToolJsonEvent(json.dumps(call["input"])),
+                        SyntheticToolJsonEvent(json.dumps(call["input"])),
                     ),
-                    ("stream_event", _SyntheticBlockStopEvent()),
+                    ("stream_event", SyntheticBlockStopEvent()),
                 ]
             )
         items.append(("final_message", FakeClaudeFinalMessage(stop_reason)))
@@ -191,13 +192,13 @@ class FakeClaudeResponse:
         stop_reason: str = "tool_use",
     ) -> "FakeClaudeResponse":
         items: list[tuple[str, object]] = [
-            ("stream_event", _SyntheticTextEvent(chunk)) for chunk in text_chunks
+            ("stream_event", SyntheticTextEvent(chunk)) for chunk in text_chunks
         ]
         items.extend(
             [
-                ("stream_event", _SyntheticToolStartEvent(tool_id, name)),
-                ("stream_event", _SyntheticToolJsonEvent(partial_json)),
-                ("stream_event", _SyntheticBlockStopEvent()),
+                ("stream_event", SyntheticToolStartEvent(tool_id, name)),
+                ("stream_event", SyntheticToolJsonEvent(partial_json)),
+                ("stream_event", SyntheticBlockStopEvent()),
                 ("final_message", FakeClaudeFinalMessage(stop_reason)),
             ]
         )
@@ -299,7 +300,10 @@ def test_context_message_includes_current_utc_date():
     assert re.search(r"Current date \(UTC\): \d{4}-\d{2}-\d{2}\.", content)
 
 
-@patch("app.services.claude.current_utc_date_iso", return_value="2026-04-06")
+@patch(
+    "app.services.claude.context_message.current_utc_date_iso",
+    return_value="2026-04-06",
+)
 def test_context_message_includes_temporal_hint_for_model_year(_mock_date):
     context_message = build_context_message(
         {
@@ -332,19 +336,19 @@ def test_build_temporal_hint_line_none_without_vehicle_year():
 
 
 def test_calendar_years_since_model_year_same_year_returns_one():
-    assert _calendar_years_since_model_year(2026, "2026-04-06") == 1
+    assert calendar_years_since_model_year(2026, "2026-04-06") == 1
 
 
 def test_calendar_years_since_model_year_future_returns_none():
-    assert _calendar_years_since_model_year(2028, "2026-04-06") is None
+    assert calendar_years_since_model_year(2028, "2026-04-06") is None
 
 
 def test_calendar_years_since_model_year_normal_span():
-    assert _calendar_years_since_model_year(2020, "2026-04-06") == 6
+    assert calendar_years_since_model_year(2020, "2026-04-06") == 6
 
 
 def test_calendar_years_since_model_year_invalid_date_returns_none():
-    assert _calendar_years_since_model_year(2020, "not-a-date") is None
+    assert calendar_years_since_model_year(2020, "not-a-date") is None
 
 
 def test_primary_vehicle_model_year_uses_active_deal_vehicle():
@@ -356,7 +360,7 @@ def test_primary_vehicle_model_year_uses_active_deal_vehicle():
         ],
         "deals": [{"id": "d1", "vehicle_id": "v2"}],
     }
-    assert _primary_vehicle_model_year(state) == 2018
+    assert primary_vehicle_model_year(state) == 2018
 
 
 def test_primary_vehicle_model_year_falls_back_to_primary_role():
@@ -367,12 +371,12 @@ def test_primary_vehicle_model_year_falls_back_to_primary_role():
         ],
         "deals": [],
     }
-    assert _primary_vehicle_model_year(state) == 2022
+    assert primary_vehicle_model_year(state) == 2022
 
 
 def test_primary_vehicle_model_year_none_when_empty():
-    assert _primary_vehicle_model_year({"vehicles": []}) is None
-    assert _primary_vehicle_model_year({}) is None
+    assert primary_vehicle_model_year({"vehicles": []}) is None
+    assert primary_vehicle_model_year({}) is None
 
 
 def test_strip_redundant_continuation_opener_removes_repeated_good_info_paragraph():
@@ -388,7 +392,7 @@ def test_strip_redundant_continuation_opener_removes_repeated_good_info_paragrap
         "Here's where things stand on this deal:\n\n"
         "The price concern is real."
     )
-    out = _strip_redundant_continuation_opener(prior, cont)
+    out = strip_redundant_continuation_opener(prior, cont)
     assert out.startswith("Here's where things stand")
     assert "Good info" not in out
 
@@ -399,7 +403,7 @@ def test_strip_redundant_continuation_opener_unchanged_when_topics_diverge():
         "Separately, you should verify the trade-in payoff before signing.\n\n"
         "Next, ask for the out-the-door total in writing."
     )
-    assert _strip_redundant_continuation_opener(prior, cont) == cont
+    assert strip_redundant_continuation_opener(prior, cont) == cont
 
 
 def test_context_message_omits_ai_panel_cards_from_prompt_state():
@@ -501,14 +505,12 @@ def test_turn_context_for_db_session_without_deal_state():
     assert swapped.deal_state is mock_deal_state
 
 
-# ─── _chat_tool_choice_for_step tests ───
+# ─── chat_tool_choice_for_step tests ───
 
 
 def test_chat_tool_choice_step_zero_is_auto():
     """Step 0 always returns auto (model decides freely)."""
-    from app.services.claude import _chat_tool_choice_for_step
-
-    result = _chat_tool_choice_for_step(
+    result = chat_tool_choice_for_step(
         0,
         prev_step_had_tool_errors=False,
         prev_step_had_visible_assistant_text=False,
@@ -519,10 +521,8 @@ def test_chat_tool_choice_step_zero_is_auto():
 
 def test_chat_tool_choice_step_two_or_beyond_is_none():
     """Step >= 2 always forces text-only (no tools)."""
-    from app.services.claude import _chat_tool_choice_for_step
-
     for step in (2, 3, 4):
-        result = _chat_tool_choice_for_step(
+        result = chat_tool_choice_for_step(
             step,
             prev_step_had_tool_errors=False,
             prev_step_had_visible_assistant_text=True,
@@ -533,9 +533,7 @@ def test_chat_tool_choice_step_two_or_beyond_is_none():
 
 def test_chat_tool_choice_step_one_none_when_text_and_no_errors():
     """Step 1 forces none when step 0 had visible text and no errors."""
-    from app.services.claude import _chat_tool_choice_for_step
-
-    result = _chat_tool_choice_for_step(
+    result = chat_tool_choice_for_step(
         1,
         prev_step_had_tool_errors=False,
         prev_step_had_visible_assistant_text=True,
@@ -546,9 +544,7 @@ def test_chat_tool_choice_step_one_none_when_text_and_no_errors():
 
 def test_chat_tool_choice_step_one_none_when_dashboard_only_no_errors():
     """Step 1 forces none when step 0 had dashboard-only tools and no errors."""
-    from app.services.claude import _chat_tool_choice_for_step
-
-    result = _chat_tool_choice_for_step(
+    result = chat_tool_choice_for_step(
         1,
         prev_step_had_tool_errors=False,
         prev_step_had_visible_assistant_text=False,
@@ -559,9 +555,7 @@ def test_chat_tool_choice_step_one_none_when_dashboard_only_no_errors():
 
 def test_chat_tool_choice_step_one_auto_when_tool_errors():
     """Step 1 allows auto when step 0 had tool errors (model self-correction)."""
-    from app.services.claude import _chat_tool_choice_for_step
-
-    result = _chat_tool_choice_for_step(
+    result = chat_tool_choice_for_step(
         1,
         prev_step_had_tool_errors=True,
         prev_step_had_visible_assistant_text=True,
@@ -572,9 +566,7 @@ def test_chat_tool_choice_step_one_auto_when_tool_errors():
 
 def test_chat_tool_choice_step_one_auto_when_no_text_and_not_dashboard():
     """Step 1 allows auto when step 0 had no visible text and non-dashboard tools."""
-    from app.services.claude import _chat_tool_choice_for_step
-
-    result = _chat_tool_choice_for_step(
+    result = chat_tool_choice_for_step(
         1,
         prev_step_had_tool_errors=False,
         prev_step_had_visible_assistant_text=False,
@@ -745,7 +737,7 @@ def test_build_messages_compaction_prefix_before_history_cache_on_last_history_o
 
 
 def test_move_message_cache_breakpoint_moves_to_last():
-    """_move_message_cache_breakpoint moves breakpoint to the last message."""
+    """move_message_cache_breakpoint moves breakpoint to the last message."""
     messages = [
         {
             "role": "user",
@@ -764,7 +756,7 @@ def test_move_message_cache_breakpoint_moves_to_last():
         },
     ]
 
-    _move_message_cache_breakpoint(messages)
+    move_message_cache_breakpoint(messages)
 
     # Old breakpoint removed
     assert "cache_control" not in messages[0]["content"][0]
@@ -773,12 +765,12 @@ def test_move_message_cache_breakpoint_moves_to_last():
 
 
 def test_move_message_cache_breakpoint_string_content():
-    """_move_message_cache_breakpoint converts string content to list with cache_control."""
+    """move_message_cache_breakpoint converts string content to list with cache_control."""
     messages = [
         {"role": "user", "content": "plain string"},
     ]
 
-    _move_message_cache_breakpoint(messages)
+    move_message_cache_breakpoint(messages)
 
     assert isinstance(messages[0]["content"], list)
     assert messages[0]["content"][0] == {
@@ -789,7 +781,7 @@ def test_move_message_cache_breakpoint_string_content():
 
 
 def test_move_message_cache_breakpoint_strips_all_previous():
-    """_move_message_cache_breakpoint strips breakpoints from all previous messages."""
+    """move_message_cache_breakpoint strips breakpoints from all previous messages."""
     messages = [
         {
             "role": "user",
@@ -809,7 +801,7 @@ def test_move_message_cache_breakpoint_strips_all_previous():
         },
     ]
 
-    _move_message_cache_breakpoint(messages)
+    move_message_cache_breakpoint(messages)
 
     # All previous breakpoints stripped
     assert "cache_control" not in messages[0]["content"][0]
@@ -1165,9 +1157,12 @@ async def test_stream_chat_loop_applies_multi_tool_chain_and_snapshots_state(
     ).to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0, step_1),
         ),
     ):
@@ -1243,9 +1238,12 @@ async def test_stream_chat_loop_synthesizes_tool_error_on_execution_failure(
     ).to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0, step_1),
         ),
     ):
@@ -1301,9 +1299,12 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
     ).to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0, step_1),
         ),
     ):
@@ -1367,9 +1368,12 @@ async def test_stream_chat_loop_emits_retry_event_before_recovery(
     ]
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0),
         ),
     ):
@@ -1413,9 +1417,12 @@ async def test_stream_chat_loop_retries_after_max_tokens(adb, async_buyer_user):
     ).to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(truncated_attempt, recovered_attempt),
         ),
     ):
@@ -1451,6 +1458,8 @@ async def test_stream_chat_loop_recovers_full_done_when_max_steps_reached(
     adb, async_buyer_user
 ):
     _, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
+    await adb.commit()
+    await adb.refresh(deal_state)
     result = ChatLoopResult()
 
     step_0 = FakeClaudeResponse.tool_calls(
@@ -1485,9 +1494,12 @@ async def test_stream_chat_loop_recovers_full_done_when_max_steps_reached(
     ).to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0, step_1, recovery),
         ),
     ):
@@ -1561,8 +1573,14 @@ async def test_stream_chat_loop_refreshes_context_between_steps(adb, async_buyer
     )
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
-        patch("app.services.claude._stream_step_with_retry", new=_recording_stream),
+        patch(
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
+            new=_recording_stream,
+        ),
     ):
         await _collect_generator_events(
             stream_chat_loop(
@@ -1615,9 +1633,12 @@ async def test_stream_chat_loop_deduplicates_repeated_step_text_after_tools(
     step_1 = FakeClaudeResponse.text(duplicated_text, stop_reason="end_turn").to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0, step_1),
         ),
     ):
@@ -1677,9 +1698,12 @@ async def test_stream_chat_loop_fast_recovers_after_quick_actions_only_step(
     ).to_items()
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_scripted_stream_factory(step_0, step_1, recovery),
         ),
     ):
@@ -1740,9 +1764,12 @@ async def test_stream_chat_loop_continues_after_successful_text_and_structural_t
             yield item
 
     with (
-        patch("app.services.claude.create_anthropic_client", return_value=object()),
         patch(
-            "app.services.claude._stream_step_with_retry",
+            "app.services.claude.chat_loop.create_anthropic_client",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.claude.streaming.stream_step_with_retry",
             new=_recording_stream,
         ),
     ):

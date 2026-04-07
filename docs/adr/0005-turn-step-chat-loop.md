@@ -26,7 +26,7 @@ The panel generation stage was not part of the problem — it operates on finali
 
 ## Decision
 
-Replace the three-stage pipeline with a **turn/step loop** where Claude has direct access to 17 individual operational tools during the main chat call. The architecture is implemented in `stream_chat_loop()` in `apps/backend/app/services/claude.py`.
+Replace the three-stage pipeline with a **turn/step loop** where Claude has direct access to 17 individual operational tools during the main chat call. The architecture is implemented in `stream_chat_loop()` in `apps/backend/app/services/claude/chat_loop.py`.
 
 ### Terminology
 
@@ -35,7 +35,7 @@ Replace the three-stage pipeline with a **turn/step loop** where Claude has dire
 
 ### Step loop mechanics
 
-1. Call Claude with the system prompt, conversation history, and 17 tools (`CHAT_TOOLS`) using `tool_choice: auto`. Stream the response via `_stream_step_with_retry()`.
+1. Call Claude with the system prompt, conversation history, and 17 tools (`CHAT_TOOLS`) using `tool_choice: auto`. Stream the response via `stream_step_with_retry()` (in `claude/streaming.py`).
 2. As the response streams, emit `text` SSE events for conversation chunks in real time. Simultaneously accumulate `tool_use` content blocks by tracking `content_block_start`, `input_json_delta`, and `content_block_stop` events to build complete tool call objects (id, name, parsed JSON input).
 3. When the stream completes, check the `stop_reason`:
    - `end_turn` or no tool calls: the loop is done. Emit a `done` SSE event with the final text. Populate `ChatLoopResult` and return.
@@ -44,7 +44,7 @@ Replace the three-stage pipeline with a **turn/step loop** where Claude has dire
 4. Execute accumulated tool calls using `build_execution_plan()` (from `deal_state.py`), which groups tools into priority-ordered batches:
    - Priority 0 (structural): `set_vehicle`, `remove_vehicle` — must complete before anything references the vehicle.
    - Priority 1 (context switches): `create_deal`, `switch_active_deal` — must complete before field updates target the right deal.
-   - Priority 2 (default): all other tools — independent field updates that run concurrently via `asyncio.gather()` in `_execute_tool_batch()`.
+   - Priority 2 (default): all other tools — independent field updates that run concurrently via `asyncio.gather()` in `execute_tool_batch()` (in `claude/tool_runner.py`).
    Each concurrent tool gets its own `AsyncSession` to avoid shared-session conflicts. On success, changes are committed immediately. On failure, only the failing tool rolls back; other tools' changes persist. Results are yielded in original call order regardless of completion order.
 5. Append the assistant's content blocks (text + tool_use) as an assistant message and all `tool_result` blocks as a user message to the conversation history.
 6. Increment the step counter. If below `CHAT_LOOP_MAX_STEPS` (5), go to step 1. Otherwise, emit a `done` event with whatever text has accumulated and log a warning.
@@ -130,7 +130,7 @@ Move tool execution to the frontend — Claude returns tool call intents, the fr
 
 ## References
 
-- [Step loop implementation — `stream_chat_loop()`](../../apps/backend/app/services/claude.py)
+- [Step loop implementation — `stream_chat_loop()`](../../apps/backend/app/services/claude/chat_loop.py)
 - [Tool execution and priority batching — `build_execution_plan()`, `execute_tool()`](../../apps/backend/app/services/deal_state.py)
 - [Panel generation — `generate_ai_panel_cards_with_usage()`](../../apps/backend/app/services/panel.py)
 - [Chat SSE endpoint](../../apps/backend/app/routes/chat.py)

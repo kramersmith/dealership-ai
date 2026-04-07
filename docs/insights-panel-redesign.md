@@ -591,7 +591,7 @@ savings_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 Add three new tool definitions to `DEAL_TOOLS` and wire them into `_apply_tool_call`.
 
-**File: `apps/backend/app/services/claude.py`** — Add to `DEAL_TOOLS` array:
+**File: `apps/backend/app/services/claude/tool_schemas.py`** — Add to `CHAT_TOOLS` array:
 
 ```python
 {
@@ -738,14 +738,14 @@ elif tool_name == "update_information_gaps":
 
 ### Step 3: Backend — System Prompt Restructuring
 
-Rewrite `SYSTEM_PROMPT` in `claude.py`. This is the highest-leverage single change — it controls all AI behavior.
+Rewrite `SYSTEM_PROMPT_STATIC` in `claude/prompt_static.py`. This is the highest-leverage single change — it controls all AI behavior.
 
 **Prompt length discipline:** The expanded prompt (grounding rules, tool priority, dealer tactics, F&I instructions, context preambles) could exceed 2000 tokens. Long system prompts dilute instruction-following quality — the model pays most attention to the beginning and end (primacy/recency effects). Structure the prompt so:
 - **Top:** Role identity + grounding rules (most critical — never violated)
 - **Middle:** Tool descriptions + dealer tactics (reference material)
 - **Bottom:** Tool priority hierarchy + response format rules (most recent in attention)
 
-Keep each section concise. Use bullet points over paragraphs. The tool descriptions themselves (in `DEAL_TOOLS`) already carry detailed instructions — the system prompt should focus on behavioral rules that span across tools, not repeat per-tool detail.
+Keep each section concise. Use bullet points over paragraphs. The tool descriptions themselves (in `CHAT_TOOLS`) already carry detailed instructions — the system prompt should focus on behavioral rules that span across tools, not repeat per-tool detail.
 
 **Key structural changes:**
 
@@ -806,7 +806,7 @@ Information gaps: {count} remaining
 
 After the primary Claude response, if deal numbers changed but the AI didn't call `update_deal_health` or `update_red_flags`, fire a lightweight Haiku assessment pass. This mirrors the existing quick actions safety net pattern.
 
-**File: `apps/backend/app/services/claude.py`** — Add new function:
+**File: `apps/backend/app/services/deal_analysis.py`** (or adjacent service; today see `analyze_deal()`) — Add new function:
 ```python
 async def assess_deal_state(deal_state_dict: dict) -> dict:
     """Lightweight assessment of deal health and red flags via Haiku.

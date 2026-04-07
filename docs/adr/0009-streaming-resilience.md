@@ -16,7 +16,7 @@ These failures are particularly damaging for the app's UX because the buyer is i
 
 ## Decision
 
-Implement a three-layer streaming resilience strategy in `_stream_step_with_retry()` in `claude.py`:
+Implement a three-layer streaming resilience strategy in `stream_step_with_retry()` in `claude/streaming.py`:
 
 ### Layer 1: Idle Timeout Watchdog
 
@@ -32,7 +32,7 @@ All step-level accumulators (partial text, tool use blocks) are also reset serve
 
 ### Layer 3: Non-Streaming Fallback
 
-If all stream retries are exhausted, the system falls back to a synchronous (non-streaming) `client.messages.create()` call with the same parameters. The response is converted into synthetic stream events (`_SyntheticTextEvent`, `_SyntheticToolStartEvent`, `_SyntheticToolJsonEvent`, `_SyntheticBlockStopEvent`) that match the duck-typed attributes accessed by `stream_chat_loop()`. This means the rest of the pipeline — text accumulation, tool execution, SSE emission — works identically regardless of whether the response came from a stream or the fallback.
+If all stream retries are exhausted, the system falls back to a synchronous (non-streaming) `client.messages.create()` call with the same parameters. The response is converted into synthetic stream events (`SyntheticTextEvent`, `SyntheticToolStartEvent`, `SyntheticToolJsonEvent`, `SyntheticBlockStopEvent`) that match the duck-typed attributes accessed by `stream_chat_loop()`. This means the rest of the pipeline — text accumulation, tool execution, SSE emission — works identically regardless of whether the response came from a stream or the fallback.
 
 If the non-streaming fallback also fails, the original stream error is re-raised and surfaces as an SSE error event to the client.
 
@@ -72,12 +72,12 @@ All parameters are exposed as environment variables via Pydantic Settings (`conf
 - **Positive:** The client receives explicit `retry` SSE events with `reset_text` flags, enabling clean UI transitions (clear partial text, show retry indicator) rather than leaving stale partial content on screen.
 - **Positive:** All timeout and retry parameters are configurable via environment variables, allowing tuning without code changes.
 - **Negative:** Stream retries replay the full Claude API call, which means the same prompt is billed again. With a max of 2 retries, the worst case is 3x the token cost for a single step. This is acceptable because stalls are infrequent and the alternative (user-visible failure) is worse.
-- **Negative:** The synthetic event classes (`_SyntheticTextEvent`, etc.) are duck-typed wrappers that must stay in sync with the attributes accessed by `stream_chat_loop()`. If the event processing logic changes, these wrappers could silently break. Mitigated by keeping them adjacent in the same file.
+- **Negative:** The synthetic event classes (`SyntheticTextEvent`, etc.) are duck-typed wrappers that must stay in sync with the attributes accessed by `stream_chat_loop()`. If the event processing logic changes, these wrappers could silently break. Mitigated by colocating them in `streaming.py` next to `stream_step_with_retry()`.
 - **Neutral:** The retry/fallback logic is entirely server-side and invisible to the client beyond the `retry` SSE event. The client does not need to implement its own timeout or retry logic for stream failures.
 
 ## References
 
-- [Streaming resilience implementation](../../apps/backend/app/services/claude.py) — `_stream_step_with_retry()`, synthetic event classes
+- [Streaming resilience implementation](../../apps/backend/app/services/claude/streaming.py) — `stream_step_with_retry()`, synthetic event classes
 - [Backend config](../../apps/backend/app/core/config.py) — `CLAUDE_STREAM_*` settings
 - [Frontend SSE retry handling](../../apps/mobile/lib/apiClient.ts) — `retry` event processing with `reset_text`
 - [Anthropic SDK streaming docs](https://docs.anthropic.com/en/api/streaming)

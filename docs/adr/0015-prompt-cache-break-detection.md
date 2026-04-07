@@ -87,7 +87,7 @@ Break counts and last-known fingerprints (chat and panel) are persisted on `Sess
 
 - [Prompt cache signature module](../../apps/backend/app/services/prompt_cache_signature.py)
 - [Usage tracking](../../apps/backend/app/services/usage_tracking.py) — `SessionUsageSummary` prompt cache fields
-- [Chat step loop integration](../../apps/backend/app/services/claude.py) — `stream_chat_loop()` fingerprint calls
+- [Chat step loop integration](../../apps/backend/app/services/claude/chat_loop.py) — `stream_chat_loop()` fingerprint calls
 - [Panel integration](../../apps/backend/app/services/panel.py) — `stream_ai_panel_cards_with_usage()` fingerprint calls
 - [Logging guidelines](../../docs/logging-guidelines.md) — prompt cache break log rules
 - [ADR-0011](0011-usage-tracking-and-cost-accounting.md) — usage tracking foundation this extends
