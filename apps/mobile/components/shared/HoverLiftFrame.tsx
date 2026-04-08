@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from 'react'
-import { Platform, View } from 'react-native'
+import { Platform, View, type ViewStyle } from 'react-native'
 
 interface HoverLiftFrameProps {
   children: ReactNode
   shadowColor: string
   borderRadius?: number
   interactive?: boolean
+  /** Merged into the outer web wrapper (e.g. width) so shadow matches the card box */
+  layoutStyle?: ViewStyle
 }
 
 export function HoverLiftFrame({
@@ -13,6 +15,7 @@ export function HoverLiftFrame({
   shadowColor,
   borderRadius = 12,
   interactive = true,
+  layoutStyle,
 }: HoverLiftFrameProps) {
   const HoverView = View as any
   const [isHovered, setIsHovered] = useState(false)
@@ -23,6 +26,7 @@ export function HoverLiftFrame({
 
   const style = {
     borderRadius,
+    ...(layoutStyle ?? {}),
     boxShadow: isHovered
       ? `0 4px 12px ${shadowColor}, 0 2px 6px ${shadowColor}`
       : `0 1px 3px ${shadowColor}, 0 1px 2px ${shadowColor}`,

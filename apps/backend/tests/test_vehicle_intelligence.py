@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from app.models.deal import Deal
+from app.models.enums import VehicleRole
 from app.models.vehicle_decode import VehicleDecode
 from app.models.vehicle_history_report import VehicleHistoryReport
 from app.models.vehicle_valuation import VehicleValuation
@@ -812,6 +814,34 @@ def test_upsert_vehicle_from_vin_returns_existing_when_same_vin(client, db):
     assert response.status_code == 200
     payload = response.json()
     assert payload["id"] == vehicle.id
+
+
+def test_upsert_vehicle_from_vin_second_shopping_vehicle_is_candidate(client, db):
+    """When a shopping vehicle already exists, a new VIN upserts as candidate."""
+    user, token = create_user_and_token(db)
+    session, deal_state = create_session_with_deal_state(db, user)
+    v1 = create_vehicle(db, session.id, vin="1HGCM82633A004352")
+    deal = Deal(session_id=session.id, vehicle_id=v1.id)
+    db.add(deal)
+    db.flush()
+    deal_state.active_deal_id = deal.id
+    db.commit()
+    db.refresh(deal_state)
+    active_before = deal_state.active_deal_id
+    assert active_before is not None
+
+    response = client.post(
+        f"/api/deal/{session.id}/vehicles/upsert-from-vin",
+        headers=auth_header(token),
+        json={"vin": "1FT7W2BN0NED52782"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["vin"] == "1FT7W2BN0NED52782"
+    assert payload["role"] == VehicleRole.CANDIDATE
+    db.refresh(deal_state)
+    assert deal_state.active_deal_id == active_before
 
 
 # ─── Route: decode-vin error handling ───

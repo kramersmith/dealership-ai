@@ -30,9 +30,9 @@ export function NotesCard({ title, content }: NotesCardProps) {
     <AppCard compact>
       <YStack gap="$2.5">
         <CardTitle icon={<Bookmark size={14} color="$placeholderColor" />}>{title}</CardTitle>
-        <YStack gap="$2">
+        <YStack gap="$2.5">
           {items.map((item) => (
-            <Text key={item} fontSize={13} lineHeight={18} color="$color">
+            <Text key={item} fontSize={12} lineHeight={19} color="$color">
               {'\u2022'} {item}
             </Text>
           ))}

@@ -318,6 +318,22 @@ function mapDealComparison(rawComparison: any): import('./types').DealComparison
   }
 }
 
+function mapMessage(raw: any): import('./types').Message {
+  return {
+    id: raw.id,
+    sessionId: raw.session_id,
+    role: raw.role,
+    content: raw.content,
+    imageUri: raw.image_url,
+    toolCalls: raw.tool_calls?.map((tc: any) => ({
+      name: tc.name as import('./types').ToolCall['name'],
+      args: tc.args,
+    })),
+    usage: raw.usage,
+    createdAt: raw.created_at,
+  }
+}
+
 /** Map camelCase vehicle field names to snake_case for the backend. */
 const VEHICLE_FIELD_MAP: Record<string, string> = {
   vehicleId: 'vehicle_id',
@@ -441,25 +457,25 @@ class ApiClient implements ApiService {
     const raw = res.messages ?? []
     const cp = res.context_pressure ?? {}
     return {
-      messages: raw.map((m: any) => ({
-        id: m.id,
-        sessionId: m.session_id,
-        role: m.role,
-        content: m.content,
-        imageUri: m.image_url,
-        toolCalls: m.tool_calls?.map((tc: any) => ({
-          name: tc.name as ToolCall['name'],
-          args: tc.args,
-        })),
-        usage: m.usage,
-        createdAt: m.created_at,
-      })),
+      messages: raw.map(mapMessage),
       contextPressure: {
         level: cp.level === 'warn' || cp.level === 'critical' ? cp.level : 'ok',
         estimatedInputTokens: Number(cp.estimated_input_tokens ?? 0),
         inputBudget: Number(cp.input_budget ?? 0),
       },
     }
+  }
+
+  async persistUserMessage(
+    sessionId: string,
+    content: string,
+    imageUri?: string
+  ): Promise<Message> {
+    const persistedMessage = await request<any>(`/chat/${sessionId}/user-message`, {
+      method: 'POST',
+      body: JSON.stringify({ content, image_url: imageUri ?? null }),
+    })
+    return mapMessage(persistedMessage)
   }
 
   sendMessage(
@@ -473,7 +489,8 @@ class ApiClient implements ApiService {
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
-    onCompaction?: (phase: 'started' | 'done' | 'error') => void
+    onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    existingUserMessageId?: string
   ): Promise<Message> {
     // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
     // is buffered by React Native's polyfill and doesn't deliver chunks live.
@@ -659,7 +676,14 @@ class ApiClient implements ApiService {
         finishPanelStream()
         reject(new Error('Request timed out'))
       }
-      xhr.send(JSON.stringify({ content, image_url: imageUri }))
+      const payload: Record<string, unknown> = {
+        content,
+        image_url: imageUri ?? null,
+      }
+      if (existingUserMessageId) {
+        payload.existing_user_message_id = existingUserMessageId
+      }
+      xhr.send(JSON.stringify(payload))
     })
   }
 

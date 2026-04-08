@@ -3,7 +3,7 @@ import { TouchableOpacity, Animated } from 'react-native'
 import { YStack } from 'tamagui'
 import { MessageCircle } from '@tamagui/lucide-icons'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import type { AiPanelCard, QuotedCard } from '@/lib/types'
+import type { AiPanelCard, NegotiationContext, NegotiationStance, QuotedCard } from '@/lib/types'
 import { BriefingCard } from './BriefingCard'
 import { NumbersCard } from './NumbersCard'
 import { AiVehicleCard } from './AiVehicleCard'
@@ -14,6 +14,24 @@ import { NotesCard } from './NotesCard'
 import { AiChecklistCard } from './AiChecklistCard'
 import { SuccessCard } from './SuccessCard'
 import { CardReplyInput } from './CardReplyInput'
+import { SituationBar } from './SituationBar'
+
+const NEGOTIATION_STANCES: readonly NegotiationStance[] = [
+  'researching',
+  'preparing',
+  'engaging',
+  'negotiating',
+  'holding',
+  'walking',
+  'waiting',
+  'financing',
+  'closing',
+  'post_purchase',
+] as const
+
+function isNegotiationStance(value: string): value is NegotiationStance {
+  return (NEGOTIATION_STANCES as readonly string[]).includes(value)
+}
 
 /** Duration in ms for the reply drawer close animation. */
 const REPLY_CLOSE_DURATION_MS = 200
@@ -26,6 +44,18 @@ interface AiCardProps {
 }
 
 function renderCardContent(card: AiPanelCard): React.ReactNode {
+  if (card.kind === 'phase') {
+    const rawStance = card.content?.stance
+    const situation =
+      typeof card.content?.situation === 'string' ? card.content.situation.trim() : ''
+    const stance: NegotiationStance =
+      typeof rawStance === 'string' && isNegotiationStance(rawStance) ? rawStance : 'researching'
+    if (!situation) {
+      return null
+    }
+    const context: NegotiationContext = { stance, situation }
+    return <SituationBar context={context} />
+  }
   switch (card.template) {
     case 'briefing':
       return <BriefingCard title={card.title} content={card.content} priority={card.priority} />

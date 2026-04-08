@@ -33,7 +33,7 @@ Instead, the backend now treats model panel output as an intermediate suggestion
 - `content` — validated, kind-specific payload
 - `priority` — rendering emphasis
 
-The backend owns canonicalization, validation, deduplication, ordering, and final card capping. The frontend renders the canonical contract, not the model's raw output.
+The backend owns canonicalization, validation, deduplication, ordering, and per-kind instance limits (for example multiple `vehicle` cards when comparing trucks). There is no global cap on total panel size. The frontend renders the canonical contract, not the model's raw output.
 
 This supersedes the payload-contract portion of ADR-0007. ADR-0007 remains correct about using a separate post-chat panel generation phase, but it no longer describes the authoritative card schema.
 

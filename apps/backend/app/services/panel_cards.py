@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.models.enums import AiCardKind, AiCardPriority, AiCardTemplate
+from app.models.enums import (
+    AiCardKind,
+    AiCardPriority,
+    AiCardTemplate,
+    NegotiationStance,
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,11 @@ PANEL_CARD_SPECS: dict[AiCardKind, PanelCardSpec] = {
         kind=AiCardKind.NUMBERS,
         template=AiCardTemplate.NUMBERS,
         title="Numbers",
+    ),
+    AiCardKind.PHASE: PanelCardSpec(
+        kind=AiCardKind.PHASE,
+        template=AiCardTemplate.BRIEFING,
+        title="Status",
     ),
     AiCardKind.WARNING: PanelCardSpec(
         kind=AiCardKind.WARNING,
@@ -106,6 +116,7 @@ PANEL_CARD_KIND_ORDER = {
     kind.value: index
     for index, kind in enumerate(
         [
+            AiCardKind.PHASE,
             AiCardKind.WARNING,
             AiCardKind.IF_YOU_SAY_YES,
             AiCardKind.NUMBERS,
@@ -123,6 +134,37 @@ PANEL_CARD_KIND_ORDER = {
             AiCardKind.SUCCESS,
         ]
     )
+}
+
+# Max instances per kind after identity dedupe. No global panel length cap.
+# Most kinds dedupe to a single identity (`kind` only); `vehicle` uses VIN / YMM+mileage+color.
+PANEL_KIND_MAX_INSTANCES: dict[str, int] = {
+    AiCardKind.VEHICLE.value: 6,
+}
+DEFAULT_PANEL_KIND_MAX_INSTANCES = 1
+
+REQUIRED_PANEL_CARD_KINDS: tuple[str, ...] = (
+    AiCardKind.VEHICLE.value,
+    AiCardKind.CHECKLIST.value,
+    AiCardKind.PHASE.value,
+    AiCardKind.NUMBERS.value,
+    AiCardKind.NOTES.value,
+)
+
+_NEGOTIATION_STANCE_VALUES = {stance.value for stance in NegotiationStance}
+
+_NUMBER_FIELD_LABELS: dict[str, str] = {
+    "msrp": "MSRP",
+    "invoice_price": "Invoice",
+    "listing_price": "Listing",
+    "your_target": "Your target",
+    "walk_away_price": "Walk-away max",
+    "current_offer": "Current offer",
+    "monthly_payment": "Monthly payment",
+    "apr": "APR",
+    "loan_term_months": "Loan term (mo)",
+    "down_payment": "Down payment",
+    "trade_in_value": "Trade-in",
 }
 
 
@@ -274,6 +316,20 @@ def _normalize_notes_content(content: Any) -> dict[str, Any] | None:
         return None
 
     return {"items": items}
+
+
+def _normalize_phase_content(content: Any) -> dict[str, Any] | None:
+    """Negotiation stance + situation line (same contract as negotiation_context strip)."""
+    if not isinstance(content, dict):
+        return None
+
+    stance = _as_string(content.get("stance"))
+    situation = _as_string(content.get("situation"))
+    if not situation:
+        return None
+    if stance not in _NEGOTIATION_STANCE_VALUES:
+        stance = NegotiationStance.RESEARCHING.value
+    return {"stance": stance, "situation": situation}
 
 
 def _normalize_checklist_content(content: Any) -> dict[str, Any] | None:
@@ -509,6 +565,8 @@ def normalize_panel_card(raw_card: Any) -> dict[str, Any] | None:
         content = _normalize_comparison_content(raw_content)
     elif spec.kind == AiCardKind.VEHICLE:
         content = _normalize_vehicle_content(raw_content)
+    elif spec.kind == AiCardKind.PHASE:
+        content = _normalize_phase_content(raw_content)
     else:
         content = None
 
@@ -548,25 +606,60 @@ def _panel_card_dedupe_rank(card: dict[str, Any], index: int) -> tuple[int, int,
     return priority_rank, severity_rank, index
 
 
-def canonicalize_panel_cards(
-    cards: list[dict[str, Any]], *, max_cards: int = 5
-) -> list[dict[str, Any]]:
-    """Deduplicate, order, and cap panel cards for the authoritative final payload."""
+def _panel_card_dedupe_identity(card: dict[str, Any]) -> str | None:
+    kind = _as_string(card.get("kind"))
+    if kind not in VALID_PANEL_CARD_KINDS:
+        return None
+
+    if kind == AiCardKind.VEHICLE.value:
+        content = card.get("content")
+        vehicle = content.get("vehicle") if isinstance(content, dict) else None
+        if isinstance(vehicle, dict):
+            vin = _as_string(vehicle.get("vin"))
+            if vin:
+                return f"{kind}:{vin}"
+
+            role = _as_string(vehicle.get("role"))
+            make = _as_string(vehicle.get("make"))
+            model = _as_string(vehicle.get("model"))
+            year = vehicle.get("year")
+            if role or make or model or isinstance(year, int):
+                mileage_key = ""
+                raw_mileage = vehicle.get("mileage")
+                if isinstance(raw_mileage, (int, float)):
+                    mileage_key = str(int(raw_mileage))
+                color = _as_string(vehicle.get("color"))
+                return (
+                    f"{kind}:{role or ''}:{year or ''}:{make or ''}:{model or ''}:"
+                    f"{mileage_key}:{color or ''}"
+                )
+
+    return kind
+
+
+def _per_kind_instance_cap(kind: str | None) -> int:
+    if not kind:
+        return DEFAULT_PANEL_KIND_MAX_INSTANCES
+    return PANEL_KIND_MAX_INSTANCES.get(kind, DEFAULT_PANEL_KIND_MAX_INSTANCES)
+
+
+def canonicalize_panel_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate by identity, sort by kind/priority, then apply per-kind instance caps."""
     if not cards:
         return []
 
-    best_by_kind: dict[str, tuple[tuple[int, int, int], int, dict[str, Any]]] = {}
+    best_by_identity: dict[str, tuple[tuple[int, int, int], int, dict[str, Any]]] = {}
     for index, card in enumerate(cards):
-        kind = card.get("kind")
-        if kind not in VALID_PANEL_CARD_KINDS:
+        dedupe_identity = _panel_card_dedupe_identity(card)
+        if dedupe_identity is None:
             continue
 
         rank = _panel_card_dedupe_rank(card, index)
-        existing = best_by_kind.get(kind)
+        existing = best_by_identity.get(dedupe_identity)
         if existing is None or rank < existing[0]:
-            best_by_kind[kind] = (rank, index, card)
+            best_by_identity[dedupe_identity] = (rank, index, card)
 
-    canonical_cards = [entry[2] for entry in best_by_kind.values()]
+    canonical_cards = [entry[2] for entry in best_by_identity.values()]
     canonical_cards.sort(
         key=lambda card: (
             PANEL_CARD_KIND_ORDER.get(card["kind"], len(PANEL_CARD_KIND_ORDER)),
@@ -579,12 +672,20 @@ def canonicalize_panel_cards(
         )
     )
 
-    if max_cards > 0:
-        return canonical_cards[:max_cards]
-    return canonical_cards
+    kind_counts: dict[str, int] = {}
+    capped: list[dict[str, Any]] = []
+    for card in canonical_cards:
+        kind = _as_string(card.get("kind"))
+        limit = _per_kind_instance_cap(kind)
+        used = kind_counts.get(kind or "", 0)
+        if used >= limit:
+            continue
+        kind_counts[kind or ""] = used + 1
+        capped.append(card)
+    return capped
 
 
-def sanitize_panel_cards(raw_cards: Any, *, max_cards: int = 5) -> list[dict[str, Any]]:
+def sanitize_panel_cards(raw_cards: Any) -> list[dict[str, Any]]:
     """Normalize persisted cards into the authoritative backend contract."""
     if not isinstance(raw_cards, list):
         return []
@@ -594,4 +695,4 @@ def sanitize_panel_cards(raw_cards: Any, *, max_cards: int = 5) -> list[dict[str
         for raw_card in raw_cards
         if (normalized_card := normalize_panel_card(raw_card)) is not None
     ]
-    return canonicalize_panel_cards(normalized_cards, max_cards=max_cards)
+    return canonicalize_panel_cards(normalized_cards)

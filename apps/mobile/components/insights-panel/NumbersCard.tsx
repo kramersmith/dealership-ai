@@ -24,6 +24,16 @@ interface NumbersCardProps {
   content: Record<string, any>
 }
 
+function formatGroupLabel(key: string): string | null {
+  const normalized = key.trim()
+  if (!normalized || normalized === 'default') return null
+
+  return normalized
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
 // ─── Number Parsing ───
 
 /** Extract numeric value, prefix (e.g. "$"), and suffix from a formatted string. */
@@ -201,6 +211,7 @@ function NumberRowItem({ row }: { row: NumberRow }) {
 export function NumbersCard({ title, content }: NumbersCardProps) {
   const groups = (content.groups as NumberGroup[]) ?? []
   const rows = (content.rows as NumberRow[]) ?? []
+  const summary = typeof content.summary === 'string' ? content.summary.trim() : ''
 
   const allGroups: NumberGroup[] =
     groups.length > 0 ? groups : rows.length > 0 ? [{ key: 'default', rows }] : []
@@ -211,15 +222,35 @@ export function NumbersCard({ title, content }: NumbersCardProps) {
     <AppCard compact>
       <YStack gap="$3">
         <CardTitle>{title}</CardTitle>
+        {summary ? (
+          <Text fontSize={13} color="$color" lineHeight={20}>
+            {summary}
+          </Text>
+        ) : null}
 
-        {allGroups.map((group, gi) => (
-          <YStack key={group.key}>
-            {gi > 0 && <YStack height={1} backgroundColor="$borderColor" marginVertical="$2" />}
-            {group.rows.map((row) => (
-              <NumberRowItem key={row.label} row={row} />
-            ))}
-          </YStack>
-        ))}
+        {allGroups.map((group, gi) => {
+          const groupLabel = formatGroupLabel(group.key)
+          return (
+            <YStack key={group.key}>
+              {gi > 0 && <YStack height={1} backgroundColor="$borderColor" marginVertical="$2" />}
+              {groupLabel ? (
+                <Text
+                  fontSize={12}
+                  fontWeight="600"
+                  color="$placeholderColor"
+                  textTransform="uppercase"
+                  letterSpacing={0.4}
+                  paddingBottom="$1"
+                >
+                  {groupLabel}
+                </Text>
+              ) : null}
+              {group.rows.map((row) => (
+                <NumberRowItem key={row.label} row={row} />
+              ))}
+            </YStack>
+          )
+        })}
       </YStack>
     </AppCard>
   )

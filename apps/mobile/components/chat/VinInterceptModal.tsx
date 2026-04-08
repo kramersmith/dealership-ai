@@ -196,7 +196,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
                   <AppButton minHeight={44} onPress={handleDecode}>
                     Decode VIN
                   </AppButton>
-                  <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
+                  <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
                     Continue without decoding
                   </AppButton>
                 </YStack>
@@ -207,7 +207,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
                   <AppButton minHeight={44} onPress={handleConfirm}>
                     Yes, use this vehicle
                   </AppButton>
-                  <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
+                  <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
                     No, continue without decoding
                   </AppButton>
                 </YStack>
@@ -218,7 +218,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
                   <AppButton minHeight={44} onPress={handleDecode}>
                     Retry Decode
                   </AppButton>
-                  <AppButton minHeight={44} variant="ghost" onPress={handleSkip}>
+                  <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
                     Continue without decoding
                   </AppButton>
                 </YStack>

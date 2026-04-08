@@ -21,6 +21,10 @@ export const palette = {
 
   /** For text/icons on colored surfaces (status pills, brand buttons). */
   white: '#FFFFFF',
+  whiteTint10: 'rgba(255,255,255,0.1)',
+  whiteTint12: 'rgba(255,255,255,0.12)',
+  whiteTint20: 'rgba(255,255,255,0.2)',
+  whiteTint22: 'rgba(255,255,255,0.22)',
 
   overlay: 'rgba(0,0,0,0.6)',
 } as const

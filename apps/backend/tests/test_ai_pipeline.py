@@ -516,7 +516,8 @@ def test_chat_tool_choice_step_zero_is_auto():
         prev_step_had_visible_assistant_text=False,
         prev_step_tools_were_dashboard_only=False,
     )
-    assert result == {"type": "auto"}
+    assert result.tool_choice == {"type": "auto"}
+    assert not result.inject_dashboard_reconcile_nudge
 
 
 def test_chat_tool_choice_step_two_or_beyond_is_none():
@@ -528,7 +529,8 @@ def test_chat_tool_choice_step_two_or_beyond_is_none():
             prev_step_had_visible_assistant_text=True,
             prev_step_tools_were_dashboard_only=False,
         )
-        assert result == {"type": "none"}, f"step={step}"
+        assert result.tool_choice == {"type": "none"}, f"step={step}"
+        assert not result.inject_dashboard_reconcile_nudge
 
 
 def test_chat_tool_choice_step_one_none_when_text_and_no_errors():
@@ -539,7 +541,9 @@ def test_chat_tool_choice_step_one_none_when_text_and_no_errors():
         prev_step_had_visible_assistant_text=True,
         prev_step_tools_were_dashboard_only=False,
     )
-    assert result == {"type": "none"}
+    assert result.tool_choice == {"type": "none"}
+    assert not result.inject_dashboard_reconcile_nudge
+    assert not result.inject_post_extraction_assessment_nudge
 
 
 def test_chat_tool_choice_step_one_none_when_dashboard_only_no_errors():
@@ -550,7 +554,8 @@ def test_chat_tool_choice_step_one_none_when_dashboard_only_no_errors():
         prev_step_had_visible_assistant_text=False,
         prev_step_tools_were_dashboard_only=True,
     )
-    assert result == {"type": "none"}
+    assert result.tool_choice == {"type": "none"}
+    assert not result.inject_dashboard_reconcile_nudge
 
 
 def test_chat_tool_choice_step_one_auto_when_tool_errors():
@@ -561,7 +566,8 @@ def test_chat_tool_choice_step_one_auto_when_tool_errors():
         prev_step_had_visible_assistant_text=True,
         prev_step_tools_were_dashboard_only=False,
     )
-    assert result == {"type": "auto"}
+    assert result.tool_choice == {"type": "auto"}
+    assert not result.inject_dashboard_reconcile_nudge
 
 
 def test_chat_tool_choice_step_one_auto_when_no_text_and_not_dashboard():
@@ -572,7 +578,60 @@ def test_chat_tool_choice_step_one_auto_when_no_text_and_not_dashboard():
         prev_step_had_visible_assistant_text=False,
         prev_step_tools_were_dashboard_only=False,
     )
-    assert result == {"type": "auto"}
+    assert result.tool_choice == {"type": "auto"}
+    assert not result.inject_dashboard_reconcile_nudge
+
+
+def test_chat_tool_choice_step_one_reconcile_when_flags_without_health():
+    """Step 1 allows a catch-up tool round after visible text + flags/gaps but no health."""
+    result = chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=True,
+        prev_step_tools_were_dashboard_only=False,
+        prev_step_tool_names=frozenset({"update_deal_red_flags"}),
+    )
+    assert result.tool_choice == {"type": "auto"}
+    assert result.inject_dashboard_reconcile_nudge
+    assert not result.inject_post_extraction_assessment_nudge
+
+
+def test_chat_tool_choice_step_one_post_extraction_after_set_vehicle_only():
+    """Step 1 allows tools after visible text + extraction-only step (e.g. second truck + pasted CARFAX)."""
+    result = chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=True,
+        prev_step_tools_were_dashboard_only=False,
+        prev_step_tool_names=frozenset({"set_vehicle"}),
+    )
+    assert result.tool_choice == {"type": "auto"}
+    assert not result.inject_dashboard_reconcile_nudge
+    assert result.inject_post_extraction_assessment_nudge
+
+
+def test_chat_tool_choice_step_one_no_post_extraction_when_assessment_ran():
+    result = chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=True,
+        prev_step_tools_were_dashboard_only=False,
+        prev_step_tool_names=frozenset({"set_vehicle", "update_negotiation_context"}),
+    )
+    assert result.tool_choice == {"type": "none"}
+    assert not result.inject_post_extraction_assessment_nudge
+
+
+def test_chat_tool_choice_step_one_no_reconcile_when_health_present():
+    result = chat_tool_choice_for_step(
+        1,
+        prev_step_had_tool_errors=False,
+        prev_step_had_visible_assistant_text=True,
+        prev_step_tools_were_dashboard_only=False,
+        prev_step_tool_names=frozenset({"update_deal_red_flags", "update_deal_health"}),
+    )
+    assert result.tool_choice == {"type": "none"}
+    assert not result.inject_dashboard_reconcile_nudge
 
 
 # ─── build_messages tests ───
@@ -908,8 +967,8 @@ async def test_generate_ai_panel_cards_retries_after_max_tokens(mock_create_clie
         }
     ]
     assert mock_client.messages.stream.await_count == 2
-    assert mock_client.messages.stream.await_args_list[0].kwargs["max_tokens"] == 2048
-    assert mock_client.messages.stream.await_args_list[1].kwargs["max_tokens"] == 4096
+    assert mock_client.messages.stream.await_args_list[0].kwargs["max_tokens"] == 4096
+    assert mock_client.messages.stream.await_args_list[1].kwargs["max_tokens"] == 8192
 
 
 @patch("app.services.panel.create_anthropic_client")
@@ -1051,7 +1110,7 @@ async def test_stream_ai_panel_cards_with_usage_reconciles_final_cards(
 
 
 @patch("app.services.panel.create_anthropic_client")
-async def test_stream_ai_panel_cards_with_usage_canonicalizes_duplicates_and_caps_final_cards(
+async def test_stream_ai_panel_cards_with_usage_canonicalizes_duplicates_and_applies_per_kind_limits(
     mock_create_client,
 ):
     streamed_chunks = [
@@ -1087,6 +1146,7 @@ async def test_stream_ai_panel_cards_with_usage_canonicalizes_duplicates_and_cap
         "your_leverage",
         "notes",
         "vehicle",
+        "what_still_needs_confirming",
     ]
     assert (
         panel_done["cards"][0]["content"]["message"]
@@ -1118,6 +1178,133 @@ async def test_stream_ai_panel_cards_with_usage_emits_panel_error_after_retries(
     assert started_count == retries + 1
     assert events[-1][0] == "panel_error"
     assert events[-1][1]["attempt"] == retries + 1
+
+
+@patch("app.services.panel.create_anthropic_client")
+async def test_stream_ai_panel_cards_with_usage_keeps_only_active_vehicle_when_not_comparing(
+    mock_create_client,
+):
+    streamed_chunks = [
+        "["
+        '{"kind":"next_best_move","content":{"body":"Get the full out-the-door sheet first."},"priority":"high"},'
+        '{"kind":"vehicle","content":{"vehicle":{"year":2026,"make":"FORD","model":"F-250","vin":"1FTBF2BA4TEC99136","engine":"6.8L V8"}},"priority":"normal"},'
+        '{"kind":"vehicle","content":{"vehicle":{"year":2026,"make":"FORD","model":"F-250","vin":"1FTBF2AT3TED05981","engine":"6.7L V8"}},"priority":"normal"}'
+        "]"
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.messages.stream = AsyncMock(
+        return_value=_FakePanelStream(streamed_chunks, stop_reason="end_turn")
+    )
+    mock_create_client.return_value = mock_client
+
+    events = []
+    async for event in stream_ai_panel_cards_with_usage(
+        {
+            "buyer_context": "researching",
+            "active_deal_id": "deal-gas",
+            "vehicles": [
+                {
+                    "id": "veh-gas",
+                    "year": 2026,
+                    "make": "FORD",
+                    "model": "F-250",
+                    "vin": "1FTBF2BA4TEC99136",
+                    "engine": "6.8L V8",
+                },
+                {
+                    "id": "veh-diesel",
+                    "year": 2026,
+                    "make": "FORD",
+                    "model": "F-250",
+                    "vin": "1FTBF2AT3TED05981",
+                    "engine": "6.7L V8",
+                },
+            ],
+            "deals": [
+                {"id": "deal-gas", "vehicle_id": "veh-gas"},
+                {"id": "deal-diesel", "vehicle_id": "veh-diesel"},
+            ],
+            "negotiation_context": {
+                "situation": "Buyer picked the gas 4x4 and is preparing to engage."
+            },
+        },
+        "Buyer chose the gas 4x4.",
+        [{"role": "user", "content": "I think the gas 4x4 is best for me."}],
+    ):
+        events.append((event.type, event.data))
+
+    panel_done = events[-1][1]
+    vehicle_cards = [card for card in panel_done["cards"] if card["kind"] == "vehicle"]
+    assert len(vehicle_cards) == 1
+    assert vehicle_cards[0]["content"]["vehicle"]["vin"] == "1FTBF2BA4TEC99136"
+
+
+@patch("app.services.panel.create_anthropic_client")
+async def test_stream_ai_panel_cards_with_usage_keeps_both_vehicle_cards_without_explicit_choice(
+    mock_create_client,
+):
+    streamed_chunks = [
+        "["
+        '{"kind":"next_best_move","content":{"body":"Compare both trucks before deciding."},"priority":"high"},'
+        '{"kind":"vehicle","content":{"vehicle":{"year":2026,"make":"FORD","model":"F-250","vin":"1FTBF2BA4TEC99136","engine":"6.8L V8"}},"priority":"normal"},'
+        '{"kind":"vehicle","content":{"vehicle":{"year":2026,"make":"FORD","model":"F-250","vin":"1FTBF2AT3TED05981","engine":"6.7L V8"}},"priority":"normal"}'
+        "]"
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.messages.stream = AsyncMock(
+        return_value=_FakePanelStream(streamed_chunks, stop_reason="end_turn")
+    )
+    mock_create_client.return_value = mock_client
+
+    events = []
+    async for event in stream_ai_panel_cards_with_usage(
+        {
+            "buyer_context": "researching",
+            "active_deal_id": "deal-gas",
+            "vehicles": [
+                {
+                    "id": "veh-gas",
+                    "role": "candidate",
+                    "year": 2026,
+                    "make": "FORD",
+                    "model": "F-250",
+                    "vin": "1FTBF2BA4TEC99136",
+                    "engine": "6.8L V8",
+                },
+                {
+                    "id": "veh-diesel",
+                    "role": "candidate",
+                    "year": 2026,
+                    "make": "FORD",
+                    "model": "F-250",
+                    "vin": "1FTBF2AT3TED05981",
+                    "engine": "6.7L V8",
+                },
+            ],
+            "deals": [
+                {"id": "deal-gas", "vehicle_id": "veh-gas"},
+                {"id": "deal-diesel", "vehicle_id": "veh-diesel"},
+            ],
+            "negotiation_context": {
+                "situation": "Buyer is comparing gas vs diesel and has not decided."
+            },
+        },
+        "Help me compare these two F-250 options.",
+        [{"role": "user", "content": "Which one is better for me?"}],
+    ):
+        events.append((event.type, event.data))
+
+    panel_done = events[-1][1]
+    vehicle_cards = [card for card in panel_done["cards"] if card["kind"] == "vehicle"]
+    assert len(vehicle_cards) == 2
+    vins = {
+        card["content"]["vehicle"]["vin"]
+        for card in vehicle_cards
+        if card.get("content", {}).get("vehicle", {}).get("vin")
+    }
+    assert vins == {"1FTBF2BA4TEC99136", "1FTBF2AT3TED05981"}
 
 
 async def test_stream_chat_loop_applies_multi_tool_chain_and_snapshots_state(

@@ -2,15 +2,14 @@ import { memo } from 'react'
 import { Animated, Platform } from 'react-native'
 import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
 import { RefreshCw } from '@tamagui/lucide-icons'
-import Markdown from 'react-native-markdown-display'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
 import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
+import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { useChatStore } from '@/stores/chatStore'
 import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
-import { CopyableBlock } from './CopyableBlock'
-import { extractTextFromNode } from './markdownUtils'
+import { ChatMarkdown } from './markdownRenderer'
 import { QuotedCardPreview } from './QuotedCardPreview'
 
 interface ChatBubbleProps {
@@ -34,6 +33,8 @@ export const ChatBubble = memo(function ChatBubble({
   const isSystem = message.role === 'system'
   const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
   const theme = useTheme()
+  const { isDesktop } = useScreenWidth()
+  const useInlineAssistantLayout = !isUser && !isSystem && !isDesktop
   const assistantColors = getAssistantMarkdownColors(theme)
   const usageLabel =
     !isUser && message.usage
@@ -44,13 +45,13 @@ export const ChatBubble = memo(function ChatBubble({
   const markdownStyles = buildMarkdownStyles(
     isUser
       ? {
-          textColor: '#ffffff',
-          bodyTextColor: '#ffffff',
+          textColor: palette.white,
+          bodyTextColor: palette.white,
           codeBg: palette.brandPressed,
-          subtleSurface: 'rgba(255,255,255,0.1)',
-          tableBorderColor: 'rgba(255,255,255,0.22)',
-          tableHeaderBg: 'rgba(255,255,255,0.12)',
-          hrColor: 'rgba(255,255,255,0.2)',
+          subtleSurface: palette.whiteTint10,
+          tableBorderColor: palette.whiteTint22,
+          tableHeaderBg: palette.whiteTint12,
+          hrColor: palette.whiteTint20,
         }
       : assistantColors
   )
@@ -95,12 +96,14 @@ export const ChatBubble = memo(function ChatBubble({
       >
         <YStack
           style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
-          backgroundColor={isUser ? '$brand' : '$backgroundStrong'}
-          borderRadius="$4"
+          backgroundColor={
+            isUser ? '$brand' : useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'
+          }
+          borderRadius={useInlineAssistantLayout ? 0 : '$4'}
           borderBottomRightRadius={isUser ? '$1' : '$4'}
-          borderBottomLeftRadius={isUser ? '$4' : '$1'}
-          paddingHorizontal="$4"
-          paddingVertical="$3"
+          borderBottomLeftRadius={isUser ? '$4' : useInlineAssistantLayout ? 0 : '$1'}
+          paddingHorizontal={useInlineAssistantLayout ? '$0' : '$4'}
+          paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
           borderWidth={0}
           borderColor="transparent"
         >
@@ -156,18 +159,9 @@ export const ChatBubble = memo(function ChatBubble({
               {message.content}
             </Text>
           ) : (
-            <Markdown
-              style={markdownStyles}
-              rules={{
-                blockquote: (node, children) => (
-                  <CopyableBlock key={node.key} text={extractTextFromNode(node)}>
-                    {children}
-                  </CopyableBlock>
-                ),
-              }}
-            >
-              {message.content}
-            </Markdown>
+            <YStack>
+              <ChatMarkdown style={markdownStyles}>{message.content}</ChatMarkdown>
+            </YStack>
           )}
           <Text
             fontSize={10}
@@ -208,7 +202,9 @@ function FailedMessageFooter({ messageId }: { messageId: string }) {
           onPress={() => retrySend(messageId)}
           pressStyle={{ opacity: 0.9, scale: 0.99 }}
           {...(Platform.OS === 'web' ? { hoverStyle: { opacity: 0.96 } } : {})}
-          accessibilityLabel="Try again to send this message"
+          {...(Platform.OS === 'web'
+            ? ({ 'aria-label': 'Try again to send this message' } as any)
+            : { accessibilityLabel: 'Try again to send this message' })}
         >
           <XStack gap="$2" alignItems="center" justifyContent="center">
             <RefreshCw size={18} color="$brand" />

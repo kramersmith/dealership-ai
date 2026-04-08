@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from app.core.config import settings
+from app.models.enums import AiCardKind, VehicleRole
 from app.services.claude import (
     build_prompt_deal_state,
     build_temporal_hint_line,
@@ -35,8 +36,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Panel configuration constants ───
 
-PANEL_GENERATOR_MAX_TOKENS = 2048
-PANEL_MAX_CARDS = 5
+PANEL_GENERATOR_MAX_TOKENS = 4096
 PANEL_RECENT_MESSAGES = 1
 PANEL_MESSAGE_TRUNCATION = 300
 PANEL_ASSISTANT_TRUNCATION = 220
@@ -278,12 +278,148 @@ def _build_conversation_context(
     return "\n".join(context_parts)
 
 
+def _is_active_comparison_context(deal_state_dict: dict[str, Any]) -> bool:
+    negotiation_context = deal_state_dict.get("negotiation_context")
+    if not isinstance(negotiation_context, dict):
+        return False
+    situation = negotiation_context.get("situation")
+    if not isinstance(situation, str):
+        return False
+    lowered = situation.lower()
+    return "compar" in lowered
+
+
+def _shopping_vehicles(deal_state_dict: dict[str, Any]) -> list[dict[str, Any]]:
+    vehicles = deal_state_dict.get("vehicles")
+    if not isinstance(vehicles, list):
+        return []
+    shopping: list[dict[str, Any]] = []
+    for vehicle in vehicles:
+        if not isinstance(vehicle, dict):
+            continue
+        role = vehicle.get("role")
+        if role in {VehicleRole.PRIMARY.value, VehicleRole.CANDIDATE.value}:
+            shopping.append(vehicle)
+    return shopping
+
+
+def _has_explicit_single_focus_signal(deal_state_dict: dict[str, Any]) -> bool:
+    negotiation_context = deal_state_dict.get("negotiation_context")
+    if not isinstance(negotiation_context, dict):
+        return False
+    situation = negotiation_context.get("situation")
+    if not isinstance(situation, str):
+        return False
+    lowered = situation.lower()
+    focus_markers = (
+        "picked",
+        "chose",
+        "decided",
+        "going with",
+        "go with",
+        "best for me",
+        "settled on",
+        "selected",
+        "moving forward with",
+        "focus on",
+        "not considering",
+        "no longer considering",
+    )
+    return any(marker in lowered for marker in focus_markers)
+
+
+def _active_vehicle_for_panel_focus(
+    deal_state_dict: dict[str, Any],
+) -> dict[str, Any] | None:
+    active_deal_id = deal_state_dict.get("active_deal_id")
+    if not isinstance(active_deal_id, str) or not active_deal_id:
+        return None
+
+    deals = deal_state_dict.get("deals")
+    if not isinstance(deals, list):
+        return None
+    active_vehicle_id = None
+    for deal in deals:
+        if not isinstance(deal, dict):
+            continue
+        if deal.get("id") == active_deal_id:
+            vehicle_id = deal.get("vehicle_id")
+            if isinstance(vehicle_id, str) and vehicle_id:
+                active_vehicle_id = vehicle_id
+            break
+    if not active_vehicle_id:
+        return None
+
+    vehicles = deal_state_dict.get("vehicles")
+    if not isinstance(vehicles, list):
+        return None
+    for vehicle in vehicles:
+        if isinstance(vehicle, dict) and vehicle.get("id") == active_vehicle_id:
+            return vehicle
+    return None
+
+
+def _vehicle_card_matches_active_focus(
+    card_vehicle: dict[str, Any], active_vehicle: dict[str, Any]
+) -> bool:
+    card_vin = card_vehicle.get("vin")
+    active_vin = active_vehicle.get("vin")
+    if isinstance(card_vin, str) and isinstance(active_vin, str):
+        return card_vin.strip().upper() == active_vin.strip().upper()
+    if isinstance(active_vin, str) and active_vin.strip():
+        # We know the active VIN; non-matching/empty card VIN should not be treated as focused.
+        return False
+
+    # Fallback when VIN is unavailable: require key identity fields (plus engine when present).
+    for key in ("year", "make", "model"):
+        if card_vehicle.get(key) != active_vehicle.get(key):
+            return False
+    card_engine = card_vehicle.get("engine")
+    active_engine = active_vehicle.get("engine")
+    if isinstance(card_engine, str) and isinstance(active_engine, str):
+        if card_engine.strip().lower() != active_engine.strip().lower():
+            return False
+    return True
+
+
+def _enforce_single_vehicle_focus_for_panel_cards(
+    cards: list[dict[str, Any]], deal_state_dict: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if _is_active_comparison_context(deal_state_dict):
+        return cards
+
+    # Only collapse to one vehicle when buyer intent clearly moved to a single option.
+    # If multiple shopping vehicles are still in play without an explicit choice signal,
+    # keep all vehicle cards so the panel can remain specific by vehicle.
+    if len(
+        _shopping_vehicles(deal_state_dict)
+    ) > 1 and not _has_explicit_single_focus_signal(deal_state_dict):
+        return cards
+
+    active_vehicle = _active_vehicle_for_panel_focus(deal_state_dict)
+    if not isinstance(active_vehicle, dict):
+        return cards
+
+    focused_cards: list[dict[str, Any]] = []
+    for card in cards:
+        if card.get("kind") != AiCardKind.VEHICLE.value:
+            focused_cards.append(card)
+            continue
+        content = card.get("content")
+        vehicle = content.get("vehicle") if isinstance(content, dict) else None
+        if isinstance(vehicle, dict) and _vehicle_card_matches_active_focus(
+            vehicle, active_vehicle
+        ):
+            focused_cards.append(card)
+    return focused_cards
+
+
 GENERATE_AI_PANEL_PROMPT = """You are generating the Insights Panel for a car-buying app.
 
 The panel is NOT a recap of the latest assistant reply. It is the buyer's working memory.
 
 PRIMARY GOAL:
-Generate 3-5 cards that help the buyer answer these questions at a glance:
+Generate a concise set of cards (often 3–7) that help the buyer answer these questions at a glance:
 - What is true now?
 - What changed?
 - What is dangerous?
@@ -293,7 +429,7 @@ Generate 3-5 cards that help the buyer answer these questions at a glance:
 
 SOURCE OF TRUTH ORDER:
 1. negotiation_context
-2. structured deal state (numbers, vehicle, phase, comparison, checklist, red flags, information gaps)
+2. structured deal state (numbers, vehicle, deal pipeline phase, comparison, checklist, red flags, information gaps)
 3. recent conversation as fallback only
 4. latest assistant response as fallback only
 
@@ -307,6 +443,11 @@ CRITICAL RULES:
 - Stable cards should preserve structure across turns.
 - Use the exact card kinds below. Do not invent new kinds.
 - Do not return a title or render template. The backend assigns canonical titles and templates.
+- Do NOT emit `comparison` or `trade_off` cards. Side-by-side tables belong in chat, not the insights panel.
+- Vehicle role tags like `primary` and `candidate` are internal. Do not surface those literal labels in card body text, notes, checklist items, or number labels.
+- `active_deal_id` is the current focus. For non-vehicle cards, prioritize only the active deal/vehicle unless the user explicitly asks to keep comparing options.
+- When there are multiple shopping vehicles but one active focus, treat non-active vehicles as parked context (fallback only), not as inputs for primary numbers/leverage/next-step cards.
+- When 2+ shopping vehicles are still active and the buyer has NOT explicitly chosen one, avoid ambiguous wording. For every non-vehicle card, explicitly indicate scope (for example: vehicle name/year/color/VIN suffix, or "across both options"). Do not leave cards ambiguous about which vehicle they refer to.
 
 Return ONLY a JSON array of card objects. Each card has:
 - "kind": one of the exact kinds below
@@ -317,13 +458,23 @@ EXACT CARD KINDS:
 
 vehicle
 - Use when a specific vehicle has been identified and it adds context.
-- Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "cab_style": "SuperCrew", "bed_length": "8 ft", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|trade_in"}, "risk_flags": ["High Mileage"]}
+- Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "cab_style": "SuperCrew", "bed_length": "8 ft", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|candidate|trade_in"}, "risk_flags": ["High Mileage"]}
+- When 2+ vehicles are being actively compared, emit one separate vehicle card per compared vehicle. Do not collapse multiple VINs into one vehicle card.
+
+phase
+- The negotiation stance strip: mirrors `negotiation_context.stance` and `negotiation_context.situation` when present; otherwise infer a stance and one short situation line from buyer_context and deal state.
+- This is NOT the deal pipeline phase (`deals[].phase`). It is the buyer's current negotiation posture and what is happening now.
+- Schema: {"stance": "researching|preparing|engaging|negotiating|holding|walking|waiting|financing|closing|post_purchase", "situation": "One concise sentence (about 8–18 words) describing the moment."}
+- Emit at most one `phase` card.
 
 numbers
 - Use for: current deal state.
 - Labels must be short.
 - Schema: {"rows": [{"label": "Field", "value": "$32,000", "field": "current_offer", "highlight": "good|bad|neutral"}]}
 - Groups allowed: {"groups": [{"key": "pricing", "rows": [...]}, {"key": "financing", "rows": [...]}]}
+- If the card compares multiple vehicles or deals, use `groups` and make each group key an explicit option label (vehicle/deal/dealer/VIN suffix). Never emit repeated unlabeled row blocks.
+- Default to active-deal numbers. Only include multi-vehicle groups when the user is actively comparing in this turn.
+- When 2+ shopping vehicles are active and no explicit single-choice signal exists, prefer grouped rows keyed by explicit vehicle labels so the buyer can see which truck each number belongs to.
 
 what_changed
 - Use only when something materially changed since the prior state.
@@ -355,14 +506,6 @@ checklist
 - Use for: concrete tasks and verification steps.
 - Schema: {"items": [{"label": "Item description", "done": false}]}
 
-comparison
-- Use for: a real side-by-side comparison.
-- Schema: {"summary": "Brief comparison", "recommendation": "Which to choose", "best_deal_id": "id", "highlights": [{"label": "Price", "values": [{"deal_id": "id", "value": "$28,500", "is_winner": true}], "note": "Optional"}]}
-
-trade_off
-- Use for: a legitimate choice where each option has a real upside/downside.
-- Same schema as `comparison`.
-
 dealer_read
 - Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting signal"]}
 
@@ -382,20 +525,24 @@ savings_so_far
 
 NEGOTIATION CONTEXT RULES:
 If negotiation_context exists, it is the strongest source of truth.
+- Emit a `phase` card from `stance` + `situation` whenever both are meaningful (usually always for active buyer sessions).
+- When **2+ shopping vehicles** are in deal state and the buyer is comparing, `situation` must reflect **both options or the main trade-off** — not only the active deal's last CARFAX line. If `negotiation_context.situation` is missing or clearly single-vehicle while multiple deals have material flags/health, infer one comparison-scoped sentence from structured deal state.
 - Use key_numbers to drive the Numbers card.
 - Use scripts to strengthen next_best_move when exact wording matters.
 - Use pending_actions to drive what_still_needs_confirming or checklist.
 - Use leverage to drive your_leverage.
-- The situation field should strongly influence dealer_read or next_best_move.
+- The situation field should also inform dealer_read or next_best_move when those cards add distinct value beyond the phase strip.
 
-PHASE GUIDANCE:
-- Research: vehicle, numbers, checklist, notes.
-- Negotiation: numbers, what_changed, warning, next_best_move, your_leverage, notes.
-- F&I: numbers, warning, if_you_say_yes, what_still_needs_confirming, notes.
-- Closing: numbers, what_still_needs_confirming, notes, savings_so_far, success.
+DEAL PIPELINE PHASE (structured `deals[].phase` enum: research, initial_contact, test_drive, negotiation, financing, closing — not the panel `phase` card):
+- research / initial_contact: emphasize vehicle, numbers, checklist, notes.
+- test_drive / negotiation: numbers, what_changed, warning, next_best_move, your_leverage, notes.
+- financing: numbers, warning, if_you_say_yes, what_still_needs_confirming, notes.
+- closing: numbers, what_still_needs_confirming, notes, savings_so_far, success.
 
 INCLUSION RULES:
 - Include a vehicle card when a specific vehicle has been identified and it adds context.
+- When 2+ vehicles are being compared and each one matters, include a separate vehicle card for each compared vehicle.
+- If deal state lists multiple shopping vehicles (primary/candidate), emit one vehicle card per listed vehicle — do not omit the non-active option when the buyer is still comparing.
 - Include a numbers card when meaningful financial data exists.
 - Include what_changed only for real deltas.
 - Include notes only when there are durable facts worth preserving.
@@ -404,11 +551,11 @@ INCLUSION RULES:
 - Do not create cards that only restate each other in different words.
 
 ORDER:
+- phase (always first — negotiation stance / situation strip)
 - warning / if_you_say_yes
 - numbers / what_changed
 - dealer_read / next_best_move / your_leverage
 - notes
-- trade_off / comparison
 - vehicle
 - what_still_needs_confirming / checklist
 - savings_so_far / success
@@ -666,7 +813,16 @@ async def stream_ai_panel_cards_with_usage(
                     )
                     return
 
-    canonical_cards = canonicalize_panel_cards(cards, max_cards=PANEL_MAX_CARDS)
+    canonical_cards = canonicalize_panel_cards(cards)
+    canonical_cards = [
+        card
+        for card in canonical_cards
+        if card.get("kind")
+        not in {AiCardKind.COMPARISON.value, AiCardKind.TRADE_OFF.value}
+    ]
+    canonical_cards = _enforce_single_vehicle_focus_for_panel_cards(
+        canonical_cards, deal_state_dict
+    )
     if canonical_cards != cards:
         logger.info(
             "AI panel canonicalization adjusted final cards from %d to %d: %s",

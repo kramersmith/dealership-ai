@@ -1,6 +1,6 @@
 # Dealership AI MVP — Technical Architecture Plan
 
-**Last updated:** 2026-04-06
+**Last updated:** 2026-04-08
 
 ## Context
 Greenfield build of a unified AI-powered smartphone app for the car buying experience, serving both buyers and dealers within a single app with role-based access. Solo developer, tight budget, targeting iOS/Android/web. Stack: React Native (Expo) → FastAPI → Claude API (claude-sonnet-4-6) → PostgreSQL.
@@ -103,7 +103,7 @@ dealership-ai/
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, created_at)
 
-**vehicles** — (id, session_id, role [VehicleRole enum: primary/trade_in], year, make, model, trim, cab_style, bed_length, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing primary vehicle from trade-in. Canonical identity fields remain user-stated or user-confirmed; VIN decode records stay in `vehicle_decodes` until explicit confirmation promotes them into the main row. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
+**vehicles** — (id, session_id, role [VehicleRole enum: primary/candidate/trade_in], year, make, model, trim, cab_style, bed_length, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing committed pick (`primary`), known-but-uncommitted shopping candidate (`candidate`, e.g. inserted by VIN intercept), and trade-in. Deal routing treats `primary` and `candidate` as the unified "shopping" set. Candidate vehicles do NOT steal `active_deal_id` focus on creation (ADR 0018). Canonical identity fields remain user-stated or user-confirmed; VIN decode records stay in `vehicle_decodes` until explicit confirmation promotes them into the main row. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
 
 **vehicle_decodes** — (id, vehicle_id, provider [IntelligenceProvider], status [IntelligenceStatus], vin, year, make, model, trim, engine, body_type, drivetrain, transmission, fuel_type, source_summary, raw_payload JSON, requested_at, fetched_at, expires_at). NHTSA vPIC decode results; raw_payload exposed to LLM context.
 
@@ -151,11 +151,11 @@ All domain values use Python `StrEnum` for type safety:
 | `HealthStatus` | `good`, `fair`, `concerning`, `bad` |
 | `RedFlagSeverity` | `warning`, `critical` |
 | `GapPriority` | `high`, `medium`, `low` |
-| `VehicleRole` | `primary`, `trade_in` |
+| `VehicleRole` | `primary`, `candidate`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 | `NegotiationStance` | `researching`, `preparing`, `engaging`, `negotiating`, `holding`, `walking`, `waiting`, `financing`, `closing`, `post_purchase` |
 | `AiCardTemplate` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `notes`, `checklist`, `success`, `comparison` |
-| `AiCardKind` | `vehicle`, `numbers`, `warning`, `notes`, `comparison`, `checklist`, `success`, `what_changed`, `what_still_needs_confirming`, `dealer_read`, `your_leverage`, `next_best_move`, `if_you_say_yes`, `trade_off`, `savings_so_far` |
+| `AiCardKind` | `vehicle`, `numbers`, `phase`, `warning`, `notes`, `comparison`, `checklist`, `success`, `what_changed`, `what_still_needs_confirming`, `dealer_read`, `your_leverage`, `next_best_move`, `if_you_say_yes`, `trade_off`, `savings_so_far` (note: `comparison` and `trade_off` are no longer emitted to the panel — they render as markdown tables in chat per ADR 0018) |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 | `IdentityConfirmationStatus` | `unconfirmed`, `confirmed`, `rejected` |
 | `IntelligenceProvider` | `nhtsa_vpic`, `vinaudit` |
@@ -177,7 +177,8 @@ These are used with the quick sign-in buttons on the login screen (visible only 
 ## FastAPI Routes
 
 ```
-POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/error/done + compaction_* + panel_started/panel_card/panel_done/panel_error)
+POST   /chat/{session_id}/user-message # Pre-persist user message (no stream) — used by VIN intercept gated flows (ADR 0019)
+POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/error/done + compaction_* + panel_started/panel_card/panel_done/panel_error); accepts optional existing_user_message_id to resume on a pre-persisted row
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
 GET    /chat/{session_id}/messages    # { messages, context_pressure } — history + estimated context use (see ADR 0017)
 
@@ -227,7 +228,7 @@ POST   /simulations/{id}/complete     # End + score
 5. When a step finishes with tool calls, the backend groups them into priority-ordered batches (structural → context switches → field updates → deal health) and executes each batch concurrently. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction. Results are emitted as `tool_result` SSE events, appended back into the Claude transcript, and the loop continues.
 6. Step-control logic (`chat_tool_choice_for_step` in `claude/tool_policy.py`) bounds tool rounds per buyer message: step 0 uses `auto` tool choice, step 1 conditionally allows tools (only if the previous step had errors or produced no visible text and no dashboard-only tools), and step 2+ forces `none` (text-only). This prevents model self-dialogue loops.
 7. When the step loop reaches a text-only completion, the backend emits `done` immediately so input can unblock, then starts asynchronous panel generation in the same SSE stream.
-8. Panel generation emits explicit lifecycle events: `panel_started`, incremental `panel_card`, and terminal `panel_done` or `panel_error`.
+8. Panel generation emits explicit lifecycle events: `panel_started`, incremental `panel_card`, and terminal `panel_done` or `panel_error`. Panel `max_tokens` starts at 4096 and escalates to 8192 on bounded truncation retries. The canonical panel contract uses per-kind instance caps (`vehicle` up to 6, all other kinds capped at 1) with identity-based dedupe (VIN for vehicles, `kind` for everything else) — there is no global panel length cap. Panel kinds `comparison` and `trade_off` are filtered out of panel output: side-by-side comparisons render as markdown tables in chat. A `phase` card (negotiation stance + situation) is always first. Panel single-focus enforcement collapses vehicle cards to the active vehicle when there is one shopping vehicle or an explicit focus signal (ADR 0018).
 9. Backend persists the assistant message with its tool calls and aggregated usage summary (chat phase + panel phase) and folds that turn into the session-level usage ledger.
 10. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
 11. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.

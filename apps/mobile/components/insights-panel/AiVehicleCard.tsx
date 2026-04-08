@@ -78,19 +78,22 @@ interface VehicleContent {
     mileage?: number
     color?: string
     vin?: string
-    role?: 'primary' | 'trade_in'
+    role?: 'primary' | 'candidate' | 'trade_in'
   }
   risk_flags?: string[]
 }
 
 const ROLE_LABELS: Record<string, string> = {
   primary: 'Target Vehicle',
+  candidate: 'Comparison Vehicle',
   trade_in: 'Trade-In',
 }
 
 interface AiVehicleCardProps {
   title: string
   content: Record<string, any>
+  /** Start with all intelligence sections collapsed (used in archived cards). */
+  collapsedByDefault?: boolean
 }
 
 // ─── Intelligence Section Components ───
@@ -679,7 +682,7 @@ interface Colors {
 
 // ─── Main Component ───
 
-export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
+export function AiVehicleCard({ title, content, collapsedByDefault = false }: AiVehicleCardProps) {
   const theme = useTheme()
   const vehicleContent = content as VehicleContent
   const vehicle = vehicleContent.vehicle
@@ -699,7 +702,7 @@ export function AiVehicleCard({ title, content }: AiVehicleCardProps) {
 
   // Section expansion state — default to expanded if no data yet
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    specs: true,
+    specs: !collapsedByDefault,
     history: false,
     valuation: false,
   })

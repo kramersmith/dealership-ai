@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-04-06
+**Last updated:** 2026-04-08
 
 ---
 
@@ -195,14 +195,16 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 | Card Type | Component | Purpose |
 |-----------|-----------|---------|
+| `phase` | BriefingCard (Status) | Negotiation stance + situation strip; always first in the panel (ADR 0018) |
 | `briefing` | BriefingCard | Top-level deal overview and AI recommendation |
 | `numbers` | NumbersCard | Financial figures (read-only display) |
-| `vehicle` | AiVehicleCard | Vehicle details with contextual title labels (RN primitives) |
+| `vehicle` | AiVehicleCard | Vehicle details with contextual title labels (RN primitives) — up to 6 instances for multi-vehicle shopping |
 | `warning` | WarningCard | Deal problems and red flags with top accent bar styling |
 | `tip` | TipCard | Contextual advice and suggestions |
 | `checklist` | AiChecklistCard | Phase-appropriate to-do items (read-only with progress bar) |
 | `success` | SuccessCard | Positive deal signals |
-| `comparison` | AiComparisonCard | Side-by-side deal comparison |
+
+Side-by-side comparisons (formerly the `comparison` panel card) are no longer rendered in the panel — they render as markdown tables inline in chat via a shared `VehicleComparisonTable` component (responsive horizontal scroll with sticky label column). See ADR 0018. Panel enforcement uses per-kind instance caps rather than a global card cap, and single-focus collapse keeps panel vehicle cards limited to the active vehicle unless the buyer is actively comparing multiple shopping vehicles without an explicit choice.
 
 **Supporting components:** AiCard (base card renderer with card reply button), CardReplyInput (slide-in reply drawer), CardTitle (shared uppercase muted label component), SituationBar (negotiation context display with stance badge and situation summary), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
 

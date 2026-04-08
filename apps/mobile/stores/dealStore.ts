@@ -207,13 +207,22 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
     }
 
     case 'create_deal': {
-      const args = snakeToCamel(toolCall.args)
+      const args = snakeToCamel(toolCall.args) as {
+        dealId?: string
+        vehicleId?: string
+        dealerName?: string | null
+        phase?: DealPhase
+        makeActive?: boolean
+      }
       const dealId = (args.dealId ?? generateId()) as string
+      const makeActive = args.makeActive ?? true
+      const vehicleId = args.vehicleId as string | undefined
+      if (!vehicleId) return dealState
       const newDeal: Deal = {
         id: dealId,
-        vehicleId: args.vehicleId,
+        vehicleId,
         dealerName: args.dealerName ?? null,
-        phase: 'research',
+        phase: args.phase ?? 'research',
         numbers: { ...EMPTY_DEAL_NUMBERS },
         scorecard: { ...EMPTY_SCORECARD },
         health: null,
@@ -226,7 +235,7 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       return {
         ...dealState,
         deals: [...dealState.deals, newDeal],
-        activeDealId: dealId,
+        activeDealId: makeActive ? dealId : dealState.activeDealId,
       }
     }
 

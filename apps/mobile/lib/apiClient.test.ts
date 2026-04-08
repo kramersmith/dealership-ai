@@ -202,6 +202,32 @@ describe('ApiClient.sendMessage', () => {
     })
     expect(onPanelFinished).toHaveBeenCalledTimes(1)
   })
+
+  it('maps the done SSE event onto the assistant message', async () => {
+    const apiClient = new ApiClient()
+    const onTextDone = vi.fn()
+
+    const sendPromise = apiClient.sendMessage(
+      'session-table',
+      'Compare these',
+      undefined,
+      undefined,
+      undefined,
+      onTextDone
+    )
+
+    const xhr = FakeXMLHttpRequest.instances.at(-1)
+    xhr?.pushEvent('text', { chunk: 'Here is the comparison.' })
+    xhr?.pushEvent('done', {
+      text: 'Here is the comparison.',
+    })
+    xhr?.complete()
+
+    await expect(sendPromise).resolves.toMatchObject({
+      content: 'Here is the comparison.',
+    })
+    expect(onTextDone).toHaveBeenCalledWith('Here is the comparison.', undefined, undefined)
+  })
 })
 
 describe('ApiClient.getMessages', () => {
@@ -242,6 +268,7 @@ describe('ApiClient.getMessages', () => {
     const out = await apiClient.getMessages('s1')
     expect(out.messages).toHaveLength(1)
     expect(out.messages[0].sessionId).toBe('s1')
+    expect(out.messages[0].content).toBe('hi')
     expect(out.contextPressure.level).toBe('warn')
     expect(out.contextPressure.estimatedInputTokens).toBe(120000)
     expect(out.contextPressure.inputBudget).toBe(180000)

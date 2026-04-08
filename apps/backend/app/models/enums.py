@@ -58,6 +58,7 @@ class GapPriority(StrEnum):
 
 class VehicleRole(StrEnum):
     PRIMARY = "primary"
+    CANDIDATE = "candidate"
     TRADE_IN = "trade_in"
 
 
@@ -95,6 +96,7 @@ class AiCardTemplate(StrEnum):
 class AiCardKind(StrEnum):
     VEHICLE = "vehicle"
     NUMBERS = "numbers"
+    PHASE = "phase"
     WARNING = "warning"
     NOTES = "notes"
     COMPARISON = "comparison"

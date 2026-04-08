@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.deal import Deal
 from app.models.deal_state import DealState
 from app.models.enums import DealPhase, HealthStatus
+from app.models.vehicle import Vehicle
 from app.services.turn_context import TurnContext
 
 # Align with deal_state.DEAL_NUMBER_FIELDS — dollars / payment amounts
@@ -111,6 +113,16 @@ def _deal_has_numeric_context(deal: Deal) -> bool:
     return any(getattr(deal, field) is not None for field in DEAL_NUMBER_FIELDS)
 
 
+async def _deal_has_health_grounding(deal: Deal, db: AsyncSession) -> bool:
+    """True when health can be tied to buyer-provided figures (deal dollars or odometer)."""
+    if _deal_has_numeric_context(deal):
+        return True
+    row = (
+        await db.execute(select(Vehicle.mileage).where(Vehicle.id == deal.vehicle_id))
+    ).scalar_one_or_none()
+    return row is not None
+
+
 async def _resolve_target_deal(
     deal_id: str | None, deal_state: DealState, db: AsyncSession
 ) -> Deal | None:
@@ -197,10 +209,11 @@ async def _validate_update_deal_health(tool_input: dict, context: TurnContext) -
             "Cannot update deal health: no target deal (set an active deal or pass deal_id)."
         )
 
-    if not _deal_has_numeric_context(deal):
+    if not await _deal_has_health_grounding(deal, context.db):
         raise ToolValidationError(
-            "Set at least one deal number (update_deal_numbers) before "
-            "update_deal_health so the assessment is grounded in extracted figures."
+            "Set at least one deal number (update_deal_numbers) or vehicle mileage "
+            "(set_vehicle) before update_deal_health so the assessment is grounded "
+            "in extracted figures."
         )
 
 

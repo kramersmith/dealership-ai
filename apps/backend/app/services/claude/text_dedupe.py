@@ -2,6 +2,33 @@ from __future__ import annotations
 
 import re
 
+# Pre-tool teaser phrases: model often stops at tool_use after these; continuation must deliver substance.
+_SUBSTANTIVE_FOLLOWUP_TEASE = re.compile(
+    r"(?:"
+    r"\blet me (?:break (?:it )?down|explain|walk (?:you )?through)\b"
+    r"|\bi(?:'|’)ll (?:break (?:it )?down|walk (?:you )?through|explain)\b"
+    r"|\bhere(?:'|’)?s what (?:that|this) means\b"
+    r"|\bquick (?:breakdown|take)\b"
+    r"|\bbreaking (?:it )?down (?:for you)?\b"
+    r"|\bwalk(?:ing)? (?:you )?through (?:it|this)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_MAX_TEASER_ONLY_CHARS = 450
+
+
+def promises_substantive_followup_after_tools(visible_pre_tool_text: str) -> bool:
+    """True when visible prose before tools teased analysis the model must finish after tools.
+
+    Used to detect empty/too-short continuation turns after set_vehicle / deal extraction.
+    """
+    stripped_text = visible_pre_tool_text.strip()
+    if len(stripped_text) > _MAX_TEASER_ONLY_CHARS:
+        return False
+    return bool(_SUBSTANTIVE_FOLLOWUP_TEASE.search(stripped_text))
+
+
 # Thresholds for strip_redundant_continuation_opener overlap detection
 _MIN_TEXT_CHARS = 50  # Minimum char length for prior/continuation to attempt dedupe
 _MIN_PARAGRAPH_CHARS = 40  # Min chars for paragraph comparison

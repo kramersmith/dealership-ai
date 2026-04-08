@@ -22,16 +22,18 @@ export function getAssistantMarkdownColors(theme: {
   background?: { val: string }
   borderColor?: { val: string }
 }): MarkdownColorParams {
-  const textColor = (theme.color?.val as string) ?? '#ffffff'
+  const textColor = (theme.color?.val as string) ?? palette.white
   const bodyTextColor = (theme.colorPress?.val as string) ?? textColor
   return {
     textColor,
     bodyTextColor,
-    codeBg: (theme.backgroundHover?.val as string) ?? '#333333',
-    subtleSurface: (theme.background?.val as string) ?? '#18191A',
-    tableBorderColor: (theme.borderColor?.val as string) ?? '#3E4042',
-    tableHeaderBg: (theme.backgroundHover?.val as string) ?? '#3A3B3C',
-    hrColor: (theme.backgroundHover?.val as string) ?? '#3A3B3C',
+    codeBg: (theme.backgroundHover?.val as string) ?? palette.brandSubtle,
+    subtleSurface: (theme.background?.val as string) ?? palette.brandSubtle,
+    tableBorderColor: (theme.borderColor?.val as string) ?? palette.brandSubtle,
+    tableHeaderBg: (theme.backgroundHover?.val as string) ?? palette.brandSubtle,
+    // Use text color with opacity in `hr` style so dividers read as light gray
+    // in dark mode and medium gray in light mode.
+    hrColor: (theme.colorPress?.val as string) ?? palette.white,
   }
 }
 
@@ -106,18 +108,64 @@ export function buildMarkdownStyles({
       backgroundColor: 'transparent',
       marginVertical: 0,
     },
+    tableScroll: {
+      width: '100%',
+      marginVertical: 10,
+    },
+    tableScrollContent: {
+      minWidth: '100%',
+      flexGrow: 1,
+      alignItems: 'flex-start',
+    },
     table: {
       borderWidth: 1,
       borderColor: tableBorderColor,
       borderRadius: 10,
       overflow: 'hidden',
-      marginVertical: 10,
+      backgroundColor: subtleSurface,
+      alignSelf: 'flex-start',
     },
     thead: { backgroundColor: tableHeaderBg },
     tbody: { backgroundColor: 'transparent' },
     tr: {
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      width: '100%',
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: tableBorderColor,
+    },
+    tableRowLast: {
+      borderBottomWidth: 0,
+    },
+    tableCell: {
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      justifyContent: 'center',
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderRightColor: tableBorderColor,
+    },
+    tableCellLast: {
+      borderRightWidth: 0,
+    },
+    tableHeaderCell: {
+      backgroundColor: tableHeaderBg,
+    },
+    tableBodyCell: {
+      backgroundColor: subtleSurface,
+    },
+    tableHeaderText: {
+      color: textColor,
+      fontSize: 13,
+      fontWeight: '700',
+      lineHeight: 18,
+    },
+    tableBodyText: {
+      color: bodyTextColor,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    tableLabelText: {
+      fontWeight: '600',
     },
     th: {
       color: textColor,
@@ -126,17 +174,23 @@ export function buildMarkdownStyles({
       paddingHorizontal: 12,
       paddingVertical: 10,
       textAlign: 'left',
+      lineHeight: 18,
+      minWidth: 0,
     },
     td: {
       color: bodyTextColor,
       fontSize: 13,
       paddingHorizontal: 12,
       paddingVertical: 10,
+      lineHeight: 19,
+      minWidth: 0,
     },
     hr: {
+      height: 1,
       borderTopWidth: 0,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hrColor,
+      borderBottomWidth: 0,
+      backgroundColor: hrColor,
+      opacity: 0.28,
       marginVertical: 10,
     },
     link: { color: palette.brand, textDecorationLine: 'underline' },

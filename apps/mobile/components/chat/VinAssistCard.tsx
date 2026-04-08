@@ -2,16 +2,14 @@ import { memo, useState, useCallback } from 'react'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
 
 import type { VinAssistItem } from '@/lib/types'
+import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { AppButton, AppCard } from '@/components/shared'
+import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { useChatStore } from '@/stores/chatStore'
-
-function vehicleLabel(item: VinAssistItem): string {
-  const decoded = item.decodedVehicle
-  if (!decoded) return item.vin
-  return [decoded.year, decoded.make, decoded.model, decoded.trim].filter(Boolean).join(' ')
-}
+import { vinAssistVehicleLabel as vehicleLabel } from './vinAssistUtils'
 
 export const VinAssistCard = memo(function VinAssistCard({ item }: { item: VinAssistItem }) {
+  const { isDesktop } = useScreenWidth()
   const skipVinAssist = useChatStore((s) => s.skipVinAssist)
   const decodeVinAssist = useChatStore((s) => s.decodeVinAssist)
   const confirmVinAssist = useChatStore((s) => s.confirmVinAssist)
@@ -38,9 +36,13 @@ export const VinAssistCard = memo(function VinAssistCard({ item }: { item: VinAs
     }
   }, [rejectVinAssist, item.id])
 
+  const btnFlex = isDesktop
+    ? ({ flex: 1, minWidth: 0 } as const)
+    : ({ width: '100%' as const } as const)
+
   return (
-    <XStack paddingHorizontal="$3" paddingBottom="$3" justifyContent="flex-start">
-      <AppCard accent style={{ width: '92%' } as any}>
+    <XStack paddingHorizontal="$3" paddingBottom="$3" justifyContent="center" width="100%">
+      <AppCard accent width="100%" maxWidth={CHAT_BUBBLE_MAX_WIDTH}>
         <YStack gap="$3">
           <YStack gap="$1">
             <Text fontSize={12} fontWeight="700" color="$placeholderColor" letterSpacing={0.4}>
@@ -105,50 +107,133 @@ export const VinAssistCard = memo(function VinAssistCard({ item }: { item: VinAs
           item.status === 'skipped' ||
           item.status === 'failed' ||
           item.status === 'rejected' ? (
-            <XStack gap="$2" flexWrap="wrap">
-              <AppButton minHeight={44} onPress={() => decodeVinAssist(item.id)}>
-                Decode VIN
-              </AppButton>
-              {item.status === 'detected' ? (
-                <AppButton minHeight={44} variant="ghost" onPress={() => skipVinAssist(item.id)}>
+            isDesktop && item.status === 'detected' ? (
+              <XStack width="100%" gap="$2" alignItems="stretch">
+                <AppButton
+                  minHeight={44}
+                  {...btnFlex}
+                  onPress={() => decodeVinAssist(item.id)}
+                  accessibilityLabel={`Decode VIN ${item.vin}`}
+                >
+                  Decode VIN
+                </AppButton>
+                <AppButton
+                  minHeight={44}
+                  {...btnFlex}
+                  variant="outline"
+                  onPress={() => skipVinAssist(item.id)}
+                  accessibilityLabel="Continue without decoding"
+                >
                   Continue without decoding
                 </AppButton>
-              ) : null}
-            </XStack>
+              </XStack>
+            ) : (
+              <YStack gap="$2" width="100%" alignItems="stretch">
+                <AppButton
+                  minHeight={44}
+                  width="100%"
+                  onPress={() => decodeVinAssist(item.id)}
+                  accessibilityLabel={`Decode VIN ${item.vin}`}
+                >
+                  Decode VIN
+                </AppButton>
+                {item.status === 'detected' ? (
+                  <AppButton
+                    minHeight={44}
+                    width="100%"
+                    variant="outline"
+                    onPress={() => skipVinAssist(item.id)}
+                    accessibilityLabel="Continue without decoding"
+                  >
+                    Continue without decoding
+                  </AppButton>
+                ) : null}
+              </YStack>
+            )
           ) : null}
 
           {item.status === 'decoded' ? (
-            <XStack gap="$2" flexWrap="wrap">
-              <AppButton minHeight={44} onPress={handleConfirm} disabled={confirming || rejecting}>
-                {confirming ? (
-                  <XStack alignItems="center" gap="$2">
-                    <Spinner size="small" color="$white" />
-                    <Text color="$white" fontSize={14} fontWeight="600">
-                      Confirming...
-                    </Text>
-                  </XStack>
-                ) : (
-                  'Yes, use this vehicle'
-                )}
-              </AppButton>
-              <AppButton
-                minHeight={44}
-                variant="ghost"
-                onPress={handleReject}
-                disabled={confirming || rejecting}
-              >
-                {rejecting ? (
-                  <XStack alignItems="center" gap="$2">
-                    <Spinner size="small" color="$placeholderColor" />
-                    <Text color="$placeholderColor" fontSize={14}>
-                      Rejecting...
-                    </Text>
-                  </XStack>
-                ) : (
-                  "No, that's not correct"
-                )}
-              </AppButton>
-            </XStack>
+            isDesktop ? (
+              <XStack width="100%" gap="$2" alignItems="stretch">
+                <AppButton
+                  minHeight={44}
+                  {...btnFlex}
+                  onPress={handleConfirm}
+                  disabled={confirming || rejecting}
+                  accessibilityLabel="Confirm decoded vehicle"
+                >
+                  {confirming ? (
+                    <XStack alignItems="center" gap="$2">
+                      <Spinner size="small" color="$white" />
+                      <Text color="$white" fontSize={14} fontWeight="600">
+                        Confirming...
+                      </Text>
+                    </XStack>
+                  ) : (
+                    'Yes, use this vehicle'
+                  )}
+                </AppButton>
+                <AppButton
+                  minHeight={44}
+                  {...btnFlex}
+                  variant="outline"
+                  onPress={handleReject}
+                  disabled={confirming || rejecting}
+                  accessibilityLabel="Reject decoded vehicle"
+                >
+                  {rejecting ? (
+                    <XStack alignItems="center" gap="$2">
+                      <Spinner size="small" color="$placeholderColor" />
+                      <Text color="$placeholderColor" fontSize={14}>
+                        Rejecting...
+                      </Text>
+                    </XStack>
+                  ) : (
+                    "No, that's not correct"
+                  )}
+                </AppButton>
+              </XStack>
+            ) : (
+              <YStack gap="$2" width="100%" alignItems="stretch">
+                <AppButton
+                  minHeight={44}
+                  width="100%"
+                  onPress={handleConfirm}
+                  disabled={confirming || rejecting}
+                  accessibilityLabel="Confirm decoded vehicle"
+                >
+                  {confirming ? (
+                    <XStack alignItems="center" gap="$2">
+                      <Spinner size="small" color="$white" />
+                      <Text color="$white" fontSize={14} fontWeight="600">
+                        Confirming...
+                      </Text>
+                    </XStack>
+                  ) : (
+                    'Yes, use this vehicle'
+                  )}
+                </AppButton>
+                <AppButton
+                  minHeight={44}
+                  width="100%"
+                  variant="outline"
+                  onPress={handleReject}
+                  disabled={confirming || rejecting}
+                  accessibilityLabel="Reject decoded vehicle"
+                >
+                  {rejecting ? (
+                    <XStack alignItems="center" gap="$2">
+                      <Spinner size="small" color="$placeholderColor" />
+                      <Text color="$placeholderColor" fontSize={14}>
+                        Rejecting...
+                      </Text>
+                    </XStack>
+                  ) : (
+                    "No, that's not correct"
+                  )}
+                </AppButton>
+              </YStack>
+            )
           ) : null}
         </YStack>
       </AppCard>

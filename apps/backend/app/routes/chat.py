@@ -19,6 +19,7 @@ from app.schemas.chat import (
     ContextPressureResponse,
     MessageResponse,
     MessagesListResponse,
+    PersistUserMessageRequest,
 )
 from app.services.claude import (
     CHAT_TOOLS,
@@ -83,6 +84,19 @@ def _message_usage_payload(summary: dict[str, int]) -> dict[str, int]:
     }
 
 
+def _message_response_from_model(message: Message) -> MessageResponse:
+    return MessageResponse(
+        id=message.id,
+        session_id=message.session_id,
+        role=MessageRole(message.role),
+        content=message.content,
+        image_url=message.image_url,
+        tool_calls=message.tool_calls,
+        usage=message.usage,
+        created_at=message.created_at,
+    )
+
+
 @router.post("/{session_id}/message")
 async def send_message(
     session_id: str,
@@ -111,12 +125,34 @@ async def send_message(
     )
     history = list(history_result.scalars().all())
 
+    resumed_user_id = body.existing_user_message_id
+    resumed_user_row: Message | None = None
+    if resumed_user_id:
+        row_result = await db.execute(
+            select(Message).where(
+                Message.id == resumed_user_id,
+                Message.session_id == session_id,
+                Message.role == MessageRole.USER,
+            )
+        )
+        resumed_user_row = row_result.scalar_one_or_none()
+        if not resumed_user_row:
+            raise HTTPException(
+                status_code=404,
+                detail="User message not found for this session",
+            )
+
     deal_state, deal_state_dict, linked_messages = await _load_deal_and_linked_context(
         session, db
     )
 
     system_prompt = build_system_prompt()
     context_message = build_context_message(deal_state_dict, linked_messages)
+
+    def _without_resumed_user(msgs: list[Message]) -> list[Message]:
+        if not resumed_user_id:
+            return msgs
+        return [m for m in msgs if m.id != resumed_user_id]
 
     async def generate():
         result = ChatLoopResult()
@@ -127,7 +163,7 @@ async def send_message(
             db=db,
         )
 
-        history_local = history
+        history_local = _without_resumed_user(history)
 
         compaction_result = await run_auto_compaction_if_needed(
             session,
@@ -159,17 +195,26 @@ async def send_message(
                 .where(Message.session_id == session_id)
                 .order_by(Message.created_at)
             )
-            history_local = list(refreshed.scalars().all())
+            history_local = _without_resumed_user(list(refreshed.scalars().all()))
 
-        user_msg = Message(
-            session_id=session_id,
-            role=MessageRole.USER,
-            content=body.content,
-            image_url=body.image_url,
-        )
-        db.add(user_msg)
-        await db.commit()
-        await db.refresh(user_msg)
+        user_created_this_request = resumed_user_row is None
+
+        if resumed_user_row is not None:
+            user_msg = resumed_user_row
+            user_msg.content = body.content
+            user_msg.image_url = body.image_url
+            await db.commit()
+            await db.refresh(user_msg)
+        else:
+            user_msg = Message(
+                session_id=session_id,
+                role=MessageRole.USER,
+                content=body.content,
+                image_url=body.image_url,
+            )
+            db.add(user_msg)
+            await db.commit()
+            await db.refresh(user_msg)
 
         prefix, tail = project_for_model(history_local, session.compaction_state)
         messages = build_messages(
@@ -182,6 +227,8 @@ async def send_message(
 
         async def _remove_orphan_user_message(reason: str) -> None:
             """Delete the user message when the step loop fails before persisting an assistant reply."""
+            if not user_created_this_request:
+                return
             try:
                 await db.execute(delete(Message).where(Message.id == user_msg.id))
                 await db.commit()
@@ -225,6 +272,11 @@ async def send_message(
             session_id,
         )
 
+        updated_state_dict = None
+        if deal_state:
+            await db.refresh(deal_state)
+            updated_state_dict = await deal_state_to_dict(deal_state, db)
+
         # ── Emit done immediately so the frontend can unblock input ──
         # Usage here reflects the step loop only (panel generation costs
         # are added to the persisted message but not to this SSE event).
@@ -252,8 +304,6 @@ async def send_message(
             panel_finished = False
             panel_completed = False
             try:
-                await db.refresh(deal_state)
-                updated_state_dict = await deal_state_to_dict(deal_state, db)
                 panel_usage_summary: dict[str, int] | None = None
                 latest_cards: list[dict] = []
 
@@ -262,7 +312,7 @@ async def send_message(
                     "breaks_delta": 0,
                 }
                 async for panel_event in stream_ai_panel_cards_with_usage(
-                    updated_state_dict,
+                    updated_state_dict or {},
                     result.full_text,
                     all_messages,
                     session_id=session_id,
@@ -371,6 +421,41 @@ async def send_message(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+@router.post("/{session_id}/user-message", response_model=MessageResponse)
+async def persist_user_message(
+    session_id: str,
+    body: PersistUserMessageRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist a user message without running the assistant (VIN intercept, etc.)."""
+    session_result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+    )
+    session = session_result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    user_msg = Message(
+        session_id=session_id,
+        role=MessageRole.USER,
+        content=body.content,
+        image_url=body.image_url,
+    )
+    db.add(user_msg)
+    await db.commit()
+    await db.refresh(user_msg)
+    logger.info(
+        "User message persisted (pre-stream): session_id=%s message_id=%s",
+        session_id,
+        user_msg.id,
+    )
+    return _message_response_from_model(user_msg)
+
+
 @router.get("/{session_id}/messages", response_model=MessagesListResponse)
 async def get_messages(
     session_id: str,
@@ -403,6 +488,6 @@ async def get_messages(
         rows, session.compaction_state, context_message, linked_messages
     )
     return MessagesListResponse(
-        messages=[MessageResponse.model_validate(m) for m in rows],
+        messages=[_message_response_from_model(m) for m in rows],
         context_pressure=ContextPressureResponse(**pressure),
     )

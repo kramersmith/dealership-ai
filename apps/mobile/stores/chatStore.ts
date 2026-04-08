@@ -33,13 +33,33 @@ function buildMessageContent(text: string, quotedCard?: QuotedCard): string {
   }
 }
 
-const VIN_REGEX = /\b[A-HJ-NPR-Z0-9]{17}\b/i
+const VIN_REGEX_SINGLE = /\b[A-HJ-NPR-Z0-9]{17}\b/i
+const VIN_REGEX_GLOBAL = /\b[A-HJ-NPR-Z0-9]{17}\b/gi
 
 export function normalizeVinCandidate(text: string): string | null {
-  const match = text.match(VIN_REGEX)
+  const match = text.match(VIN_REGEX_SINGLE)
   if (!match) return null
   const normalized = match[0].toUpperCase()
   return /[IOQ]/.test(normalized) ? null : normalized
+}
+
+/** All distinct valid VINs in message order (max 8). */
+export function normalizeVinCandidates(text: string, maxCount = 8): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const match of text.matchAll(VIN_REGEX_GLOBAL)) {
+    const normalized = match[0].toUpperCase()
+    if (/[IOQ]/.test(normalized)) continue
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+    if (out.length >= maxCount) break
+  }
+  return out
+}
+
+function isVinAssistTerminal(status: VinAssistItem['status']): boolean {
+  return status === 'confirmed' || status === 'skipped' || status === 'rejected'
 }
 
 function buildDecodedVehicle(decoded: {
@@ -88,7 +108,12 @@ interface ChatState {
    *  wiping optimistic messages or greeting messages. */
   _sessionJustCreated: boolean
   /** Stashed send params when a VIN intercept pauses the message send. */
-  _pendingSend: { content: string; imageUri?: string; quotedCard?: QuotedCard } | null
+  _pendingSend: {
+    content: string
+    imageUri?: string
+    quotedCard?: QuotedCard
+    sourceMessageId: string
+  } | null
   /** Estimated model context use for the next turn (from GET messages). */
   contextPressure: ContextPressure | null
   /** Backend is summarizing older turns before streaming the reply. */
@@ -111,13 +136,18 @@ interface ChatState {
     content: string,
     imageUri?: string,
     quotedCard?: QuotedCard,
-    _skipVinIntercept?: boolean
+    _skipVinIntercept?: boolean,
+    existingUserMessageId?: string
   ) => Promise<void>
   /** Resume a VIN-intercepted send — called after decode/confirm/skip. */
   resumePendingSend: () => Promise<void>
   skipVinAssist: (vinAssistId: string) => void
   decodeVinAssist: (vinAssistId: string) => Promise<void>
   decodeVinAssistForVehicle: (vin: string, vehicleId?: string) => Promise<void>
+  /** Decode every non-terminal assist row for this user message (sequential API calls). */
+  decodeAllVinAssistForMessage: (sourceMessageId: string) => Promise<void>
+  /** Confirm every decoded (unconfirmed) assist row for this message — sequential API calls. */
+  confirmAllDecodedVinAssistForMessage: (sourceMessageId: string) => Promise<void>
   confirmVinAssist: (vinAssistId: string) => Promise<void>
   rejectVinAssist: (vinAssistId: string) => Promise<void>
   /** Submit a VIN from the insights panel — skips the "Decode?" prompt and auto-decodes. */
@@ -196,9 +226,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return
     }
+
     set({
       activeSessionId: sessionId,
       messages: [],
+      streamingText: '',
       vinAssistItems: [],
       quickActions: [],
       aiResponseCount: 0,
@@ -213,7 +245,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         api.getMessages(sessionId),
         useDealStore.getState().loadDealState(sessionId),
       ])
-      set({ messages, contextPressure, isLoading: false })
+      set({
+        messages,
+        contextPressure,
+        isLoading: false,
+      })
     } catch (err) {
       console.error(
         '[chatStore] setActiveSession failed:',
@@ -289,15 +325,71 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
-  sendMessage: async (content, imageUri, quotedCard, _skipVinIntercept) => {
+  sendMessage: async (content, imageUri, quotedCard, _skipVinIntercept, existingUserMessageId) => {
     const { activeSessionId } = get()
     if (!activeSessionId) return
 
-    // Track the optimistic message ID for error rollback
+    // Track client-visible user message id for stream failure (marks failed on wrong row)
     let optimisticMessageId: string | null = null
 
     if (!_skipVinIntercept) {
-      // Optimistically add user message
+      const detectedVins = normalizeVinCandidates(content)
+      if (detectedVins.length > 0) {
+        const apiContent = buildMessageContent(content, quotedCard)
+        let persisted: Message
+        try {
+          persisted = await api.persistUserMessage(activeSessionId, apiContent, imageUri)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Failed to save message'
+          console.error('[chatStore] persistUserMessage failed:', message)
+          set({ sendError: message, isSending: false })
+          return
+        }
+        const userMessage: Message = {
+          ...persisted,
+          quotedCard,
+        }
+        optimisticMessageId = userMessage.id
+        set((state) => {
+          let nextVinItems = [...state.vinAssistItems]
+          for (const vin of detectedVins) {
+            const existing = nextVinItems.find((item) => item.vin === vin)
+            const vinAssistItem: VinAssistItem = existing
+              ? {
+                  ...existing,
+                  sourceMessageId: userMessage.id,
+                  status: 'detected',
+                  error: null,
+                  updatedAt: new Date().toISOString(),
+                }
+              : {
+                  id: Math.random().toString(36).substring(2),
+                  sessionId: activeSessionId,
+                  vin,
+                  sourceMessageId: userMessage.id,
+                  status: 'detected',
+                  updatedAt: new Date().toISOString(),
+                }
+            nextVinItems = nextVinItems.filter((item) => item.vin !== vin)
+            nextVinItems.push(vinAssistItem)
+          }
+          return {
+            messages: [...state.messages, userMessage],
+            vinAssistItems: nextVinItems,
+            isSending: false,
+            streamingText: '',
+            sendError: null,
+            isPanelAnalyzing: false,
+            _pendingSend: { content, imageUri, quotedCard, sourceMessageId: userMessage.id },
+          }
+        })
+        for (const vin of detectedVins) {
+          trackVinAssistEvent('detected', { sessionId: activeSessionId, vin })
+        }
+        return
+      }
+
+      // No VIN — optimistic local user row (server inserts on stream, then silent refresh replaces ids)
       const userMessage: Message = {
         id: Math.random().toString(36).substring(2),
         sessionId: activeSessionId,
@@ -308,49 +400,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
         createdAt: new Date().toISOString(),
       }
       optimisticMessageId = userMessage.id
-      const detectedVin = normalizeVinCandidate(content)
       set((state) => ({
         messages: [...state.messages, userMessage],
-        vinAssistItems: detectedVin
-          ? (() => {
-              const existing = state.vinAssistItems.find((item) => item.vin === detectedVin)
-              const vinAssistItem: VinAssistItem = existing
-                ? {
-                    ...existing,
-                    sourceMessageId: userMessage.id,
-                    status: 'detected',
-                    error: null,
-                    updatedAt: new Date().toISOString(),
-                  }
-                : {
-                    id: Math.random().toString(36).substring(2),
-                    sessionId: activeSessionId,
-                    vin: detectedVin,
-                    sourceMessageId: userMessage.id,
-                    status: 'detected',
-                    updatedAt: new Date().toISOString(),
-                  }
-              return [
-                ...state.vinAssistItems.filter((item) => item.vin !== detectedVin),
-                vinAssistItem,
-              ]
-            })()
-          : state.vinAssistItems,
         isSending: true,
         streamingText: '',
         sendError: null,
         isPanelAnalyzing: false,
       }))
-      if (detectedVin) {
-        trackVinAssistEvent('detected', { sessionId: activeSessionId, vin: detectedVin })
-        // Pause the send — stash params and wait for user to decode or skip
-        set({ _pendingSend: { content, imageUri, quotedCard }, isSending: false })
-        return
-      }
     } else {
-      // Resume path — message already in chat, just set sending state
-      set({ isSending: true, streamingText: '', sendError: null })
-      set({ isPanelAnalyzing: false })
+      // Resume path — message already persisted; drop VIN assist chrome so we do not imply the user message is still uploading.
+      // Track the persisted id so a stream failure marks the correct row as failed.
+      if (existingUserMessageId) {
+        optimisticMessageId = existingUserMessageId
+      }
+      set((state) => ({
+        isSending: true,
+        streamingText: '',
+        sendError: null,
+        isPanelAnalyzing: false,
+        vinAssistItems: existingUserMessageId
+          ? state.vinAssistItems.filter((item) => item.sourceMessageId !== existingUserMessageId)
+          : state.vinAssistItems,
+      }))
     }
 
     try {
@@ -363,7 +434,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // (the "done" SSE event), so the StreamingBubble is replaced by a
       // permanent ChatBubble immediately — not seconds later on the first
       // tool_result.
-      const handleTextDone = (finalText: string, usage?: MessageUsage) => {
+      const handleTextDone = (finalText: string, usage?: MessageUsage, _sessionUsage?: unknown) => {
         if (messageFinalized) return
         messageFinalized = true
         if (finalText.trim()) {
@@ -416,16 +487,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId,
         apiContent,
         imageUri,
-        (text) => set({ streamingText: text, isRetrying: false, isThinking: false }),
+        (text) =>
+          set({
+            streamingText: text,
+            isRetrying: false,
+            isThinking: false,
+          }),
         handleToolResult,
         handleTextDone,
-        () => set({ isRetrying: true }),
+        () =>
+          set({
+            isRetrying: true,
+          }),
         () => set({ isThinking: true }),
         () => set({ isPanelAnalyzing: true }),
         () => set({ isPanelAnalyzing: false }),
         (phase) => {
           set({ isCompacting: phase === 'started' })
-        }
+        },
+        _skipVinIntercept ? existingUserMessageId : undefined
       )
 
       // If no tool results arrived (rare), finalize from onload
@@ -439,17 +519,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isPanelAnalyzing: false,
           }))
         } else {
-          set({ isSending: false, streamingText: '', isPanelAnalyzing: false })
+          set({
+            isSending: false,
+            streamingText: '',
+            isPanelAnalyzing: false,
+          })
         }
       }
 
       // Refresh sessions list (fire-and-forget)
       get()
         .loadSessions()
-        .catch(() => {})
+        .catch((error) => {
+          console.warn(
+            '[chatStore] Background session refresh failed (non-critical):',
+            error instanceof Error ? error.message : error
+          )
+        })
       await get()
         .loadMessages(activeSessionId, { silent: true })
-        .catch(() => {})
+        .catch((error) => {
+          console.warn(
+            '[chatStore] Background message refresh failed (non-critical):',
+            error instanceof Error ? error.message : error
+          )
+        })
       set({ suppressContextWarningUntilUsageRefresh: false, isCompacting: false })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
@@ -478,28 +572,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { activeSessionId } = get()
     if (!activeSessionId) return
 
-    // Check if a VIN was confirmed — if so, append decoded vehicle info to the message
-    const confirmedItem = get().vinAssistItems.find(
-      (item) => item.status === 'confirmed' && item.decodedVehicle
+    const group = get().vinAssistItems.filter(
+      (item) => item.sourceMessageId === pending.sourceMessageId
     )
+    const appendix: string[] = []
+    for (const item of group) {
+      if (item.status === 'confirmed' && item.decodedVehicle) {
+        const dv = item.decodedVehicle
+        const specs = [dv.year, dv.make, dv.model, dv.trim].filter(Boolean).join(' ')
+        appendix.push(`[VIN ${item.vin} decoded: ${specs}]`)
+      } else if (item.status === 'skipped') {
+        appendix.push(`[VIN ${item.vin}: continued without decode/confirm]`)
+      } else if (item.status === 'rejected') {
+        appendix.push(`[VIN ${item.vin}: identity not confirmed]`)
+      }
+    }
     let enrichedContent = pending.content
-    if (confirmedItem?.decodedVehicle) {
-      const decodedVehicle = confirmedItem.decodedVehicle
-      const specs = [
-        decodedVehicle.year,
-        decodedVehicle.make,
-        decodedVehicle.model,
-        decodedVehicle.trim,
-      ]
-        .filter(Boolean)
-        .join(' ')
-      enrichedContent = `${pending.content}\n\n[VIN ${confirmedItem.vin} decoded: ${specs}]`
+    if (appendix.length > 0) {
+      enrichedContent = `${pending.content}\n\n${appendix.join('\n')}`
     }
 
+    const sourceMessageId = pending.sourceMessageId
     set({ _pendingSend: null })
-    // Re-invoke sendMessage with _skipVinIntercept=true to skip message adding
-    // and VIN detection (message is already in chat from the initial send).
-    await get().sendMessage(enrichedContent, pending.imageUri, pending.quotedCard, true)
+    // Stream updates the persisted user row and runs the assistant (see existing_user_message_id).
+    await get().sendMessage(
+      enrichedContent,
+      pending.imageUri,
+      pending.quotedCard,
+      true,
+      sourceMessageId
+    )
   },
 
   skipVinAssist: (vinAssistId) => {
@@ -514,8 +616,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (item) {
       trackVinAssistEvent('skipped', { sessionId: item.sessionId, vin: item.vin })
     }
-    // Resume the paused send if one exists — catch to avoid unhandled rejection
-    get()
+    const sourceMessageId = item?.sourceMessageId
+    if (!sourceMessageId) return
+    const pending = get()._pendingSend
+    if (!pending || pending.sourceMessageId !== sourceMessageId) return
+    const group = get().vinAssistItems.filter((entry) => entry.sourceMessageId === sourceMessageId)
+    if (group.length === 0 || group.some((entry) => !isVinAssistTerminal(entry.status))) return
+    void get()
       .resumePendingSend()
       .catch((err) => {
         console.error(
@@ -596,6 +703,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  decodeAllVinAssistForMessage: async (sourceMessageId) => {
+    const items = get().vinAssistItems.filter(
+      (item) =>
+        item.sourceMessageId === sourceMessageId &&
+        (item.status === 'detected' || item.status === 'failed')
+    )
+    for (const item of items) {
+      await get().decodeVinAssistForVehicle(item.vin, item.vehicleId)
+    }
+  },
+
+  confirmAllDecodedVinAssistForMessage: async (sourceMessageId) => {
+    const toConfirm = get().vinAssistItems.filter(
+      (item) =>
+        item.sourceMessageId === sourceMessageId &&
+        item.status === 'decoded' &&
+        Boolean(item.vehicleId)
+    )
+    for (const item of toConfirm) {
+      await get().confirmVinAssist(item.id)
+    }
+  },
+
   confirmVinAssist: async (vinAssistId) => {
     const { activeSessionId } = get()
     const item = get().vinAssistItems.find((entry) => entry.id === vinAssistId)
@@ -614,8 +744,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       }))
       trackVinAssistEvent('decode_confirmed', { sessionId: activeSessionId, vin: item.vin })
-      // Resume the paused send if one exists — with decoded vehicle info appended
-      await get().resumePendingSend()
+      const sourceMessageId = item.sourceMessageId
+      const pending = get()._pendingSend
+      if (
+        sourceMessageId &&
+        pending?.sourceMessageId === sourceMessageId &&
+        !get()
+          .vinAssistItems.filter((entry) => entry.sourceMessageId === sourceMessageId)
+          .some((entry) => !isVinAssistTerminal(entry.status))
+      ) {
+        await get().resumePendingSend()
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to confirm vehicle identity'
       console.error('[chatStore] confirmVinAssist failed:', message)
@@ -648,8 +787,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       }))
       trackVinAssistEvent('decode_rejected', { sessionId: activeSessionId, vin: item.vin })
-      // Resume the paused send if one exists — without decoded info
-      await get().resumePendingSend()
+      const sourceMessageId = item.sourceMessageId
+      const pending = get()._pendingSend
+      if (
+        sourceMessageId &&
+        pending?.sourceMessageId === sourceMessageId &&
+        !get()
+          .vinAssistItems.filter((entry) => entry.sourceMessageId === sourceMessageId)
+          .some((entry) => !isVinAssistTerminal(entry.status))
+      ) {
+        await get().resumePendingSend()
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to reject vehicle identity'
       console.error('[chatStore] rejectVinAssist failed:', message)
@@ -668,21 +816,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { activeSessionId } = get()
     if (!activeSessionId) return
 
-    // Add the VIN as a user message in chat
-    const userMessage: Message = {
-      id: Math.random().toString(36).substring(2),
-      sessionId: activeSessionId,
-      role: 'user',
-      content: vin,
-      createdAt: new Date().toISOString(),
+    let userMessage: Message
+    try {
+      userMessage = await api.persistUserMessage(activeSessionId, vin, undefined)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save message'
+      console.error('[chatStore] submitVinFromPanel persist failed:', message)
+      set({ sendError: message })
+      return
     }
 
-    // Stash the pending send and create a vinAssistItem in 'decoding' status
-    // (skipping the 'detected' step entirely)
     const itemId = Math.random().toString(36).substring(2)
     set((state) => ({
       messages: [...state.messages, userMessage],
-      _pendingSend: { content: vin },
+      _pendingSend: { content: vin, sourceMessageId: userMessage.id },
       vinAssistItems: [
         ...state.vinAssistItems.filter((item) => item.vin !== vin),
         {
@@ -696,8 +843,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ],
     }))
 
-    // Auto-trigger decode — this updates the vinAssistItem to 'decoded'
-    // and the VinAssistCard in chat will show the confirm step
     await get().decodeVinAssistForVehicle(vin)
   },
 

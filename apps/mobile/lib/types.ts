@@ -16,7 +16,7 @@ export type ScoreStatus = 'red' | 'yellow' | 'green' | null
 
 // ─── Vehicle ───
 
-export type VehicleRole = 'primary' | 'trade_in'
+export type VehicleRole = 'primary' | 'candidate' | 'trade_in'
 
 export type VehicleIntelligenceStatus = 'idle' | 'loading' | 'success' | 'partial' | 'failed'
 
@@ -211,6 +211,7 @@ export type AiCardTemplate =
 export type AiCardKind =
   | 'vehicle'
   | 'numbers'
+  | 'phase'
   | 'warning'
   | 'notes'
   | 'comparison'
@@ -281,6 +282,13 @@ export interface NegotiationContext {
   pendingActions?: NegotiationPendingAction[]
   leverage?: string[]
   updatedAt?: string
+}
+
+/** Structured comparison table rendered inline in chat message presentation blocks. */
+export interface ComparisonTable {
+  title?: string | null
+  headers: string[]
+  rows: string[][]
 }
 
 // ─── Deal State (session-level + deals + vehicles) ───
@@ -475,6 +483,8 @@ export interface ApiService {
 
   // Chat
   getMessages(sessionId: string): Promise<{ messages: Message[]; contextPressure: ContextPressure }>
+  /** Persist user text only (no assistant) — VIN intercept and similar. */
+  persistUserMessage(sessionId: string, content: string, imageUri?: string): Promise<Message>
   sendMessage(
     sessionId: string,
     content: string,
@@ -486,7 +496,9 @@ export interface ApiService {
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
-    onCompaction?: (phase: 'started' | 'done' | 'error') => void
+    onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    /** Stream updates this persisted user row instead of inserting (resume after VIN intercept). */
+    existingUserMessageId?: string
   ): Promise<Message>
 
   // Deal state

@@ -8,6 +8,7 @@ import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { ChatBubble } from './ChatBubble'
 import { StreamingBubble } from './StreamingBubble'
 import { VinAssistCard } from './VinAssistCard'
+import { MultiVinAssistCard } from './MultiVinAssistCard'
 
 /** Returns the ID of a message that was just promoted from StreamingBubble,
  *  so ChatBubble can skip its entrance animation (the text was already visible). */
@@ -221,16 +222,19 @@ export const ChatMessageList = memo(function ChatMessageList({
         }
       }}
     >
-      {messages.map((msg) => (
-        <YStack key={msg.id}>
-          <ChatBubble message={msg} skipAnimation={msg.id === justFinalizedId} />
-          {vinAssistItems
-            .filter((item) => item.sourceMessageId === msg.id)
-            .map((item) => (
-              <VinAssistCard key={item.id} item={item} />
-            ))}
-        </YStack>
-      ))}
+      {messages.map((msg) => {
+        const assistForMsg = vinAssistItems.filter((item) => item.sourceMessageId === msg.id)
+        return (
+          <YStack key={msg.id}>
+            <ChatBubble message={msg} skipAnimation={msg.id === justFinalizedId} />
+            {assistForMsg.length > 1 ? (
+              <MultiVinAssistCard items={assistForMsg} />
+            ) : assistForMsg.length === 1 ? (
+              <VinAssistCard item={assistForMsg[0]!} />
+            ) : null}
+          </YStack>
+        )
+      })}
 
       {isSending ? (
         streamingText ? (

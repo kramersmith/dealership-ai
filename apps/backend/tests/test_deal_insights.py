@@ -191,14 +191,16 @@ async def test_apply_extraction_vehicle_updates_cab_and_bed_fields(adb):
     assert vehicle.bed_length == "8 ft"
 
 
-async def test_apply_extraction_vehicle_no_auto_deal_when_deals_exist(adb):
-    """Vehicle extraction does not auto-create a deal when deals already exist."""
+async def test_apply_extraction_vehicle_second_shopping_vehicle_auto_deal_inactive(adb):
+    """New primary/candidate vehicle always gets a deal; active deal stays the first."""
     user = await async_create_user(adb)
     _, deal_state = await async_create_session_with_deal_state(adb, user)
     vehicle = await async_create_vehicle(
         adb, deal_state.session_id, make="Honda", model="Civic"
     )
-    await async_create_deal(adb, deal_state.session_id, vehicle.id)
+    first_deal = await async_create_deal(adb, deal_state.session_id, vehicle.id)
+    deal_state.active_deal_id = first_deal.id
+    await adb.flush()
 
     applied = await apply_extraction(
         deal_state,
@@ -216,7 +218,6 @@ async def test_apply_extraction_vehicle_no_auto_deal_when_deals_exist(adb):
     assert tool_call is not None
     assert "vehicle_id" in tool_call["args"]
 
-    # Should still be only 1 deal (no auto-create)
     deals = (
         (
             await adb.execute(
@@ -226,7 +227,11 @@ async def test_apply_extraction_vehicle_no_auto_deal_when_deals_exist(adb):
         .scalars()
         .all()
     )
-    assert len(deals) == 1
+    assert len(deals) == 2
+    assert deal_state.active_deal_id == first_deal.id
+    create_tc = _find_tool(applied, "create_deal")
+    assert create_tc is not None
+    assert create_tc["args"].get("make_active") is False
 
 
 async def test_apply_extraction_vehicle_replaces_trade_in(adb):
@@ -387,6 +392,7 @@ async def test_apply_extractioncreate_deal(adb):
     assert deal.vehicle_id == vehicle.id
     assert deal.dealer_name == "Metro Honda"
     assert deal_state.active_deal_id == deal.id
+    assert tool_call["args"].get("make_active") is True
 
 
 async def test_apply_extractioncreate_deal_without_vehicle_id(adb):
@@ -1927,6 +1933,7 @@ async def test_apply_extraction_auto_deal_emitscreate_deal(adb):
     assert create_deal_tc is not None
     assert "deal_id" in create_deal_tc["args"]
     assert "vehicle_id" in create_deal_tc["args"]
+    assert create_deal_tc["args"].get("make_active") is True
 
     # create_deal should come before set_vehicle
     create_idx = next(i for i, t in enumerate(applied) if t["name"] == "create_deal")
@@ -1999,7 +2006,7 @@ def test_decode_vin_route_persists_artifact_and_updates_vehicle(client, db):
     assert vehicle.vin == "1HGCM82633A004352"
 
 
-def test_upsert_vehicle_from_vin_creates_primary_vehicle_and_active_deal(client, db):
+def test_upsert_vehicle_from_vin_creates_candidate_vehicle_and_active_deal(client, db):
     user, token = create_user_and_token(db)
     session, deal_state = create_session_with_deal_state(db, user)
     db.commit()
@@ -2013,7 +2020,7 @@ def test_upsert_vehicle_from_vin_creates_primary_vehicle_and_active_deal(client,
     assert response.status_code == 200
     payload = response.json()
     assert payload["vin"] == "1HGCM82633A004352"
-    assert payload["role"] == VehicleRole.PRIMARY
+    assert payload["role"] == VehicleRole.CANDIDATE
 
     db.refresh(deal_state)
     assert deal_state.active_deal_id is not None

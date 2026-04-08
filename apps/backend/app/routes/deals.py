@@ -58,6 +58,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_SHOPPING_VEHICLE_ROLES = (VehicleRole.PRIMARY, VehicleRole.CANDIDATE)
+
 # Fields that can be corrected via the PATCH endpoint
 VEHICLE_CORRECTION_FIELDS = set(VEHICLE_FIELDS)
 DEAL_CORRECTION_FIELDS = set(DEAL_NUMBER_FIELDS) | {"dealer_name"}
@@ -412,7 +414,7 @@ async def upsert_vehicle_from_vin(
         select(Vehicle)
         .where(
             Vehicle.session_id == session_id,
-            Vehicle.role == VehicleRole.PRIMARY,
+            Vehicle.role.in_(_SHOPPING_VEHICLE_ROLES),
             Vehicle.vin == normalized_vin,
         )
         .order_by(Vehicle.created_at.desc())
@@ -434,16 +436,20 @@ async def upsert_vehicle_from_vin(
         await db.refresh(existing_vehicle)
         return await _serialize_vehicle(existing_vehicle, db)
 
-    vehicle = Vehicle(
-        session_id=session_id, role=VehicleRole.PRIMARY, vin=normalized_vin
-    )
+    # VIN-assisted shopping inserts should stay neutral at creation time.
+    # We rely on active_deal_id to track current focus, not a premature "primary" role.
+    new_role = VehicleRole.CANDIDATE
+
+    vehicle = Vehicle(session_id=session_id, role=new_role, vin=normalized_vin)
     db.add(vehicle)
     await db.flush()
 
     deal = Deal(session_id=session_id, vehicle_id=vehicle.id)
     db.add(deal)
     await db.flush()
-    deal_state.active_deal_id = deal.id
+    # Candidate vehicles should not steal focus from an existing active deal.
+    if not deal_state.active_deal_id:
+        deal_state.active_deal_id = deal.id
 
     session.updated_at = datetime.now(timezone.utc)
     await db.commit()

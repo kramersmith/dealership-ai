@@ -60,6 +60,14 @@ CHAT_TOOLS: list[dict] = [
                     "type": "string",
                     "enum": [p.value for p in DealPhase],
                 },
+                "make_active": {
+                    "type": "boolean",
+                    "description": (
+                        "If true (default), this deal becomes the active deal in the UI. "
+                        "Omit or false only when the tool runner supplies it for auto-created "
+                        "companion deals."
+                    ),
+                },
             },
         },
     },
@@ -145,7 +153,12 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_deal_health",
-        "description": "Update the overall deal health assessment. Health summary must reference actual data, recommendation must be specific.",
+        "description": (
+            "Update the overall deal health assessment. Health summary must reference actual data, "
+            "recommendation must be specific. If the buyer pasted CARFAX/AutoCheck/history text in chat, "
+            "the summary must reflect that evidence — do not claim history is missing just because "
+            "intelligence.history_report (API) is empty."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -304,13 +317,24 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_negotiation_context",
-        "description": "Update the buyer's negotiation context. Only call when the situation has meaningfully changed (new offer, arrived at dealership, walked out, etc.). Preserve information from previous context that is still relevant.",
+        "description": (
+            "Session-scoped negotiation context for the buyer-visible stance + situation strip above the "
+            "insights panel (not tied to active_deal_id). Update when offers, location, pasted history "
+            "(CARFAX/AutoCheck), mileage pace, commercial use, recalls/liens, or next checks change. "
+            "When 2+ shopping vehicles/deals are in play and you update assessment on any deal, refresh "
+            "this in the same batch so situation describes the comparison frame, not only the last "
+            "single-vehicle CARFAX summary. Preserve fields that still apply; refresh situation, "
+            "key_numbers, and pending_actions so the strip matches red flags and gaps."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "situation": {
                     "type": "string",
-                    "description": "ONE short sentence (max 15 words) of what is happening RIGHT NOW.",
+                    "description": (
+                        "ONE short sentence (max ~18 words) of what is happening RIGHT NOW. If comparing "
+                        "multiple vehicles, name both sides or the decisive trade-off so the strip matches chat."
+                    ),
                 },
                 "stance": {
                     "type": "string",
@@ -370,7 +394,10 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_checklist",
-        "description": "Update the buyer's action item checklist.",
+        "description": (
+            "Replace the full buyer checklist (send every item). Mark history-report tasks done when the "
+            "buyer pasted CARFAX/AutoCheck or equivalent for the focused vehicle — not only after the in-app VIN history check."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

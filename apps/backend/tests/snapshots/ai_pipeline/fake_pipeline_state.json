@@ -22,6 +22,7 @@
     {
       "args": {
         "deal_id": "<deal_id>",
+        "make_active": true,
         "vehicle_id": "<vehicle_id>"
       },
       "name": "create_deal"

@@ -1,70 +1,100 @@
-import { XStack, YStack, Text, Theme } from 'tamagui'
-import type { DealComparison, ComparisonHighlight } from '@/lib/types'
-import { AppCard } from '@/components/shared'
+import { useCallback, useMemo } from 'react'
+import { YStack, Text, Theme } from 'tamagui'
+import type { ComparisonTable as ComparisonTableType, DealComparison } from '@/lib/types'
+import { AppCard, ComparisonTable } from '@/components/shared'
 import { CardTitle } from './CardTitle'
+import { useDealStore } from '@/stores/dealStore'
 
 interface AiComparisonCardProps {
   title: string
   content: Record<string, any>
 }
 
-function HighlightRow({ highlight }: { highlight: ComparisonHighlight }) {
-  return (
-    <YStack gap="$1.5" paddingVertical="$1.5">
-      <Text fontSize={12} fontWeight="600" color="$placeholderColor">
-        {highlight.label}
-      </Text>
-      <XStack gap="$3" flexWrap="wrap">
-        {highlight.values.map((val) => (
-          <YStack key={val.dealId} gap="$0.5">
-            <Text
-              fontSize={14}
-              fontWeight={val.isWinner ? '700' : '400'}
-              color={val.isWinner ? '$positive' : '$color'}
-            >
-              {val.value}
-            </Text>
-            <Text fontSize={12} color="$placeholderColor" numberOfLines={1}>
-              {val.dealId}
-            </Text>
-          </YStack>
-        ))}
-      </XStack>
-      {highlight.note && (
-        <Text fontSize={12} color="$placeholderColor" fontStyle="italic" lineHeight={18}>
-          {highlight.note}
-        </Text>
-      )}
-    </YStack>
-  )
-}
-
 export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
   const comparison = content as unknown as DealComparison
-  const { summary, recommendation, highlights } = comparison
+  const { summary, recommendation, highlights = [] } = comparison
 
-  if (!highlights || highlights.length === 0) return null
+  const deals = useDealStore((s) => s.dealState?.deals ?? [])
+  const vehicles = useDealStore((s) => s.dealState?.vehicles ?? [])
+
+  const dealLabel = useCallback(
+    (dealId: string | undefined, index: number) => {
+      if (!dealId) {
+        return index === 0 ? 'Option A' : index === 1 ? 'Option B' : `Option ${index + 1}`
+      }
+      const deal = deals.find((d) => d.id === dealId)
+      const v = deal ? vehicles.find((x) => x.id === deal.vehicleId) : undefined
+      if (v) {
+        const core = [v.year, v.make, v.model].filter(Boolean).join(' ')
+        const vin = v.vin
+        const suffix = vin && vin.length >= 4 ? ` · …${vin.slice(-4)}` : ''
+        return `${core || 'Option'}${suffix}`.trim()
+      }
+      return `Deal ${dealId.slice(0, 8)}…`
+    },
+    [deals, vehicles]
+  )
+
+  const table = useMemo<ComparisonTableType | null>(() => {
+    if (highlights.length === 0) return null
+
+    const optionIds: string[] = []
+    for (const highlight of highlights) {
+      for (const value of highlight.values) {
+        if (!optionIds.includes(value.dealId)) {
+          optionIds.push(value.dealId)
+        }
+      }
+    }
+
+    if (optionIds.length === 0) return null
+
+    return {
+      title,
+      headers: ['', ...optionIds.map((dealId, index) => dealLabel(dealId, index))],
+      rows: highlights.map((highlight) => [
+        highlight.label,
+        ...optionIds.map((dealId) => {
+          const matchingValue = highlight.values.find((value) => value.dealId === dealId)
+          return matchingValue?.value ?? '—'
+        }),
+      ]),
+    }
+  }, [dealLabel, highlights, title])
+
+  const notes = useMemo(
+    () =>
+      highlights
+        .filter((highlight) => highlight.note)
+        .map((highlight) => `${highlight.label}: ${highlight.note}`),
+    [highlights]
+  )
+
+  if (!table) return null
 
   return (
     <AppCard compact gap="$2">
       <CardTitle>{title}</CardTitle>
 
-      {summary && (
+      {summary ? (
         <Text fontSize={13} color="$color" lineHeight={20}>
           {summary}
         </Text>
-      )}
+      ) : null}
 
-      <YStack>
-        {highlights.map((highlight, i) => (
-          <YStack key={highlight.label}>
-            {i > 0 && <YStack height={1} backgroundColor="$borderColor" />}
-            <HighlightRow highlight={highlight} />
-          </YStack>
-        ))}
-      </YStack>
+      <ComparisonTable table={table} embedded />
 
-      {recommendation && (
+      {notes.length > 0 ? (
+        <YStack gap="$1.5">
+          {notes.map((note) => (
+            <Text key={note} fontSize={12} color="$placeholderColor" lineHeight={18}>
+              {note}
+            </Text>
+          ))}
+        </YStack>
+      ) : null}
+
+      {recommendation ? (
         <Theme name="success">
           <YStack borderTopWidth={1} borderTopColor="$borderColor" paddingTop="$2.5" marginTop="$1">
             <Text fontSize={13} fontWeight="600" color="$color" lineHeight={20}>
@@ -72,7 +102,7 @@ export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
             </Text>
           </YStack>
         </Theme>
-      )}
+      ) : null}
     </AppCard>
   )
 }

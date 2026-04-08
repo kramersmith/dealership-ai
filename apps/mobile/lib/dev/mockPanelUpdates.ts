@@ -37,6 +37,8 @@ function templateForMockKind(kind: AiCardKind): AiCardTemplate {
   switch (kind) {
     case 'vehicle':
       return 'vehicle'
+    case 'phase':
+      return 'briefing'
     case 'numbers':
     case 'what_changed':
       return 'numbers'

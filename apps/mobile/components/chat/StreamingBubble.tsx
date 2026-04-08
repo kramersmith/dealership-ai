@@ -1,10 +1,9 @@
 import { useRef, useState, useEffect } from 'react'
 import { YStack, XStack, useTheme } from 'tamagui'
-import Markdown from 'react-native-markdown-display'
 import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
+import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
-import { CopyableBlock } from './CopyableBlock'
-import { extractTextFromNode } from './markdownUtils'
+import { ChatMarkdown } from './markdownRenderer'
 
 interface StreamingBubbleProps {
   text: string
@@ -23,6 +22,8 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
   const rafId = useRef<number>(0)
   const lastRender = useRef(0)
   const theme = useTheme()
+  const { isDesktop } = useScreenWidth()
+  const useInlineAssistantLayout = !isDesktop
   const colors = getAssistantMarkdownColors(theme)
 
   // Keep target in sync with incoming text
@@ -62,33 +63,23 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
   }, [])
 
   const visibleText = text.slice(0, visibleLength) + (cursorVisible ? CURSOR : '')
-
   const markdownStyles = buildMarkdownStyles(colors)
 
   return (
     <XStack justifyContent="flex-start" paddingHorizontal="$4" paddingVertical="$0.5">
       <YStack
         style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
-        backgroundColor="$backgroundStrong"
-        borderRadius="$4"
-        borderBottomLeftRadius="$1"
-        paddingHorizontal="$4"
-        paddingVertical="$3"
+        backgroundColor={useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'}
+        borderRadius={useInlineAssistantLayout ? 0 : '$4'}
+        borderBottomLeftRadius={useInlineAssistantLayout ? 0 : '$1'}
+        paddingHorizontal={useInlineAssistantLayout ? '$0' : '$4'}
+        paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
         borderWidth={0}
         borderColor="transparent"
       >
-        <Markdown
-          style={markdownStyles}
-          rules={{
-            blockquote: (node, children) => (
-              <CopyableBlock key={node.key} text={extractTextFromNode(node)}>
-                {children}
-              </CopyableBlock>
-            ),
-          }}
-        >
-          {visibleText}
-        </Markdown>
+        <YStack>
+          <ChatMarkdown style={markdownStyles}>{visibleText}</ChatMarkdown>
+        </YStack>
       </YStack>
     </XStack>
   )

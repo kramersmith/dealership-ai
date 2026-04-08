@@ -22,7 +22,10 @@ from app.services.claude.prompt_static import (
     CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM,
     CONTINUATION_AFTER_TOOL_ONLY_SYSTEM,
     CONTINUATION_TEXT_ONLY_SYSTEM,
+    DASHBOARD_RECONCILE_AFTER_ASSESSMENT_TOOLS,
+    POST_EXTRACTION_ASSESSMENT_NUDGE,
     POST_TOOL_CONTINUATION_REMINDER,
+    POST_TOOL_TEASER_RECOVERY_SYSTEM,
     SESSION_SCOPED_DASHBOARD_TOOLS,
     STATE_EXTRACTION_TOOLS,
     STEP_AFTER_TOOL_ONLY_NUDGE,
@@ -31,6 +34,7 @@ from app.services.claude.prompt_static import (
 from app.services.claude.recovery import generate_text_only_recovery_response
 from app.services.claude.text_dedupe import (
     normalize_step_text_for_dedupe,
+    promises_substantive_followup_after_tools,
     strip_redundant_continuation_opener,
 )
 from app.services.claude.tool_policy import chat_tool_choice_for_step
@@ -114,6 +118,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     prev_step_tools_were_dashboard_only = False
     prev_step_had_state_extraction_tools = False
     prev_step_had_any_tools = False
+    prev_step_tool_names: frozenset[str] = frozenset()
 
     for step in range(max_steps):
         turn_context = turn_context.for_step(step)
@@ -122,12 +127,14 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         if step > 0:
             yield f"event: step\ndata: {json.dumps({'step': step})}\n\n"
 
-        tool_choice_param = chat_tool_choice_for_step(
+        step_tool_policy = chat_tool_choice_for_step(
             step,
             prev_step_had_tool_errors=prev_step_tool_errors,
             prev_step_had_visible_assistant_text=prev_step_had_visible_assistant_text,
             prev_step_tools_were_dashboard_only=prev_step_tools_were_dashboard_only,
+            prev_step_tool_names=prev_step_tool_names,
         )
+        tool_choice_param = step_tool_policy.tool_choice
         if tool_choice_param["type"] == "none":
             if not prev_step_had_visible_assistant_text:
                 step_system = [*system_prompt, *CONTINUATION_AFTER_TOOL_ONLY_SYSTEM]
@@ -140,7 +147,14 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                 step_system = [*system_prompt, *CONTINUATION_TEXT_ONLY_SYSTEM]
         else:
             step_system = system_prompt
-            if (
+            if step_tool_policy.inject_dashboard_reconcile_nudge:
+                step_system = [
+                    *step_system,
+                    *DASHBOARD_RECONCILE_AFTER_ASSESSMENT_TOOLS,
+                ]
+            elif step_tool_policy.inject_post_extraction_assessment_nudge:
+                step_system = [*step_system, *POST_EXTRACTION_ASSESSMENT_NUDGE]
+            elif (
                 step == 1
                 and not prev_step_had_visible_assistant_text
                 and not prev_step_tool_errors
@@ -351,6 +365,8 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
             break
 
+        pre_step_full_text = result.full_text
+
         if (
             step >= 1
             and prev_step_had_any_tools
@@ -394,6 +410,38 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
 
         # If no tool calls, we're done — emit done event
         if stop_reason == "end_turn" or (not tool_use_blocks and not json_error_blocks):
+            continuation_too_thin = (
+                not step_text.strip() or len(step_text.strip()) < 120
+            )
+            if (
+                step >= 1
+                and prev_step_had_state_extraction_tools
+                and prev_step_had_visible_assistant_text
+                and continuation_too_thin
+                and promises_substantive_followup_after_tools(pre_step_full_text)
+            ):
+                logger.info(
+                    "Step %d: empty/short continuation after state extraction with teaser prose; "
+                    "forcing follow-up text recovery",
+                    step,
+                )
+                recovery_system_prompt = [
+                    *system_prompt,
+                    *POST_TOOL_TEASER_RECOVERY_SYSTEM,
+                ]
+                recovery = await generate_text_only_recovery_response(
+                    client,
+                    system=recovery_system_prompt,
+                    messages=messages,
+                )
+                if recovery is not None and recovery["text"].strip():
+                    merge_usage_summary(result.usage_summary, recovery["usage_summary"])
+                    result.full_text = pre_step_full_text
+                    recovery_body = recovery["text"].strip()
+                    if result.full_text and not result.full_text.endswith(("\n", " ")):
+                        result.full_text += "\n\n"
+                    result.full_text += recovery_body
+
             result.completed = True
             if emit_done_event:
                 yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
@@ -574,6 +622,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
             {b["name"] for b in tool_use_blocks} & STATE_EXTRACTION_TOOLS
         )
         prev_step_had_any_tools = bool(tool_use_blocks)
+        prev_step_tool_names = frozenset(b["name"] for b in tool_use_blocks)
 
         # Move the cache breakpoint to the last message so the next step's
         # API call caches everything up to this point (two-breakpoint caching).

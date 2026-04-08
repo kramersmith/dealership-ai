@@ -182,6 +182,8 @@ export default function ChatScreen() {
   const { messages, isSending, isLoading, streamingText, send, handleQuickAction } =
     useChat(activeSessionId)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
+  /** Hide quick-action chips while a message is paused for VIN decode/confirm (avoids overlap with VIN assist UI). */
+  const pendingVinIntercept = useChatStore((state) => state._pendingSend != null)
   const isRetrying = useChatStore((state) => state.isRetrying)
   const contextPressure = useChatStore((state) => state.contextPressure)
   const isCompacting = useChatStore((state) => state.isCompacting)
@@ -222,6 +224,7 @@ export default function ChatScreen() {
       useChatStore.setState({
         activeSessionId: null,
         messages: [],
+        streamingText: '',
         vinAssistItems: [],
         quickActions: [],
         aiResponseCount: 0,
@@ -377,7 +380,11 @@ export default function ChatScreen() {
     [hasDynamicActions, isStaleDynamic, storeQuickActions, isStaleStatic, dealState?.buyerContext]
   )
 
-  const showQuickActions = !showContextPicker && hasRealExchange && effectiveQuickActions.length > 0
+  const showQuickActions =
+    !showContextPicker &&
+    hasRealExchange &&
+    effectiveQuickActions.length > 0 &&
+    !pendingVinIntercept
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewItems = getPreviewItems(dealState, dismissedFlagIds)
   const activeDealForPreview = dealState ? getActiveDeal(dealState) : null
@@ -412,7 +419,7 @@ export default function ChatScreen() {
       onLeftPress={handleBack}
       leftLabel="Back to chats"
       title={headerTitle}
-      rightIcon={<MessageSquarePlus size={22} color="white" />}
+      rightIcon={<MessageSquarePlus size={22} color="$white" />}
       onRightPress={handleNewSession}
       rightLabel="Start new chat"
     />
@@ -536,7 +543,7 @@ export default function ChatScreen() {
             isRetrying={isRetrying}
             streamingText={streamingText}
             topPadding={mobileChatTopInset}
-            bottomPadding={12}
+            bottomPadding={pendingVinIntercept ? 28 : 12}
             footer={quickActionsFooter}
             scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
           />

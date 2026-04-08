@@ -1,7 +1,7 @@
 import json
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.deal import Deal
@@ -303,34 +303,38 @@ async def apply_extraction(
             vehicle_id = vehicle.id
             logger.debug("Created vehicle %s: role=%s", vehicle_id, role)
 
-            if role == VehicleRole.PRIMARY:
-                result = await db.execute(
-                    select(Deal.id)
+            if role in (VehicleRole.PRIMARY, VehicleRole.CANDIDATE):
+                count_result = await db.execute(
+                    select(func.count())
+                    .select_from(Deal)
                     .where(Deal.session_id == deal_state.session_id)
-                    .limit(1)
                 )
-                if result.first() is None:
-                    auto_deal = Deal(
-                        session_id=deal_state.session_id,
-                        vehicle_id=vehicle.id,
-                    )
-                    db.add(auto_deal)
-                    await db.flush()
+                deal_count_before = int(count_result.scalar() or 0)
+                auto_deal = Deal(
+                    session_id=deal_state.session_id,
+                    vehicle_id=vehicle.id,
+                )
+                db.add(auto_deal)
+                await db.flush()
+                if deal_count_before == 0:
                     deal_state.active_deal_id = auto_deal.id
-                    logger.debug(
-                        "Auto-created deal %s for primary vehicle %s",
-                        auto_deal.id,
-                        vehicle.id,
-                    )
-                    applied_tools.append(
-                        {
-                            "name": "create_deal",
-                            "args": {
-                                "deal_id": auto_deal.id,
-                                "vehicle_id": vehicle.id,
-                            },
-                        }
-                    )
+                logger.debug(
+                    "Auto-created deal %s for vehicle %s role=%s first_deal=%s",
+                    auto_deal.id,
+                    vehicle.id,
+                    role,
+                    deal_count_before == 0,
+                )
+                applied_tools.append(
+                    {
+                        "name": "create_deal",
+                        "args": {
+                            "deal_id": auto_deal.id,
+                            "vehicle_id": vehicle.id,
+                            "make_active": deal_count_before == 0,
+                        },
+                    }
+                )
 
         if vehicle_id is not None:
             applied_tools.append(
@@ -391,7 +395,10 @@ async def apply_extraction(
 
         if deal_id is not None:
             applied_tools.append(
-                {"name": "create_deal", "args": {**deal_data, "deal_id": deal_id}}
+                {
+                    "name": "create_deal",
+                    "args": {**deal_data, "deal_id": deal_id, "make_active": True},
+                }
             )
 
     if "numbers" in extraction:

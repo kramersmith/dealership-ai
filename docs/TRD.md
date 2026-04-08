@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-04-06**
+**Last updated: 2026-04-08**
 
 ---
 
@@ -94,7 +94,7 @@ graph TB
 
 ### Request Flow: Chat Message with Tool Use
 
-1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL).
+1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL). For gated VIN intercept flows the client may first call `POST /api/chat/{session_id}/user-message` to pre-persist the user message row (so it appears in `GET /messages` while decode/confirm runs), then invoke `/message` with `existing_user_message_id` to resume streaming on that row — see ADR 0019.
 2. Backend loads persisted message history for the session, deal state, and (if configured) linked-session messages **before** saving the new user turn.
 3. Inside the SSE stream, **optional auto context compaction** may run first when a heuristic input-token estimate crosses a policy threshold (see ADR 0017): the backend can call the primary model (`CLAUDE_MODEL`) to refresh a rolling summary, update `ChatSession.compaction_state`, persist a `Message(role=system)` notice, emit `compaction_started` / `compaction_done` or `compaction_error`, and refresh history for projection.
 4. Backend persists the new user message, constructs a `TurnContext` (session, deal state, DB session), and builds the Claude message list: projected dialogue (rolling-summary prefix when present, then up to `CLAUDE_MAX_HISTORY` user/assistant turns) plus the new user turn. A per-turn context message — deal state, context-aware preamble based on `buyer_context`, negotiation context summary, linked session context, and current UTC date for temporal grounding — is merged into the user message as content blocks (no synthetic assistant reply). The system prompt stays stable and cacheable across turns.
@@ -672,10 +672,10 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 | `HealthStatus` | `good`, `fair`, `concerning`, `bad` |
 | `RedFlagSeverity` | `warning`, `critical` |
 | `GapPriority` | `high`, `medium`, `low` |
-| `VehicleRole` | `primary`, `trade_in` |
+| `VehicleRole` | `primary`, `candidate`, `trade_in` |
 | `Difficulty` | `easy`, `medium`, `hard` |
 | `NegotiationStance` | `researching`, `preparing`, `engaging`, `negotiating`, `holding`, `walking`, `waiting`, `financing`, `closing`, `post_purchase` |
-| `AiCardType` | `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `comparison` |
+| `AiCardKind` (panel-facing subset) | `phase`, `briefing`, `numbers`, `vehicle`, `warning`, `tip`, `checklist`, `success`, `notes` (note: `comparison` / `trade_off` are defined in the enum but no longer emitted to the panel — they render as markdown tables in chat per ADR 0018) |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 
 ### Frontend Patterns

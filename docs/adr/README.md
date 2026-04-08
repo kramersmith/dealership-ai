@@ -27,3 +27,5 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0015](0015-prompt-cache-break-detection.md) | Prompt cache break detection via request fingerprinting | Accepted | 2026-04 |
 | [0016](0016-chat-error-resilience-and-orphan-cleanup.md) | Chat error resilience — API error mapping and orphan cleanup | Accepted | 2026-04 |
 | [0017](0017-context-compaction-custom.md) | Custom context compaction (buyer chat) | Accepted | 2026-04 |
+| [0018](0018-multi-vehicle-panel-and-chat-tables.md) | Multi-vehicle panel presentation and chat-rendered comparison tables | Accepted | 2026-04 |
+| [0019](0019-pre-persisted-user-messages-for-vin-intercept.md) | Pre-persisted user messages for gated pre-stream flows (VIN intercept) | Accepted | 2026-04 |

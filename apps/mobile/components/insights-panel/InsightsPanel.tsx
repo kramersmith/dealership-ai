@@ -5,10 +5,11 @@ import { BarChart3 } from '@tamagui/lucide-icons'
 import Reanimated, { FadeInLeft, LinearTransition, SlideOutRight } from 'react-native-reanimated'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import type { AiPanelCard, DealState, QuotedCard } from '@/lib/types'
+import type { AiPanelCard, DealState, QuotedCard, Vehicle } from '@/lib/types'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore } from '@/stores/chatStore'
 import { AiCard } from './AiCard'
+import { AiVehicleCard } from './AiVehicleCard'
 import { SituationBar } from './SituationBar'
 import { ThinkingIndicator } from './ThinkingIndicator'
 
@@ -35,6 +36,39 @@ interface RenderCard {
   signature: string
   card: AiPanelCard
 }
+
+const SHOPPING_ROLES = new Set<Vehicle['role']>(['primary', 'candidate'])
+
+/** Aligns with backend `panel_cards._panel_card_dedupe_identity` for vehicle cards (VIN else role+YMM+mileage+color). */
+function shoppingVehiclePanelFingerprint(vehicle: Vehicle): string {
+  const vin = vehicle.vin?.trim()
+  if (vin) return `vin:${vin}`
+  const role = vehicle.role ?? ''
+  const year = vehicle.year ?? ''
+  const make = vehicle.make ?? ''
+  const model = vehicle.model ?? ''
+  const mileage = vehicle.mileage != null ? String(vehicle.mileage) : ''
+  const color = vehicle.color ?? ''
+  return `spec:${role}:${year}:${make}:${model}:${mileage}:${color}`
+}
+
+function panelCardVehicleFingerprint(content: Record<string, unknown> | undefined): string | null {
+  const raw = content?.vehicle
+  if (!raw || typeof raw !== 'object') return null
+  const vehicleData = raw as Record<string, unknown>
+  const vin =
+    typeof vehicleData.vin === 'string' && vehicleData.vin.trim() ? vehicleData.vin.trim() : ''
+  if (vin) return `vin:${vin}`
+  const role = typeof vehicleData.role === 'string' ? vehicleData.role : ''
+  const year = typeof vehicleData.year === 'number' ? vehicleData.year : ''
+  const make = typeof vehicleData.make === 'string' ? vehicleData.make : ''
+  const model = typeof vehicleData.model === 'string' ? vehicleData.model : ''
+  const mileage = typeof vehicleData.mileage === 'number' ? String(vehicleData.mileage) : ''
+  const color = typeof vehicleData.color === 'string' ? vehicleData.color : ''
+  if (!make && !model && year === '') return null
+  return `spec:${role}:${year}:${make}:${model}:${mileage}:${color}`
+}
+
 // ─── Panel Header ───
 
 function PanelHeader({ thinking }: { thinking: boolean }) {
@@ -210,7 +244,49 @@ export const InsightsPanel = memo(function InsightsPanel({
 }) {
   const storeDealState = useDealStore((s) => s.dealState)
   const dealState = dealStateOverride ?? storeDealState
-  const cards = useMemo(() => dealState?.aiPanelCards ?? [], [dealState])
+  const shoppingVehicles = useMemo(
+    () => (dealState?.vehicles ?? []).filter((vehicle) => SHOPPING_ROLES.has(vehicle.role)),
+    [dealState]
+  )
+  const cards = useMemo(() => {
+    const raw = (dealState?.aiPanelCards ?? []).filter(
+      (card) => card.kind !== 'comparison' && card.kind !== 'trade_off'
+    )
+    const phaseCards = raw.filter((c) => c.kind === 'phase')
+    const rest = raw.filter((c) => c.kind !== 'phase')
+    return [...phaseCards, ...rest]
+  }, [dealState])
+  const panelVehicleFingerprints = useMemo(() => {
+    const set = new Set<string>()
+    for (const card of cards) {
+      if (card.kind !== 'vehicle') continue
+      const fp = panelCardVehicleFingerprint(card.content as Record<string, unknown>)
+      if (fp) set.add(fp)
+    }
+    return set
+  }, [cards])
+  const parkedVehicles = useMemo(() => {
+    // Every shopping vehicle except the active deal's truck, minus any already shown
+    // as a vehicle card (supports multiple candidates — only "missing" ones park here).
+    if (shoppingVehicles.length <= 1) {
+      return [] as Vehicle[]
+    }
+    const activeId = dealState?.activeDealId ?? null
+    if (!activeId) {
+      return [] as Vehicle[]
+    }
+    const activeDeal = dealState?.deals?.find((d) => d.id === activeId)
+    if (!activeDeal) {
+      return [] as Vehicle[]
+    }
+    const focusedVehicleId = activeDeal.vehicleId
+    return shoppingVehicles.filter((v) => {
+      if (v.id === focusedVehicleId) return false
+      const fp = shoppingVehiclePanelFingerprint(v)
+      if (panelVehicleFingerprints.has(fp)) return false
+      return true
+    })
+  }, [shoppingVehicles, dealState?.activeDealId, dealState?.deals, panelVehicleFingerprints])
   const isSending = useChatStore((s) => s.isSending)
   const isPanelAnalyzing = useChatStore((s) => s.isPanelAnalyzing)
 
@@ -221,7 +297,10 @@ export const InsightsPanel = memo(function InsightsPanel({
   const [activeGrowthCardId, setActiveGrowthCardId] = useState<string | null>(null)
 
   const showThinking = isSending || isPanelAnalyzing
-
+  const negotiationContext = dealState?.negotiationContext ?? null
+  const hasPhaseCard = useMemo(() => cards.some((c) => c.kind === 'phase'), [cards])
+  const hasSituationBar =
+    Boolean(negotiationContext?.situation && negotiationContext?.stance) && !hasPhaseCard
   const renderCards = useMemo<RenderCard[]>(() => {
     const identityCounts = new Map<string, number>()
     return cards.map((card) => {
@@ -300,7 +379,7 @@ export const InsightsPanel = memo(function InsightsPanel({
     []
   )
 
-  if (renderCards.length === 0) {
+  if (renderCards.length === 0 && !hasSituationBar) {
     return (
       <YStack flex={1} paddingHorizontal="$3.5" paddingVertical="$3">
         <PanelHeader thinking={showThinking} />
@@ -309,14 +388,10 @@ export const InsightsPanel = memo(function InsightsPanel({
     )
   }
 
-  const negotiationContext = dealState?.negotiationContext ?? null
-
   return (
     <YStack flex={1} paddingHorizontal="$3.5" paddingTop="$3" gap="$3">
       <PanelHeader thinking={showThinking} />
-      {negotiationContext?.situation && negotiationContext?.stance && (
-        <SituationBar context={negotiationContext} />
-      )}
+      {hasSituationBar ? <SituationBar context={negotiationContext!} /> : null}
       <Reanimated.View layout={listLayoutTransition}>
         <YStack gap="$3">
           {renderCards.map((item, i) => (
@@ -333,6 +408,55 @@ export const InsightsPanel = memo(function InsightsPanel({
           ))}
         </YStack>
       </Reanimated.View>
+      {parkedVehicles.length > 0 ? (
+        <YStack gap="$2">
+          <YStack
+            height={1}
+            backgroundColor="$borderColor"
+            opacity={0.8}
+            marginTop="$1"
+            marginBottom="$2"
+          />
+          <Text
+            fontSize={12}
+            fontWeight="600"
+            color="$placeholderColor"
+            textTransform="uppercase"
+            letterSpacing={0.5}
+          >
+            No longer receiving updates
+          </Text>
+          {parkedVehicles.map((vehicle) => {
+            const headline = [vehicle.year, vehicle.make, vehicle.model, vehicle.trim]
+              .filter(Boolean)
+              .join(' ')
+            return (
+              <AiVehicleCard
+                key={`parked-${vehicle.id}`}
+                title="Vehicle"
+                collapsedByDefault
+                content={{
+                  vehicle: {
+                    vin: vehicle.vin,
+                    year: vehicle.year,
+                    make: vehicle.make,
+                    model: vehicle.model,
+                    trim: vehicle.trim,
+                    headline: headline || undefined,
+                    specs: {
+                      engine: vehicle.engine,
+                      cab: vehicle.cabStyle,
+                      mileage: vehicle.mileage,
+                      color: vehicle.color,
+                      bed_length: vehicle.bedLength,
+                    },
+                  },
+                }}
+              />
+            )
+          })}
+        </YStack>
+      ) : null}
       <YStack height={24} />
     </YStack>
   )

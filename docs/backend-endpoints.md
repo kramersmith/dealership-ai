@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-04-06
+Last updated: 2026-04-08
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -390,6 +390,31 @@ Delete a session and all related data (messages, deal state, simulation) via cas
 
 All chat endpoints require authentication.
 
+### POST /api/chat/{session_id}/user-message
+
+Persist a **user** message only — no assistant call. Used when the client must commit the user’s text to the database before a gated flow completes (e.g. **VIN intercept**: message must appear in `GET /messages` while decode/confirm runs).
+
+**Auth required:** Yes
+
+**Request body:**
+
+```json
+{
+  "content": "Here are two VINs: ...",
+  "image_url": null
+}
+```
+
+**Response:** `200 OK` — single message object (same shape as entries in `GET /messages`).
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `404` | Session not found |
+
+---
+
 ### POST /api/chat/{session_id}/message
 
 Send a message and receive a streaming AI response via Server-Sent Events.
@@ -413,8 +438,9 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `content` | string | Yes | User's message text |
+| `content` | string | Yes | User's message text (for this turn; may include VIN appendix on resume) |
 | `image_url` | string | No | URL of an image to include (e.g., deal sheet photo) |
+| `existing_user_message_id` | string | No | If set, **updates** that existing user row’s `content` / `image_url` instead of inserting a new user message. Must belong to this session. Used after `POST .../user-message` when resuming the stream (VIN intercept complete). |
 
 **Response:** `200 OK` — `text/event-stream`
 
@@ -493,9 +519,9 @@ data: {"message": "AI response failed. Please try again."}
 ```
 
 **Side effects:**
-- Full message history is loaded before the new user turn is persisted
-- Optional auto-compaction may run first inside the stream: can persist `Message(role=system)` notice, update `ChatSession.compaction_state`, and `commit` before the user message is saved
-- The new user message is persisted after any compaction side effects, then chat streaming runs; the user message is deleted on stream failure or failed step loop to prevent duplicate history on retry (compaction state and system notices are not rolled back on chat failure; see ADR 0016 / ADR 0017)
+- Full message history is loaded before the user turn is applied (`existing_user_message_id` **excluded** from the compaction “prior” slice so the turn matches a fresh insert)
+- Optional auto-compaction may run first inside the stream: can persist `Message(role=system)` notice, update `ChatSession.compaction_state`, and `commit` before the user row is created or updated
+- Either a **new** user message is inserted after compaction side effects, or an **existing** user message is updated when `existing_user_message_id` is set; chat streaming then runs. Only **newly inserted** user messages are deleted on stream failure or failed step loop (retries after VIN resume do not delete the pre-persisted row; see ADR 0016 / ADR 0017)
 - The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
 - Panel generation runs after `done`; incremental cards are streamed via `panel_card`, and panel-phase usage is reported on `panel_done`
 - Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals
@@ -510,6 +536,7 @@ data: {"message": "AI response failed. Please try again."}
 | Status | Detail |
 |---|---|
 | `404` | Session not found |
+| `404` | `existing_user_message_id` not found or not a user message for this session |
 
 ---
 
@@ -735,7 +762,7 @@ Correctable deal fields: `dealer_name`, `msrp`, `invoice_price`, `listing_price`
 
 ### POST /api/deal/{session_id}/vehicles/upsert-from-vin
 
-Create or find a vehicle by VIN. If a vehicle with the given VIN already exists in the session, returns it and sets it as the active deal. Otherwise creates a new vehicle, auto-creates a deal, and decodes the VIN via NHTSA vPIC.
+Create or find a shopping vehicle by VIN. Matches against both `primary` and `candidate` roles (the "shopping" set). If a vehicle with the given VIN already exists in the session, returns it (existing vehicles may still be the active deal). **New** vehicles are created with `role="candidate"` so that pasting a VIN does not prematurely commit the buyer — candidate inserts do NOT steal `active_deal_id` focus. Claude or the buyer can later promote a candidate to `primary` when commitment is signaled (ADR 0018). The VIN is decoded via NHTSA vPIC on first creation and a deal row is auto-created for the vehicle.
 
 **Auth required:** Yes
 

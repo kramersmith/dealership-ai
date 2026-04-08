@@ -1,4 +1,4 @@
-import { Platform } from 'react-native'
+import { Platform, type ViewStyle } from 'react-native'
 import { YStack, useTheme, type YStackProps } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import { HoverLiftFrame } from './HoverLiftFrame'
@@ -23,6 +23,22 @@ export function AppCard({
   const theme = useTheme()
   const shadow = theme.shadowColor?.val ?? palette.overlay
 
+  const { width, maxWidth, minWidth, alignSelf, ...restProps } = props
+
+  const webSizesFrame =
+    Platform.OS === 'web' &&
+    (width !== undefined || maxWidth !== undefined || minWidth !== undefined)
+
+  const hoverLayoutStyle: ViewStyle | undefined =
+    webSizesFrame === true
+      ? ({
+          ...(width !== undefined ? { width } : {}),
+          ...(maxWidth !== undefined ? { maxWidth } : {}),
+          ...(minWidth !== undefined ? { minWidth } : {}),
+          alignSelf: alignSelf ?? 'flex-start',
+        } as ViewStyle)
+      : undefined
+
   const card = (
     <YStack
       backgroundColor="$backgroundStrong"
@@ -41,7 +57,11 @@ export function AppCard({
             shadowRadius: 3,
             elevation: 2,
           })}
-      {...props}
+      width={webSizesFrame ? '100%' : width}
+      maxWidth={webSizesFrame ? '100%' : maxWidth}
+      minWidth={webSizesFrame && minWidth !== undefined ? '100%' : minWidth}
+      alignSelf={webSizesFrame ? undefined : alignSelf}
+      {...restProps}
     >
       {children}
     </YStack>
@@ -49,7 +69,11 @@ export function AppCard({
 
   if (Platform.OS === 'web') {
     return (
-      <HoverLiftFrame shadowColor={shadow as string} interactive={interactive}>
+      <HoverLiftFrame
+        shadowColor={shadow as string}
+        interactive={interactive}
+        layoutStyle={hoverLayoutStyle}
+      >
         {card}
       </HoverLiftFrame>
     )

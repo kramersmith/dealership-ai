@@ -37,6 +37,8 @@ async def test_execute_tool_set_vehicle(adb, async_buyer_user):
     assert "set_vehicle" in tool_names
     # Auto-create deal for first primary vehicle
     assert "create_deal" in tool_names
+    create_tc = next(tc for tc in result if tc["name"] == "create_deal")
+    assert create_tc["args"].get("make_active") is True
 
     # Verify vehicle was created in DB
     vehicle = (
@@ -155,7 +157,7 @@ async def test_execute_tool_rejects_health_without_numbers(adb, async_buyer_user
     await adb.flush()
     deal_state.active_deal_id = deal.id
 
-    with pytest.raises(ToolValidationError, match="at least one deal number"):
+    with pytest.raises(ToolValidationError, match="Set at least one deal number"):
         await execute_tool(
             "update_deal_health",
             {
@@ -165,6 +167,42 @@ async def test_execute_tool_rejects_health_without_numbers(adb, async_buyer_user
             },
             TurnContext.create(session=session, deal_state=deal_state, db=adb),
         )
+
+
+async def test_execute_tool_update_deal_health_with_vehicle_mileage_only(
+    adb, async_buyer_user
+):
+    """Health may reflect pasted history when odometer is known but no dollar fields yet."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(
+        session_id=session.id, role=VehicleRole.CANDIDATE, mileage=141_786
+    )
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    result = await execute_tool(
+        "update_deal_health",
+        {
+            "status": "concerning",
+            "summary": "CARFAX shows auction churn; asking price still unknown.",
+            "recommendation": "Get listing price and a PPI before committing.",
+        },
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+    assert any(tc["name"] == "update_deal_health" for tc in result)
+    assert deal.health_status == HealthStatus.CONCERNING
 
 
 async def test_execute_tool_update_deal_health_with_numbers(adb, async_buyer_user):
