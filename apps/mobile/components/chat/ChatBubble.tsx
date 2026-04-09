@@ -3,12 +3,11 @@ import {
   Animated,
   Platform,
   TextInput,
-  TouchableOpacity,
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
 } from 'react-native'
 import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
-import { RefreshCw, Undo2 } from '@tamagui/lucide-icons'
+import { Pencil, RefreshCw, Undo2 } from '@tamagui/lucide-icons'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
 import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
@@ -147,10 +146,10 @@ export const ChatBubble = memo(function ChatBubble({
           style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
           flexShrink={1}
           alignItems={isUser ? 'flex-end' : 'stretch'}
-          width={isUser ? undefined : '100%'}
+          width={isUser && isEditTarget ? '100%' : isUser ? undefined : '100%'}
         >
           <YStack
-            {...(!isUser ? ({ width: '100%' } as const) : {})}
+            {...(!isUser || (isUser && isEditTarget) ? ({ width: '100%' } as const) : {})}
             backgroundColor={
               isUser ? '$brand' : useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'
             }
@@ -261,14 +260,14 @@ export const ChatBubble = memo(function ChatBubble({
               <FailedMessageFooter messageId={message.id} />
             )}
           </YStack>
-          {isUser && onStartEdit ? (
+          {isUser && (onStartEdit || isEditTarget) ? (
             <XStack
               marginTop="$1"
+              width="100%"
               alignItems="center"
               justifyContent="flex-end"
               flexWrap="wrap"
               gap="$1.5"
-              width="100%"
             >
               <Text fontSize={10} lineHeight={16} color="$placeholderColor">
                 {new Date(message.createdAt).toLocaleTimeString([], {
@@ -276,40 +275,58 @@ export const ChatBubble = memo(function ChatBubble({
                   minute: '2-digit',
                 })}
               </Text>
-              <TouchableOpacity
-                onPress={onStartEdit}
-                activeOpacity={0.55}
-                accessibilityRole="button"
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                {...(Platform.OS === 'web'
-                  ? ({
-                      'aria-label':
-                        'Revert to this message and continue the conversation from here',
-                    } as any)
-                  : {
-                      accessibilityLabel:
-                        'Revert to this message and continue the conversation from here',
-                    })}
-              >
+              {isEditTarget ? (
                 <XStack
                   minHeight={44}
-                  minWidth={44}
                   paddingHorizontal="$3"
                   gap="$1.5"
-                  borderRadius="$999"
-                  backgroundColor="$backgroundHover"
+                  borderRadius="$3"
+                  backgroundColor="transparent"
                   borderWidth={1}
-                  borderColor="$borderColor"
+                  borderColor="$brand"
                   alignItems="center"
                   justifyContent="center"
-                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                  opacity={0.92}
+                  {...(Platform.OS === 'web'
+                    ? ({ role: 'status', 'aria-label': 'Editing this message' } as any)
+                    : { accessibilityLabel: 'Editing this message' })}
                 >
-                  <Undo2 size={17} color="$brand" />
-                  <Text fontSize={12} fontWeight="600" color="$color">
-                    Edit from here
+                  <Pencil size={16} color="$brand" />
+                  <Text color="$brand" fontWeight="600" fontSize={13}>
+                    Editing
                   </Text>
                 </XStack>
-              </TouchableOpacity>
+              ) : (
+                <Button
+                  size="$3"
+                  minHeight={44}
+                  paddingHorizontal="$3"
+                  borderRadius="$3"
+                  backgroundColor="transparent"
+                  borderWidth={1}
+                  borderColor="$brand"
+                  pressStyle={{ backgroundColor: '$brandSubtle' }}
+                  onPress={onStartEdit}
+                  {...(Platform.OS === 'web'
+                    ? ({
+                        hoverStyle: { backgroundColor: '$backgroundHover' },
+                        cursor: 'pointer',
+                        'aria-label':
+                          'Revert to this message and continue the conversation from here',
+                      } as any)
+                    : {
+                        accessibilityLabel:
+                          'Revert to this message and continue the conversation from here',
+                      })}
+                >
+                  <XStack gap="$1.5" alignItems="center" justifyContent="center">
+                    <Undo2 size={16} color="$brand" />
+                    <Button.Text color="$brand" fontWeight="600" fontSize={13}>
+                      Edit from here
+                    </Button.Text>
+                  </XStack>
+                </Button>
+              )}
             </XStack>
           ) : isUser ? (
             <Text

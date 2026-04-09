@@ -132,6 +132,7 @@ def _message_response_from_model(message: Message) -> MessageResponse:
         content=message.content,
         image_url=message.image_url,
         tool_calls=message.tool_calls,
+        panel_cards=message.panel_cards,
         usage=message.usage,
         created_at=message.created_at,
     )

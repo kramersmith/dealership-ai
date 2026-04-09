@@ -153,6 +153,10 @@ Micro-interactions should be **subtle and fast**. Avoid:
 - Competing or distracting motion
 - Effects that delay critical feedback
 
+### Reduced motion (a11y)
+
+Respect the user's reduced-motion preference. Use the shared `usePrefersReducedMotion()` hook (`apps/mobile/hooks/usePrefersReducedMotion.ts`) to gate non-essential animations — when the user prefers reduced motion, swap directly to the new state instead of running slide/fade transitions. The insights panel batch-swap animation is the canonical example.
+
 ---
 
 ## 6. Theme Architecture

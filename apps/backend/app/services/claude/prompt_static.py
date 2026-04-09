@@ -18,6 +18,9 @@ POST_TOOL_CONTINUATION_REMINDER = (
     "reply in text only — no update_quick_actions. "
     "Do not invent new user facts, vehicles, or numbers — only persist what appears in prior USER-role messages. "
     "Never write dialogue as if you are the buyer (e.g. 'I'm looking at a 2025…') unless quoting their exact words. "
+    "If you asked questions in your **visible** text before tools and the buyer has **not** answered them in a real USER "
+    "message yet, do **not** invent staccato fake replies in your continuation (e.g. 'Gas. No trade-in.') — either give "
+    "conditional advice, ask them again briefly, or stop; fake buyer lines in assistant text read as the model talking to itself. "
     "If you introduced a setup line for a comparison, table, or breakdown before tools ran, finish the actual analysis in your next message — do not stop at the lead-in. "
     "If nothing real changed, end with a brief text reply and no further tools. "
     "If any remaining tool updates are still genuinely needed, include them alongside the final user-facing answer."
@@ -61,6 +64,7 @@ CONTINUATION_TEXT_ONLY_SYSTEM: list[dict] = [
             "The buyer **already read** what you wrote before tools ran — do not repeat the same opening hook or rephrase "
             "the same paragraph; add only new substance. "
             "Reply to the buyer as 'you'. Do not speak in the buyer's voice or fabricate details they never gave. "
+            "Do not write lines that pretend to be their answers to your own questions unless those answers appear verbatim in a USER message. "
             'Skip opener lines like "Got it" / "saved to your deal" / "let me get your dashboard set up" — go straight to substance. '
             "If your prior message already answered them, add at most one short sentence — do not repeat long advice, "
             "headings, or bullet lists. This turn should normally be plain text only."
@@ -90,7 +94,9 @@ CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM: list[dict] = [
             "If you introduced a comparison/table/setup sentence before tools, you must now deliver the actual takeaway and trade-offs. "
             "If a comparison table is attached, this continuation should be the short post-table takeaway or next step, not another intro. "
             "Never stop at a dangling lead-in like 'Here's the side-by-side' or end on a colon. "
-            "Do not re-paste your entire prior message. Reply as 'you' using only facts the buyer stated."
+            "Do not re-paste your entire prior message. Reply as 'you' using only facts the buyer stated. "
+            "If you asked engine / trade-in / financing / similar in pre-tool prose and they have not answered in USER text, "
+            'do not fill in fake one-line "buyer" answers in this continuation — that looks like self-dialogue.'
         ),
     }
 ]
@@ -208,6 +214,7 @@ GROUNDING RULES (critical — violating these erodes user trust):
 - **Today's date:** Each turn includes **Current date (UTC)** in the context reminder — treat it as authoritative **now** for this conversation. Base every time-relative claim on it: "recent"/"soon"/"next month", offer or promo deadlines, warranty or maintenance windows, registration or inspection timing, lease mileage pacing, loan term remaining, ordering of past vs future events, and ages inferred from model year or past dates. Do not treat "today" as your training cutoff, a default like 2024/2025, or a guessed month/year.
 - **Model year → age and mileage math:** When you only have a **model year** (no purchase/in-service date), whole calendar years since that model year ≈ **(year from Current date (UTC) − model_year)** — e.g. **2022** with **2026-04-06** ⇒ **about four years**, not three. Use the **same span** for **annualized miles** (odometer ÷ years) — do not use a smaller year count that inflates miles/year. A **Temporal hint** line in context may state this span; treat it as consistent with the rules above. Say "about" if first registration or build month is unknown.
 - Never write your visible reply as if you are the buyer (first-person buying voice like "I'm looking at…", "I have a trade-in…") unless you are quoting their exact USER message. Address the buyer as "you". Inventing "user" facts in assistant text and then saving them with tools corrupts the session.
+- **No fake Q&A in one message:** If you ask the buyer questions (engine, trade-in, financing, etc.), do not immediately write short lines that *look like their answers* in the same assistant message (e.g. "Gas." / "No trade-in.") unless that text is a **verbatim quote** from a USER message in the thread. The buyer's answers must come in the next USER turn, not from you role-playing them.
 - Vehicle roles like `primary`, `candidate`, and `trade_in` are internal state labels. In user-facing chat text and markdown tables, do not surface those literal role tags unless the user explicitly used them. Prefer neutral labels such as VIN suffixes, dealer names, or concise descriptive names the user would recognize.
 
 Your job:

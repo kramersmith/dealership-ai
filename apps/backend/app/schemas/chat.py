@@ -33,6 +33,7 @@ class MessageResponse(BaseModel):
     content: str
     image_url: str | None
     tool_calls: list[dict] | None
+    panel_cards: list[dict] | None = None
     usage: dict[str, int] | None
     created_at: datetime
 

@@ -590,12 +590,11 @@ async def stream_ai_panel_cards_with_usage(
     session_id: str | None = None,
     panel_prompt_cache: dict[str, Any] | None = None,
 ) -> AsyncGenerator[PanelStreamEvent, None]:
-    """Stream AI panel cards incrementally and emit lifecycle events.
+    """Stream AI panel from Claude internally; SSE consumers see lifecycle only.
 
-    Events:
+    Events (client-visible contract):
     - panel_started: panel generation started for an attempt
-    - panel_card: validated card parsed from stream
-    - panel_done: complete panel payload + usage summary
+    - panel_done: complete canonical panel + usage summary (no per-card SSE)
     - panel_error: terminal failure
     """
     client = create_anthropic_client()
@@ -679,14 +678,6 @@ async def stream_ai_panel_cards_with_usage(
                                 continue
                             cards.append(validated)
                             emitted_this_attempt += 1
-                            yield PanelStreamEvent(
-                                type="panel_card",
-                                data={
-                                    "index": len(cards) - 1,
-                                    "card": validated,
-                                    "attempt": attempt + 1,
-                                },
-                            )
 
                 final_message = await stream.get_final_message()
 
@@ -790,14 +781,6 @@ async def stream_ai_panel_cards_with_usage(
 
                 for card in _extract_cards_from_text(fallback_text):
                     cards.append(card)
-                    yield PanelStreamEvent(
-                        type="panel_card",
-                        data={
-                            "index": len(cards) - 1,
-                            "card": card,
-                            "attempt": attempt + 1,
-                        },
-                    )
                 break
             except Exception:
                 logger.exception(
@@ -870,13 +853,11 @@ async def generate_ai_panel_cards_with_usage(
         usage_recorder=usage_recorder,
         session_id=session_id,
     ):
-        if event.type == "panel_card":
-            cards.append(event.data["card"])
-        elif event.type == "panel_done":
+        if event.type == "panel_done":
             usage_summary = event.data.get("usage_summary", usage_summary)
             cards = event.data.get("cards", cards)
             return cards, usage_summary
-        elif event.type == "panel_error":
+        if event.type == "panel_error":
             return [], usage_summary
 
     return cards, usage_summary

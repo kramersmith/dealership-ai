@@ -12,7 +12,6 @@ import type {
   ModelUsageSummary,
   SessionUsage,
 } from './types'
-import { PANEL_UPDATE_MODE } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
 
@@ -373,6 +372,7 @@ function mapMessage(raw: any): import('./types').Message {
       name: tc.name as import('./types').ToolCall['name'],
       args: tc.args,
     })),
+    panelCards: raw.panel_cards?.map((c: any) => mapAiPanelCard(c)),
     usage: raw.usage,
     createdAt: raw.created_at,
   }
@@ -476,7 +476,6 @@ function streamBuyerChatSse(
     let protocolError: string | null = null
     let sawDoneEvent = false
     let panelStreamActive = false
-    const streamedPanelCards: unknown[] = []
 
     const flushPendingDealToolResults = () => {
       if (pendingDealToolResults.length === 0) return
@@ -525,37 +524,28 @@ function streamBuyerChatSse(
         } else if (eventType === 'panel_started') {
           console.debug('[apiClient] panel stream started')
           panelStreamActive = true
-          streamedPanelCards.length = 0
           onPanelStarted?.()
-        } else if (eventType === 'panel_card' && data.card) {
+        } else if (eventType === 'panel_done') {
           if (!panelStreamActive) {
             panelStreamActive = true
-            streamedPanelCards.length = 0
             onPanelStarted?.()
           }
-          const index =
-            typeof data.index === 'number' && Number.isInteger(data.index) && data.index >= 0
-              ? data.index
-              : streamedPanelCards.length
-          streamedPanelCards[index] = data.card
-          const toolCall: ToolCall = {
-            name: 'update_insights_panel',
-            args: { mode: PANEL_UPDATE_MODE.APPEND, card: data.card, index },
-          }
-          toolCalls.push(toolCall)
-          onToolResult?.(toolCall)
-        } else if (eventType === 'panel_done') {
           if (data.usage) {
             messageUsage = mergeMessageUsage(messageUsage, data.usage)
           }
-          finishPanelStream()
           const finalCards = (data.cards ?? []) as unknown[]
+          const assistantMessageId =
+            typeof data.assistant_message_id === 'string' ? data.assistant_message_id : undefined
           const toolCall: ToolCall = {
             name: 'update_insights_panel',
-            args: { mode: PANEL_UPDATE_MODE.REPLACE, cards: finalCards },
+            args: {
+              cards: finalCards,
+              ...(assistantMessageId ? { assistantMessageId } : {}),
+            },
           }
           toolCalls.push(toolCall)
           onToolResult?.(toolCall)
+          finishPanelStream()
         } else if (eventType === 'panel_error') {
           console.warn('[apiClient] panel stream error')
           finishPanelStream()

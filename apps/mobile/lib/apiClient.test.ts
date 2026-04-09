@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiClient, setAuthToken } from '@/lib/apiClient'
-import { PANEL_UPDATE_MODE } from '@/lib/types'
 
 class FakeXMLHttpRequest {
   static instances: FakeXMLHttpRequest[] = []
@@ -97,7 +96,7 @@ describe('ApiClient.sendMessage', () => {
     expect(order).toEqual(['done', 'tool'])
   })
 
-  it('streams panel cards and reconciles final panel state', async () => {
+  it('applies panel_done as a single atomic update before onPanelFinished', async () => {
     const apiClient = new ApiClient()
     const onToolResult = vi.fn()
     const onTextDone = vi.fn()
@@ -131,8 +130,10 @@ describe('ApiClient.sendMessage', () => {
     streamRequest?.pushEvent('text', { chunk: 'Hello there' })
     streamRequest?.pushEvent('done', { text: 'Hello there' })
     streamRequest?.pushEvent('panel_started', {})
-    streamRequest?.pushEvent('panel_card', { index: 0, card })
-    streamRequest?.pushEvent('panel_done', { cards: [card] })
+    streamRequest?.pushEvent('panel_done', {
+      cards: [card],
+      assistant_message_id: 'assistant-msg-uuid',
+    })
     streamRequest?.complete()
 
     await expect(sendPromise).resolves.toMatchObject({
@@ -143,23 +144,19 @@ describe('ApiClient.sendMessage', () => {
     expect(onTextDone).toHaveBeenCalledWith('Hello there', undefined, undefined)
     expect(onPanelStarted).toHaveBeenCalledTimes(1)
     expect(onPanelFinished).toHaveBeenCalledTimes(1)
-    expect(onToolResult).toHaveBeenNthCalledWith(
-      1,
+    expect(onToolResult).toHaveBeenCalledTimes(1)
+    expect(onToolResult).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'update_insights_panel',
-        args: { mode: PANEL_UPDATE_MODE.APPEND, card, index: 0 },
+        args: { cards: [card], assistantMessageId: 'assistant-msg-uuid' },
       })
     )
-    expect(onToolResult).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        name: 'update_insights_panel',
-        args: { mode: PANEL_UPDATE_MODE.REPLACE, cards: [card] },
-      })
+    expect(onToolResult.mock.invocationCallOrder[0]).toBeLessThan(
+      onPanelFinished.mock.invocationCallOrder[0]!
     )
   })
 
-  it('calls onPanelStarted when the first panel event is panel_card (no panel_started)', async () => {
+  it('calls onPanelStarted when the first panel event is panel_done (no panel_started)', async () => {
     const apiClient = new ApiClient()
     const onToolResult = vi.fn()
     const onTextDone = vi.fn()
@@ -167,7 +164,7 @@ describe('ApiClient.sendMessage', () => {
     const onPanelFinished = vi.fn()
 
     const sendPromise = apiClient.sendMessage(
-      'session-panel-card-first',
+      'session-panel-done-first',
       'Hello',
       undefined,
       undefined,
@@ -190,7 +187,6 @@ describe('ApiClient.sendMessage', () => {
 
     streamRequest?.pushEvent('text', { chunk: 'Hello' })
     streamRequest?.pushEvent('done', { text: 'Hello' })
-    streamRequest?.pushEvent('panel_card', { index: 0, card })
     streamRequest?.pushEvent('panel_done', { cards: [card] })
     streamRequest?.complete()
 
@@ -396,7 +392,7 @@ describe('ApiClient.sendMessage', () => {
     streamRequest?.pushEvent('text', { chunk: 'Hello there' })
     streamRequest?.pushEvent('done', { text: 'Hello there' })
     streamRequest?.pushEvent('panel_started', {})
-    streamRequest?.pushRaw('event: panel_card\ndata: {"card":\n\n')
+    streamRequest?.pushRaw('event: panel_done\ndata: {"cards":\n\n')
     streamRequest?.complete()
 
     await expect(sendPromise).resolves.toMatchObject({

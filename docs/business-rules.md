@@ -529,8 +529,7 @@ Chat responses are streamed via Server-Sent Events (SSE) with optional compactio
 | `error` | `{"message": "..."}` | Unrecoverable API failure with safe user-visible message |
 | `done` | `{"text": "...", "usage": {...}}` | Chat text completion event with chat-phase usage |
 | `panel_started` | `{"attempt": 1, "max_tokens": 2048}` | Panel generation phase started |
-| `panel_card` | `{"index": 0, "attempt": 1, "card": {...}}` | Incremental panel card streamed to client |
-| `panel_done` | `{"cards": [...], "usage": {...}}` | Panel generation completed with final cards and panel-phase usage |
+| `panel_done` | `{"cards": [...], "usage": {...}, "assistant_message_id": "uuid"}` | Panel generation completed — atomic canonical cards + panel-phase usage + server id of the bound assistant message row (no incremental `panel_card` SSE) |
 | `panel_error` | `{"message": "...", "attempt": 2}` | Panel generation failed after retries |
 
 ### Step Loop Architecture

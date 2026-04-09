@@ -310,9 +310,6 @@ async def stream_buyer_chat_turn(
                 if panel_event.type == "panel_started":
                     panel_started = True
                     yield f"event: panel_started\ndata: {json.dumps(panel_event.data)}\n\n"
-                elif panel_event.type == "panel_card":
-                    latest_cards.append(panel_event.data["card"])
-                    yield f"event: panel_card\ndata: {json.dumps(panel_event.data)}\n\n"
                 elif panel_event.type == "panel_done":
                     panel_finished = True
                     panel_completed = True
@@ -321,6 +318,7 @@ async def stream_buyer_chat_turn(
                     payload = {
                         "cards": latest_cards,
                         "usage": _message_usage_payload(panel_usage_summary or {}),
+                        "assistant_message_id": assistant_message.id,
                     }
                     yield f"event: panel_done\ndata: {json.dumps(payload)}\n\n"
                 elif panel_event.type == "panel_error":
@@ -338,6 +336,7 @@ async def stream_buyer_chat_turn(
             if panel_completed:
                 deal_state.ai_panel_cards = latest_cards
                 final_panel_cards = latest_cards
+                assistant_message.panel_cards = latest_cards
                 panel_tool_call = {
                     "name": "update_insights_panel",
                     "args": {"cards": latest_cards},

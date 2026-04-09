@@ -21,6 +21,8 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
     tool_calls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    """Canonical AI insights panel snapshot for this assistant turn (sanitized cards)."""
+    panel_cards: Mapped[list | None] = mapped_column(JSON, nullable=True)
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)

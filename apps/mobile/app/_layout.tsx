@@ -16,7 +16,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true)
 }
 
-// Dev: expose mockPanel() and clearPanel() on globalThis for console testing
+// Dev: globalThis.mockPanel, clearPanel (see lib/dev/mockPanelUpdates.ts)
 if (__DEV__) require('@/lib/dev/mockPanelUpdates')
 
 export default function RootLayout() {

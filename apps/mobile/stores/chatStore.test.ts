@@ -20,6 +20,7 @@ const baseState = {
   isRetrying: false,
   isThinking: false,
   isPanelAnalyzing: false,
+  insightsPanelCommitGeneration: 0,
   vinAssistItems: [] as VinAssistItem[],
   _sessionJustCreated: false,
   _pendingSend: null,
@@ -89,7 +90,7 @@ describe('useChatStore.sendMessage', () => {
     useDealStore.setState({ dealState: null, isLoading: false, dismissedFlagIds: new Set() })
   })
 
-  it('clears deal AI panel cards when a panel stream starts', async () => {
+  it('keeps prior deal AI panel cards visible until panel_done commits', async () => {
     useDealStore.setState({
       dealState: {
         sessionId: 'session-1',
@@ -155,7 +156,176 @@ describe('useChatStore.sendMessage', () => {
 
     await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
 
-    expect(cardsWhenPanelStarted).toEqual([])
+    expect(cardsWhenPanelStarted).toEqual([
+      {
+        kind: 'warning',
+        template: 'warning',
+        title: 'Stale',
+        content: { body: 'old' },
+        priority: 'high',
+      },
+    ])
+  })
+
+  it('panel_done tool result: binds panelCards + assistant id to latest assistant row and bumps commit generation', async () => {
+    useDealStore.setState({
+      dealState: {
+        sessionId: 'session-1',
+        buyerContext: 'researching',
+        activeDealId: null,
+        vehicles: [],
+        deals: [],
+        redFlags: [],
+        informationGaps: [],
+        checklist: [],
+        timerStartedAt: null,
+        aiPanelCards: [],
+        dealComparison: null,
+        negotiationContext: null,
+      },
+      isLoading: false,
+      dismissedFlagIds: new Set(),
+    })
+
+    const serverId = '11111111-2222-4333-8444-555555555555'
+    const card: AiPanelCard = {
+      kind: 'notes',
+      template: 'briefing',
+      title: 'Hold firm',
+      content: { body: 'keep target' },
+      priority: 'high',
+    }
+
+    api.sendMessage = vi.fn(
+      async (_sessionId, _content, _imageUri, _onChunk, onToolResult, onTextDone) => {
+        onTextDone?.('Assistant reply')
+        // Simulate panel_done arriving via apiClient's atomic tool_result callback.
+        onToolResult?.({
+          name: 'update_insights_panel',
+          args: { cards: [card], assistantMessageId: serverId },
+        })
+        return {
+          id: serverId,
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'Assistant reply',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    // Prevent post-stream refresh from clobbering local state. Rejecting is
+    // handled by the store's .catch so the in-memory state is preserved.
+    api.getMessages = vi.fn().mockRejectedValue(new Error('no fetch in test'))
+    api.getDealState = vi.fn().mockRejectedValue(new Error('no fetch in test'))
+
+    const beforeGen = useChatStore.getState().insightsPanelCommitGeneration
+    await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+
+    const state = useChatStore.getState()
+    const lastAssistant = [...state.messages].reverse().find((m) => m.role === 'assistant')
+    expect(lastAssistant).toBeDefined()
+    expect(lastAssistant!.id).toBe(serverId)
+    expect(lastAssistant!.panelCards).toEqual([card])
+    expect(state.insightsPanelCommitGeneration).toBeGreaterThan(beforeGen)
+    expect(useDealStore.getState().dealState?.aiPanelCards).toEqual([card])
+  })
+
+  it('panel_done stale guard: drops update when latest assistant row is a server UUID that does not match assistantMessageId', async () => {
+    const existingServerId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const staleTargetId = '99999999-8888-4777-8666-555555555555'
+    const priorCard: AiPanelCard = {
+      kind: 'warning',
+      template: 'warning',
+      title: 'Prior',
+      content: { body: 'kept' },
+      priority: 'high',
+    }
+
+    // Seed a committed assistant row + panel cards from a prior turn.
+    useChatStore.setState({
+      ...baseState,
+      messages: [
+        {
+          id: existingServerId,
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'prior reply',
+          panelCards: [priorCard],
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      insightsPanelCommitGeneration: 7,
+    })
+    useDealStore.setState({
+      dealState: {
+        sessionId: 'session-1',
+        buyerContext: 'researching',
+        activeDealId: null,
+        vehicles: [],
+        deals: [],
+        redFlags: [],
+        informationGaps: [],
+        checklist: [],
+        timerStartedAt: null,
+        aiPanelCards: [priorCard],
+        dealComparison: null,
+        negotiationContext: null,
+      },
+      isLoading: false,
+      dismissedFlagIds: new Set(),
+    })
+
+    // Simulate a late panel_done from a *different* assistant turn arriving via
+    // apiClient's onToolResult callback. No onTextDone is emitted because we are
+    // testing the stale-guard path where the latest row is already a committed
+    // server UUID row that doesn't match.
+    api.sendMessage = vi.fn(
+      async (_sessionId, _content, _imageUri, _onChunk, onToolResult, onTextDone) => {
+        // Empty finalText keeps the seeded assistant row as the latest, without
+        // appending a new one, and marks the turn finalized so the fallback
+        // finalize path doesn't double the row.
+        onTextDone?.('')
+        onToolResult?.({
+          name: 'update_insights_panel',
+          args: {
+            cards: [
+              {
+                kind: 'notes',
+                template: 'briefing',
+                title: 'Stale incoming',
+                content: { body: 'should be dropped' },
+                priority: 'high',
+              },
+            ],
+            assistantMessageId: staleTargetId,
+          },
+        })
+        return {
+          id: existingServerId,
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: '',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    // Prevent post-stream refresh from clobbering local state.
+    api.getMessages = vi.fn().mockRejectedValue(new Error('no fetch in test'))
+    api.getDealState = vi.fn().mockRejectedValue(new Error('no fetch in test'))
+
+    const beforeGen = useChatStore.getState().insightsPanelCommitGeneration
+    await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+
+    const state = useChatStore.getState()
+    // The prior row must still carry its original panel cards and id.
+    const seededRow = state.messages.find((m) => m.id === existingServerId)
+    expect(seededRow?.panelCards).toEqual([priorCard])
+    // Stale update must not bump the commit generation.
+    expect(state.insightsPanelCommitGeneration).toBe(beforeGen)
+    // Deal store panel cards remain untouched.
+    expect(useDealStore.getState().dealState?.aiPanelCards).toEqual([priorCard])
   })
 
   it('tracks panel analysis while the panel phase is active', async () => {
@@ -899,7 +1069,9 @@ describe('useChatStore.sendMessage', () => {
     expect(state.messages[0]?.content).toBe('Edited question')
     expect(state.messages[0]?.status).toBe('failed')
     expect(state.editingUserMessageId).toBeNull()
-    expect(state.sendError).toBe('branch failed')
+    expect(state.sendError).toBe(
+      'branch failed We also could not refresh the chat or deal state, so this view may be out of date.'
+    )
     expect(state.vinAssistItems).toEqual(originalVinAssistItems)
   })
 

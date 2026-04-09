@@ -18,7 +18,6 @@ import type {
   VehicleIntelligence,
   VehicleRole,
 } from '@/lib/types'
-import { PANEL_UPDATE_MODE } from '@/lib/types'
 import { EMPTY_DEAL_NUMBERS, EMPTY_SCORECARD } from '@/lib/constants'
 import { generateId, snakeToCamel } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -32,8 +31,6 @@ interface DealStore {
 
   loadDealState: (sessionId: string, opts?: { strict?: boolean }) => Promise<void>
   resetDealState: (sessionId: string, buyerContext?: BuyerContext) => void
-  /** Clear panel cards when a new SSE panel stream starts so APPEND merges never keep prior-turn rows. */
-  clearAiPanelCards: () => void
   applyToolCall: (toolCall: ToolCall) => void
   applyToolCalls: (toolCalls: ToolCall[]) => void
 
@@ -376,28 +373,6 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
 
     case 'update_insights_panel': {
       const args = snakeToCamel(toolCall.args)
-      const mode = args.mode ?? PANEL_UPDATE_MODE.REPLACE
-      if (mode === PANEL_UPDATE_MODE.APPEND && args.card) {
-        const card = args.card as AiPanelCard
-        const index =
-          typeof args.index === 'number' && Number.isInteger(args.index) && args.index >= 0
-            ? args.index
-            : dealState.aiPanelCards.length
-        const nextCards = [...dealState.aiPanelCards]
-
-        if (index < nextCards.length) {
-          const prevCard = nextCards[index]
-          if (JSON.stringify(prevCard) === JSON.stringify(card)) {
-            return dealState
-          }
-          nextCards[index] = card
-        } else {
-          nextCards.push(card)
-        }
-
-        return { ...dealState, aiPanelCards: nextCards }
-      }
-
       const cards = (args.cards ?? []) as AiPanelCard[]
       return { ...dealState, aiPanelCards: cards }
     }
@@ -467,12 +442,6 @@ export const useDealStore = create<DealStore>((set, get) => ({
       },
       dismissedFlagIds: new Set(),
     })
-  },
-
-  clearAiPanelCards: () => {
-    const { dealState } = get()
-    if (!dealState) return
-    set({ dealState: { ...dealState, aiPanelCards: [] } })
   },
 
   applyToolCall: (toolCall) => {

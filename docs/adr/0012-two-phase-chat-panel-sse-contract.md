@@ -24,9 +24,9 @@ Adopt a two-phase SSE event contract on `POST /api/chat/{session_id}/message`:
 2. **Panel phase**
 - After `done`, emit explicit panel lifecycle events:
   - `panel_started`
-  - `panel_card` (incremental card arrivals)
-  - `panel_done` (canonical cards + panel-phase usage) or `panel_error`
-- Persist canonical `ai_panel_cards` only at panel phase completion.
+  - `panel_done` (canonical cards + panel-phase usage + `assistant_message_id` for the persisted assistant row) or `panel_error`
+- **Supersedes (2026-04):** incremental `panel_card` SSE events are removed from the public contract; Claude streaming may still parse partial JSON internally, but clients apply a single atomic replace from `panel_done` only.
+- Persist canonical `ai_panel_cards` and `Message.panel_cards` only at panel phase completion.
 - Persisted assistant message usage remains the full turn aggregate (chat + panel).
 
 This is a contract change, not a transport change. SSE remains the transport per ADR-0002.
@@ -49,7 +49,7 @@ This is a contract change, not a transport change. SSE remains the transport per
 ## Consequences
 
 - **Positive:** Chat latency is prioritized; users can continue typing as soon as `done` arrives.
-- **Positive:** Panel updates feel responsive via incremental `panel_card` events.
+- **Positive:** Panel updates are deterministic: one atomic card list per turn on `panel_done`, with turn binding via `assistant_message_id`.
 - **Positive:** Event semantics are explicit, reducing coupling and improving testability.
 - **Negative:** `done` no longer means full-turn completion; clients must handle panel phase separately.
 - **Neutral:** Usage reporting is split by phase in-stream (`done` vs `panel_done`) while persistence remains full-turn aggregate.

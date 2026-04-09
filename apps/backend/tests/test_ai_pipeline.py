@@ -1084,9 +1084,6 @@ async def test_stream_ai_panel_cards_with_usage_parses_incremental_cards(
 
     assert [event_type for event_type, _ in events] == [
         "panel_started",
-        "panel_card",
-        "panel_card",
-        "panel_card",
         "panel_done",
     ]
 
@@ -1145,7 +1142,6 @@ async def test_stream_ai_panel_cards_with_usage_reconciles_final_cards(
 
     assert [event_type for event_type, _ in events] == [
         "panel_started",
-        "panel_card",
         "panel_done",
     ]
 
@@ -2083,22 +2079,6 @@ async def test_send_message_sse_done_before_panel_updates(
             type="panel_started", data={"attempt": 1, "max_tokens": 2048}
         )
         yield SimpleNamespace(
-            type="panel_card",
-            data={
-                "index": 0,
-                "attempt": 1,
-                "card": {
-                    "kind": "next_best_move",
-                    "template": "briefing",
-                    "title": "Next Best Move",
-                    "content": {
-                        "body": "Their latest counter is still above your target."
-                    },
-                    "priority": "high",
-                },
-            },
-        )
-        yield SimpleNamespace(
             type="panel_done",
             data={
                 "cards": [
@@ -2151,7 +2131,6 @@ async def test_send_message_sse_done_before_panel_updates(
         "tool_result",
         "done",
         "panel_started",
-        "panel_card",
         "panel_done",
     ]
     # done carries step-loop-only usage (no panel generation costs)
@@ -2177,6 +2156,7 @@ async def test_send_message_sse_done_before_panel_updates(
     ]
     panel_done = next(data for name, data in events if name == "panel_done")
     assert panel_done["cards"][0]["title"] == "Next Best Move"
+    assert "assistant_message_id" in panel_done
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(
@@ -2192,6 +2172,8 @@ async def test_send_message_sse_done_before_panel_updates(
         assert persisted_messages[-1].content == (
             "Hold at $28,500 and get the out-the-door total in writing."
         )
+        assert persisted_messages[-1].id == panel_done["assistant_message_id"]
+        assert persisted_messages[-1].panel_cards == panel_done["cards"]
         assert persisted_messages[-1].usage == {
             "requests": 2,
             "inputTokens": 360,
@@ -2278,6 +2260,8 @@ async def test_send_message_sse_done_before_panel_updates(
         "cacheReadInputTokens": 240,
         "totalTokens": 496,
     }
+    assert msgs[-1]["id"] == panel_done["assistant_message_id"]
+    assert msgs[-1]["panel_cards"] == panel_done["cards"]
 
 
 async def test_send_message_runs_compaction_before_chat_when_over_budget(
@@ -2491,6 +2475,7 @@ async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(
             "name": "update_insights_panel",
             "args": {"cards": []},
         }
+        assert persisted_messages[-1].panel_cards == []
 
 
 async def test_send_message_stops_after_stream_failure(

@@ -66,12 +66,19 @@ export function useDesktopChatTransition({
     }
   }, [chatInset, chatOpacity, enabled, insightsOpacity, insightsTranslateX])
 
-  // Keep insightsDealState in sync without re-triggering the slide animation
   useEffect(() => {
     if (showInsights && dealState) {
       setInsightsDealState(dealState)
     }
   }, [dealState, showInsights])
+
+  // Pass live `dealState` into InsightsPanel whenever the sidebar is "active" (`showInsights`) so
+  // panel cards + chatStore `insightsPanelCommitGeneration` update in the same commit (the old
+  // useEffect mirror lagged one frame and broke the strip animation / mockPanel).
+  // During exit (`showInsights` false but `isInsightsVisible` true), keep the last mirrored deal
+  // so the sliding panel does not flash empty before unmount.
+  const insightsDealStateForPanel: DealState | null =
+    showInsights && dealState ? dealState : isInsightsVisible ? insightsDealState : null
 
   // Slide animation — only triggers on showInsights transition, not on dealState updates.
   // Track whether insights have ever been shown so we don't run the exit animation on
@@ -167,7 +174,7 @@ export function useDesktopChatTransition({
     beginChatReset,
     chatInset,
     chatOpacity,
-    insightsDealState,
+    insightsDealState: insightsDealStateForPanel,
     insightsOpacity,
     insightsTranslateX,
     isInsightsVisible,

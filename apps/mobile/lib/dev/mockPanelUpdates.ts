@@ -4,9 +4,10 @@
  * animations can be observed without hitting the LLM.
  *
  * Usage from console or a dev button:
- *   import { runMockPanelUpdates } from '@/lib/devMockPanelUpdates'
+ *   import { runMockPanelUpdates } from '@/lib/dev/mockPanelUpdates'
  *   runMockPanelUpdates()
  */
+import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import type { AiCardKind, AiCardTemplate, AiPanelCard } from '@/lib/types'
 
@@ -442,14 +443,39 @@ const MOCK_STEPS: AiPanelCard[][] = [
   STEP_7_CLOSED.map(normalizeMockCard),
 ]
 
+function bumpInsightsPanelCommitGeneration() {
+  useChatStore.setState((state) => ({
+    insightsPanelCommitGeneration: state.insightsPanelCommitGeneration + 1,
+  }))
+}
+
+function setMockPanelAnalyzing(isAnalyzing: boolean) {
+  useChatStore.setState({ isPanelAnalyzing: isAnalyzing })
+}
+
+function applyMockPanelCards(cards: AiPanelCard[]) {
+  // Bump commit gen before deal so InsightsPanel never renders new cards with gen still 0
+  // (that path syncs the snapshot and skips the strip animation).
+  bumpInsightsPanelCommitGeneration()
+  useDealStore.getState().applyToolCall({
+    name: 'update_insights_panel',
+    args: { cards },
+  })
+}
+
 // ─── Runner ───
 
 /**
  * Simulate sequential panel updates with delays between each step.
  * @param delayMs — milliseconds between each update (default 5000)
+ * @param analyzeMs — milliseconds to show "analyzing" before each commit
  */
-export function runMockPanelUpdates(delayMs = 5000) {
+export function runMockPanelUpdates(delayMs = 5000, analyzeMs?: number) {
   const store = useDealStore.getState()
+  const analysisLeadMs = Math.max(
+    350,
+    Math.min(analyzeMs ?? Math.round(delayMs * 0.3), Math.max(350, delayMs - 120))
+  )
 
   // Ensure a deal state exists
   if (!store.dealState) {
@@ -457,17 +483,22 @@ export function runMockPanelUpdates(delayMs = 5000) {
   }
 
   console.log(
-    `[devMock] Starting mock panel updates (${MOCK_STEPS.length} steps, ${delayMs}ms apart)`
+    `[devMock] Starting mock panel updates (${MOCK_STEPS.length} steps, ${delayMs}ms apart, analyze=${analysisLeadMs}ms)`
   )
 
   MOCK_STEPS.forEach((cards, i) => {
     setTimeout(() => {
-      console.log(`[devMock] Step ${i + 1}/${MOCK_STEPS.length}: ${cards.length} cards`)
-      useDealStore.getState().applyToolCall({
-        name: 'update_insights_panel',
-        args: { cards },
-      })
+      setMockPanelAnalyzing(true)
     }, i * delayMs)
+
+    setTimeout(
+      () => {
+        console.log(`[devMock] Step ${i + 1}/${MOCK_STEPS.length}: ${cards.length} cards`)
+        applyMockPanelCards(cards)
+        setMockPanelAnalyzing(false)
+      },
+      i * delayMs + analysisLeadMs
+    )
   })
 }
 
@@ -475,10 +506,8 @@ export function runMockPanelUpdates(delayMs = 5000) {
  * Clear all panel cards (reset to empty).
  */
 export function clearMockPanel() {
-  useDealStore.getState().applyToolCall({
-    name: 'update_insights_panel',
-    args: { cards: [] },
-  })
+  setMockPanelAnalyzing(false)
+  applyMockPanelCards([])
   console.log('[devMock] Panel cleared')
 }
 

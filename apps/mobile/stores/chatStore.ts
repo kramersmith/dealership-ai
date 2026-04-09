@@ -187,7 +187,9 @@ async function runBuyerTurnStream(params: {
 
     // Deal-driving tool results: apiClient defers callbacks until after the
     // `done` event so the assistant message finalizes before the insights
-    // sidebar updates. Panel card events still stream after `done`.
+    // sidebar updates. Panel phase arrives after `done` as atomic `panel_done`.
+    const serverUuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
     const handleToolResult = (toolCall: ToolCall) => {
       if (toolCall.name === 'update_quick_actions') {
         const actions = (toolCall.args.actions as QuickAction[]) ?? []
@@ -195,6 +197,48 @@ async function runBuyerTurnStream(params: {
           .filter((action) => action.label && action.prompt)
           .slice(0, MAX_QUICK_ACTIONS)
         set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
+      } else if (toolCall.name === 'update_insights_panel') {
+        const assistantMessageId = toolCall.args.assistantMessageId as string | undefined
+        const snapshot = get().messages
+        let lastAssistantIdx = -1
+        for (let i = snapshot.length - 1; i >= 0; i--) {
+          const row = snapshot[i]!
+          if (row.role === 'assistant' && row.sessionId === activeSessionId) {
+            lastAssistantIdx = i
+            break
+          }
+        }
+        if (lastAssistantIdx === -1) {
+          set((s) => ({
+            insightsPanelCommitGeneration: s.insightsPanelCommitGeneration + 1,
+          }))
+          useDealStore.getState().applyToolCall(toolCall)
+          return
+        }
+        const lastAssistant = snapshot[lastAssistantIdx]!
+        if (
+          assistantMessageId &&
+          serverUuidRe.test(lastAssistant.id) &&
+          lastAssistant.id !== assistantMessageId
+        ) {
+          return
+        }
+        set((state) => ({
+          insightsPanelCommitGeneration: state.insightsPanelCommitGeneration + 1,
+        }))
+        useDealStore.getState().applyToolCall(toolCall)
+        const nextCards = useDealStore.getState().dealState?.aiPanelCards ?? []
+        const idToUse = assistantMessageId ?? lastAssistant.id
+        set((state) => {
+          const messages = [...state.messages]
+          const row = messages[lastAssistantIdx]!
+          messages[lastAssistantIdx] = {
+            ...row,
+            id: idToUse,
+            panelCards: [...nextCards],
+          }
+          return { messages }
+        })
       } else {
         useDealStore.getState().applyToolCall(toolCall)
       }
@@ -208,7 +252,6 @@ async function runBuyerTurnStream(params: {
       onRetry: () => set({ isRetrying: true }),
       onStep: () => set({ isThinking: true }),
       onPanelStarted: () => {
-        useDealStore.getState().clearAiPanelCards()
         set({ isPanelAnalyzing: true })
       },
       onPanelFinished: () => set({ isPanelAnalyzing: false }),
@@ -298,6 +341,8 @@ interface ChatState {
   isThinking: boolean
   /** True while the backend is generating or streaming insights panel cards. */
   isPanelAnalyzing: boolean
+  /** Incremented on each atomic insights panel commit (batch animation + stale guard). */
+  insightsPanelCommitGeneration: number
   vinAssistItems: VinAssistItem[]
   /** True when createSession just set the activeSessionId — prevents
    *  useChat's useEffect from redundantly calling setActiveSession and
@@ -372,6 +417,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isRetrying: false,
   isThinking: false,
   isPanelAnalyzing: false,
+  insightsPanelCommitGeneration: 0,
   vinAssistItems: [],
   _sessionJustCreated: false,
   _pendingSend: null,
@@ -438,6 +484,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       quickActions: [],
       aiResponseCount: 0,
       quickActionsUpdatedAtResponse: 0,
+      insightsPanelCommitGeneration: 0,
       isLoading: true,
       _sessionJustCreated: false,
       _pendingSend: null,
@@ -476,6 +523,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         quickActions: [],
         aiResponseCount: 0,
         quickActionsUpdatedAtResponse: 0,
+        insightsPanelCommitGeneration: 0,
         isCreatingSession: false,
         _sessionJustCreated: true,
         editingUserMessageId: null,
@@ -502,6 +550,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         quickActions: isActive ? [] : state.quickActions,
         aiResponseCount: isActive ? 0 : state.aiResponseCount,
         quickActionsUpdatedAtResponse: isActive ? 0 : state.quickActionsUpdatedAtResponse,
+        insightsPanelCommitGeneration: isActive ? 0 : state.insightsPanelCommitGeneration,
         _pendingSend: isActive ? null : state._pendingSend,
         editingUserMessageId: isActive ? null : state.editingUserMessageId,
         contextPressure: isActive ? null : state.contextPressure,

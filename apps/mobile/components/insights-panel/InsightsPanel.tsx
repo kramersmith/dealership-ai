@@ -1,9 +1,9 @@
-import { useRef, useEffect, useCallback, useMemo, memo, useState } from 'react'
+import { useRef, useEffect, useCallback, useMemo, memo } from 'react'
 import { Animated, Easing } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
-import { BarChart3 } from '@tamagui/lucide-icons'
-import Reanimated, { FadeInLeft, LinearTransition, SlideOutRight } from 'react-native-reanimated'
+import { BarChart3, Sparkles } from '@tamagui/lucide-icons'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import type { AiPanelCard, DealState, QuotedCard, Vehicle } from '@/lib/types'
 import { useDealStore } from '@/stores/dealStore'
@@ -13,31 +13,30 @@ import { AiVehicleCard } from './AiVehicleCard'
 import { SituationBar } from './SituationBar'
 import { ThinkingIndicator } from './ThinkingIndicator'
 
-// ─── Timing ───
+// ─── Panel refresh: subtle settle (opacity + tiny vertical) — no horizontal strip ───
+// UX: dense side panels favor a light “content refreshed” cue over carousel motion (readable, robust).
 
-const ENTRANCE_DURATION = 200
-const ENTRANCE_STAGGER = 22
-const EXIT_DURATION = 170
-const UPDATE_FADE_OUT_MS = 90
-const UPDATE_FADE_IN_MS = 140
+const PANEL_REFRESH_MS = 280
+const PANEL_ENTER_FROM_OPACITY = 0.88
+const PANEL_ENTER_FROM_Y = 6
+const PANEL_REFRESH_EASING = Easing.bezier(0.33, 1, 0.68, 1)
+const PANEL_ANALYZING_PULSE_MS = 900
+const PANEL_ANALYZING_MIN_OPACITY = 0.6
 
 function stableCardSignature(card: AiPanelCard): string {
   return `${card.kind}|${card.template}|${card.title}|${card.priority}|${JSON.stringify(card.content ?? {})}`
 }
 
-function buildIdentityKey(cardKind: AiPanelCard['kind'], occurrence: number): string {
-  // Identity should ignore mutable card content/title so replacements animate in-place.
-  return `${cardKind}#${occurrence}`
-}
-
-interface RenderCard {
-  id: string
-  identity: string
-  signature: string
-  card: AiPanelCard
-}
-
 const SHOPPING_ROLES = new Set<Vehicle['role']>(['primary', 'candidate'])
+
+function orderedInsightCards(aiPanelCards: AiPanelCard[]): AiPanelCard[] {
+  const visibleCards = aiPanelCards.filter(
+    (card) => card.kind !== 'comparison' && card.kind !== 'trade_off'
+  )
+  const phaseCards = visibleCards.filter((card) => card.kind === 'phase')
+  const nonPhaseCards = visibleCards.filter((card) => card.kind !== 'phase')
+  return [...phaseCards, ...nonPhaseCards]
+}
 
 /** Aligns with backend `panel_cards._panel_card_dedupe_identity` for vehicle cards (VIN else role+YMM+mileage+color). */
 function shoppingVehiclePanelFingerprint(vehicle: Vehicle): string {
@@ -69,16 +68,24 @@ function panelCardVehicleFingerprint(content: Record<string, unknown> | undefine
   return `spec:${role}:${year}:${make}:${model}:${mileage}:${color}`
 }
 
-// ─── Panel Header ───
+// ─── Panel Header (hero — primary product surface) ───
 
 function PanelHeader({ thinking }: { thinking: boolean }) {
   return (
-    <XStack alignItems="center" gap="$2" paddingBottom="$1">
-      <BarChart3 size={14} color="$placeholderColor" />
-      <Text fontSize={12} fontWeight="600" color="$placeholderColor" letterSpacing={0.5}>
-        Insights
-      </Text>
-      {thinking && <ThinkingIndicator />}
+    <XStack alignItems="stretch" gap="$3" paddingBottom="$2">
+      <YStack width={3} borderRadius={2} backgroundColor="$brand" opacity={0.95} />
+      <YStack flex={1} gap="$1.5">
+        <XStack alignItems="center" gap="$2" flexWrap="wrap">
+          <BarChart3 size={18} color="$brand" strokeWidth={2.25} />
+          <Text fontSize={15} fontWeight="700" color="$color" letterSpacing={-0.2}>
+            Insights
+          </Text>
+          {thinking && <ThinkingIndicator />}
+        </XStack>
+        <Text fontSize={12} color="$placeholderColor" lineHeight={16} opacity={0.95}>
+          Live deal intelligence — numbers, risks, and next steps in one place.
+        </Text>
+      </YStack>
     </XStack>
   )
 }
@@ -89,16 +96,44 @@ function EmptyState({ thinking }: { thinking: boolean }) {
   const opacity = useFadeIn(500)
   return (
     <Animated.View style={{ flex: 1, opacity }}>
-      <YStack flex={1} alignItems="center" justifyContent="center" gap="$3" padding="$4">
-        <BarChart3 size={28} color="$placeholderColor" opacity={0.5} />
-        <YStack gap="$1.5" alignItems="center">
-          <Text fontSize={14} fontWeight="600" color="$color" textAlign="center">
-            {thinking ? 'Analyzing your deal' : 'No insights yet'}
+      <YStack
+        flex={1}
+        alignItems="center"
+        justifyContent="center"
+        gap="$4"
+        padding="$4"
+        paddingTop="$2"
+      >
+        <YStack
+          width={72}
+          height={72}
+          borderRadius={36}
+          alignItems="center"
+          justifyContent="center"
+          backgroundColor="$brandSubtle"
+          borderWidth={1}
+          borderColor="$borderColor"
+        >
+          {thinking ? (
+            <BarChart3 size={30} color="$brand" opacity={0.9} strokeWidth={2} />
+          ) : (
+            <Sparkles size={28} color="$brand" opacity={0.85} strokeWidth={2} />
+          )}
+        </YStack>
+        <YStack gap="$2" alignItems="center" maxWidth={280}>
+          <Text
+            fontSize={17}
+            fontWeight="700"
+            color="$color"
+            textAlign="center"
+            letterSpacing={-0.3}
+          >
+            {thinking ? 'Building your insights' : 'Your deal intelligence hub'}
           </Text>
-          <Text fontSize={13} color="$placeholderColor" textAlign="center" lineHeight={20}>
+          <Text fontSize={14} color="$placeholderColor" textAlign="center" lineHeight={22}>
             {thinking
-              ? 'Your advisor is turning this turn into updated panel cards now.'
-              : 'Share details about your deal and your AI advisor will surface key insights here.'}
+              ? 'We’re turning this reply into cards you can scan at a glance — hang tight.'
+              : 'As you chat, we’ll surface pricing, red flags, and negotiation context here — not buried in the thread.'}
           </Text>
         </YStack>
       </YStack>
@@ -106,142 +141,69 @@ function EmptyState({ thinking }: { thinking: boolean }) {
   )
 }
 
-// ─── Animated Card ───
-
-function AnimatedCard({
-  cardId,
-  card,
-  index,
-  signature,
-  isGrowthActive,
-  onGrowthDone,
-  onSendReply,
+function PanelUpdatingBanner({
+  visible,
+  prefersReducedMotion,
 }: {
-  cardId: string
-  card: AiPanelCard
-  index: number
-  signature: string
-  isGrowthActive: boolean
-  onGrowthDone: (cardId: string) => void
-  onSendReply?: (text: string, quotedCard: QuotedCard) => Promise<void>
+  visible: boolean
+  prefersReducedMotion: boolean
 }) {
-  const [visibleCard, setVisibleCard] = useState(card)
-  const [outgoingCard, setOutgoingCard] = useState<AiPanelCard | null>(null)
-  const visibleCardRef = useRef(card)
-  const incomingTranslateX = useRef(new Animated.Value(0)).current
-  const outgoingTranslateX = useRef(new Animated.Value(0)).current
-  const outgoingOpacity = useRef(new Animated.Value(0)).current
-  const displayedSignatureRef = useRef(signature)
-  const pendingRef = useRef<{ card: AiPanelCard; signature: string } | null>(null)
-
-  const cardLayoutTransition = useMemo(
-    () => LinearTransition.springify().damping(22).stiffness(210).mass(0.7),
-    []
-  )
-
-  const entering = useMemo(
-    () => FadeInLeft.duration(ENTRANCE_DURATION).delay(index * ENTRANCE_STAGGER),
-    [index]
-  )
-
-  const exiting = useMemo(() => SlideOutRight.duration(EXIT_DURATION), [])
-
-  const runGrowthTransition = useCallback(
-    (nextCard: AiPanelCard, nextSignature: string) => {
-      const currentCard = visibleCardRef.current
-
-      // Keep outgoing card fixed in place while the incoming card takes layout.
-      setOutgoingCard(currentCard)
-      setVisibleCard(nextCard)
-      visibleCardRef.current = nextCard
-      displayedSignatureRef.current = nextSignature
-
-      incomingTranslateX.setValue(-18)
-      outgoingTranslateX.setValue(0)
-      outgoingOpacity.setValue(1)
-
-      Animated.parallel([
-        Animated.timing(incomingTranslateX, {
-          toValue: 0,
-          duration: UPDATE_FADE_IN_MS,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-        Animated.timing(outgoingTranslateX, {
-          toValue: 18,
-          duration: UPDATE_FADE_OUT_MS,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-        Animated.timing(outgoingOpacity, {
-          toValue: 0,
-          duration: UPDATE_FADE_OUT_MS,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-      ]).start(() => {
-        setOutgoingCard(null)
-        onGrowthDone(cardId)
-      })
-    },
-    [cardId, incomingTranslateX, onGrowthDone, outgoingOpacity, outgoingTranslateX]
-  )
+  const pulseOpacity = useRef(new Animated.Value(1)).current
 
   useEffect(() => {
-    if (displayedSignatureRef.current === signature) {
-      // Keep local card in sync when no queued growth transition is needed.
-      setVisibleCard(card)
-      visibleCardRef.current = card
+    if (!visible || prefersReducedMotion) {
+      // Reduced motion: render a steady (non-pulsing) banner. A continuously
+      // pulsing element is a textbook reduced-motion violation.
+      pulseOpacity.setValue(1)
       return
     }
 
-    if (isGrowthActive) {
-      pendingRef.current = { card, signature }
-      const pending = pendingRef.current
-      if (pending) {
-        pendingRef.current = null
-        runGrowthTransition(pending.card, pending.signature)
-      }
-      return
-    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseOpacity, {
+          toValue: PANEL_ANALYZING_MIN_OPACITY,
+          duration: PANEL_ANALYZING_PULSE_MS / 2,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(pulseOpacity, {
+          toValue: 1,
+          duration: PANEL_ANALYZING_PULSE_MS / 2,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ])
+    )
+    loop.start()
 
-    // Signature changed but growth is not active for this slot yet — still sync
-    // so phase and warning cards never show mismatched-era copy.
-    setVisibleCard(card)
-    visibleCardRef.current = card
-    displayedSignatureRef.current = signature
-    pendingRef.current = null
-  }, [card, isGrowthActive, runGrowthTransition, signature])
+    return () => {
+      loop.stop()
+      pulseOpacity.setValue(1)
+    }
+  }, [visible, prefersReducedMotion, pulseOpacity])
+
+  if (!visible) return null
 
   return (
-    <Reanimated.View entering={entering} exiting={exiting} layout={cardLayoutTransition}>
-      <YStack position="relative">
-        <Animated.View style={{ transform: [{ translateX: incomingTranslateX }] }}>
-          <AiCard card={visibleCard} onSendReply={onSendReply} />
-        </Animated.View>
-        {outgoingCard && (
-          <Animated.View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              opacity: outgoingOpacity,
-              transform: [{ translateX: outgoingTranslateX }],
-            }}
-          >
-            <AiCard card={outgoingCard} onSendReply={onSendReply} />
-          </Animated.View>
-        )}
-      </YStack>
-    </Reanimated.View>
+    <Animated.View style={{ opacity: pulseOpacity }}>
+      <XStack
+        alignItems="center"
+        gap="$2"
+        paddingVertical="$2"
+        paddingHorizontal="$3"
+        borderRadius={10}
+        borderWidth={1}
+        borderColor="$borderColor"
+        backgroundColor="$brandSubtle"
+      >
+        <Sparkles size={14} color="$brand" />
+        <Text fontSize={12} fontWeight="600" color="$brand" flex={1}>
+          Updating insights from your latest message...
+        </Text>
+      </XStack>
+    </Animated.View>
   )
 }
 
-const MemoAnimatedCard = memo(AnimatedCard, (prev, next) => {
-  return prev.signature === next.signature && prev.card === next.card
-})
+const MemoAiCard = memo(AiCard)
 
 // ─── Insights Panel ───
 
@@ -256,14 +218,10 @@ export const InsightsPanel = memo(function InsightsPanel({
     () => (dealState?.vehicles ?? []).filter((vehicle) => SHOPPING_ROLES.has(vehicle.role)),
     [dealState]
   )
-  const cards = useMemo(() => {
-    const visibleCards = (dealState?.aiPanelCards ?? []).filter(
-      (card) => card.kind !== 'comparison' && card.kind !== 'trade_off'
-    )
-    const phaseCards = visibleCards.filter((card) => card.kind === 'phase')
-    const nonPhaseCards = visibleCards.filter((card) => card.kind !== 'phase')
-    return [...phaseCards, ...nonPhaseCards]
-  }, [dealState])
+  const cards = useMemo(
+    () => orderedInsightCards(dealState?.aiPanelCards ?? []),
+    [dealState?.aiPanelCards]
+  )
   const panelVehicleFingerprints = useMemo(() => {
     const fingerprints = new Set<string>()
     for (const card of cards) {
@@ -274,8 +232,6 @@ export const InsightsPanel = memo(function InsightsPanel({
     return fingerprints
   }, [cards])
   const parkedVehicles = useMemo(() => {
-    // Every shopping vehicle except the active deal's truck, minus any already shown
-    // as a vehicle card (supports multiple candidates — only "missing" ones park here).
     if (shoppingVehicles.length <= 1) {
       return [] as Vehicle[]
     }
@@ -297,99 +253,81 @@ export const InsightsPanel = memo(function InsightsPanel({
   }, [shoppingVehicles, dealState?.activeDealId, dealState?.deals, panelVehicleFingerprints])
   const isSending = useChatStore((state) => state.isSending)
   const isPanelAnalyzing = useChatStore((state) => state.isPanelAnalyzing)
+  const insightsPanelCommitGeneration = useChatStore((state) => state.insightsPanelCommitGeneration)
+  const prefersReducedMotion = usePrefersReducedMotion()
 
-  const idCounterRef = useRef(0)
-  const idByIdentityRef = useRef<Map<string, string>>(new Map())
-  const previousSignatureByIdRef = useRef<Map<string, string>>(new Map())
-  const pendingGrowthQueueRef = useRef<string[]>([])
-  const [activeGrowthCardId, setActiveGrowthCardId] = useState<string | null>(null)
+  const panelOpacity = useRef(new Animated.Value(1)).current
+  const panelTranslateY = useRef(new Animated.Value(0)).current
+  const prevCommitGenRef = useRef(0)
+  const prevCardsSnapshotRef = useRef(cards)
 
   const showThinking = isSending || isPanelAnalyzing
   const negotiationContext = dealState?.negotiationContext ?? null
   const hasPhaseCard = useMemo(() => cards.some((card) => card.kind === 'phase'), [cards])
   const hasSituationBar =
     Boolean(negotiationContext?.situation && negotiationContext?.stance) && !hasPhaseCard
-  const renderCards = useMemo<RenderCard[]>(() => {
-    const identityCounts = new Map<string, number>()
-    return cards.map((card) => {
-      const base = card.kind
-      const count = (identityCounts.get(base) ?? 0) + 1
-      identityCounts.set(base, count)
-      const identity = buildIdentityKey(card.kind, count)
-
-      let renderCardId = idByIdentityRef.current.get(identity)
-      if (!renderCardId) {
-        idCounterRef.current += 1
-        renderCardId = `insight-${idCounterRef.current}`
-        idByIdentityRef.current.set(identity, renderCardId)
-      }
-
-      return {
-        id: renderCardId,
-        identity,
-        signature: stableCardSignature(card),
-        card,
-      }
-    })
-  }, [cards])
 
   useEffect(() => {
-    const active = new Set(renderCards.map((item) => item.identity))
-    for (const identity of idByIdentityRef.current.keys()) {
-      if (!active.has(identity)) {
-        idByIdentityRef.current.delete(identity)
-      }
-    }
-  }, [renderCards])
+    const gen = insightsPanelCommitGeneration
+    const priorGen = prevCommitGenRef.current
+    const priorCards = prevCardsSnapshotRef.current
 
-  useEffect(() => {
-    const prev = previousSignatureByIdRef.current
-    const next = new Map<string, string>()
-    for (const item of renderCards) {
-      next.set(item.id, item.signature)
-      const oldSig = prev.get(item.id)
-      if (oldSig && oldSig !== item.signature) {
-        if (activeGrowthCardId !== item.id && !pendingGrowthQueueRef.current.includes(item.id)) {
-          pendingGrowthQueueRef.current.push(item.id)
-        }
-      }
-    }
-    previousSignatureByIdRef.current = next
-
-    if (!activeGrowthCardId && pendingGrowthQueueRef.current.length > 0) {
-      setActiveGrowthCardId(pendingGrowthQueueRef.current.shift() ?? null)
-    }
-  }, [activeGrowthCardId, renderCards])
-
-  useEffect(() => {
-    if (!activeGrowthCardId) {
+    if (gen === 0 || prefersReducedMotion) {
+      panelOpacity.setValue(1)
+      panelTranslateY.setValue(0)
+      prevCommitGenRef.current = gen
+      prevCardsSnapshotRef.current = cards
       return
     }
-    const stillVisible = renderCards.some((item) => item.id === activeGrowthCardId)
-    if (!stillVisible) {
-      setActiveGrowthCardId(pendingGrowthQueueRef.current.shift() ?? null)
+    if (gen < priorGen) {
+      panelOpacity.setValue(1)
+      panelTranslateY.setValue(0)
+      prevCommitGenRef.current = gen
+      prevCardsSnapshotRef.current = cards
+      return
     }
-  }, [activeGrowthCardId, renderCards])
 
-  const handleGrowthDone = useCallback((cardId: string) => {
-    setActiveGrowthCardId((current) => {
-      if (current !== cardId) return current
-      return pendingGrowthQueueRef.current.shift() ?? null
-    })
-  }, [])
+    const sameSnapshot =
+      priorCards.length === cards.length &&
+      priorCards.every((c, i) => stableCardSignature(c) === stableCardSignature(cards[i]!))
+
+    if (sameSnapshot) {
+      panelOpacity.setValue(1)
+      panelTranslateY.setValue(0)
+      prevCommitGenRef.current = gen
+      prevCardsSnapshotRef.current = cards
+      return
+    }
+
+    prevCommitGenRef.current = gen
+    prevCardsSnapshotRef.current = cards
+
+    panelOpacity.setValue(PANEL_ENTER_FROM_OPACITY)
+    panelTranslateY.setValue(PANEL_ENTER_FROM_Y)
+
+    Animated.parallel([
+      Animated.timing(panelOpacity, {
+        toValue: 1,
+        duration: PANEL_REFRESH_MS,
+        easing: PANEL_REFRESH_EASING,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(panelTranslateY, {
+        toValue: 0,
+        duration: PANEL_REFRESH_MS,
+        easing: PANEL_REFRESH_EASING,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start()
+  }, [insightsPanelCommitGeneration, cards, prefersReducedMotion, panelOpacity, panelTranslateY])
 
   const handleSendReply = useCallback(async (text: string, quotedCard: QuotedCard) => {
     await useChatStore.getState().sendMessage(text, undefined, quotedCard)
   }, [])
 
-  const listLayoutTransition = useMemo(
-    () => LinearTransition.springify().damping(22).stiffness(200).mass(0.75),
-    []
-  )
-
-  if (renderCards.length === 0 && !hasSituationBar) {
+  if (cards.length === 0 && !hasSituationBar) {
     return (
-      <YStack flex={1} paddingHorizontal="$3.5" paddingVertical="$3">
+      <YStack flex={1} paddingHorizontal="$4" paddingVertical="$4">
         <PanelHeader thinking={showThinking} />
         <EmptyState thinking={showThinking} />
       </YStack>
@@ -397,42 +335,43 @@ export const InsightsPanel = memo(function InsightsPanel({
   }
 
   return (
-    <YStack flex={1} paddingHorizontal="$3.5" paddingTop="$3" gap="$3">
+    <YStack flex={1} paddingHorizontal="$4" paddingTop="$4" gap="$3">
       <PanelHeader thinking={showThinking} />
+      <PanelUpdatingBanner visible={showThinking} prefersReducedMotion={prefersReducedMotion} />
       {hasSituationBar ? <SituationBar context={negotiationContext!} /> : null}
-      <Reanimated.View layout={listLayoutTransition}>
-        <YStack gap="$3">
-          {renderCards.map((item, i) => (
-            <MemoAnimatedCard
-              key={item.id}
-              cardId={item.id}
-              card={item.card}
-              index={i}
-              signature={item.signature}
-              isGrowthActive={activeGrowthCardId === item.id}
-              onGrowthDone={handleGrowthDone}
+      <Animated.View
+        style={{
+          opacity: panelOpacity,
+          transform: [{ translateY: panelTranslateY }],
+        }}
+      >
+        <YStack gap="$3.5">
+          {cards.map((card, i) => (
+            <MemoAiCard
+              key={`${i}-${card.kind}-${stableCardSignature(card)}`}
+              card={card}
               onSendReply={handleSendReply}
             />
           ))}
         </YStack>
-      </Reanimated.View>
+      </Animated.View>
       {parkedVehicles.length > 0 ? (
-        <YStack gap="$2">
-          <YStack
-            height={1}
-            backgroundColor="$borderColor"
-            opacity={0.8}
-            marginTop="$1"
-            marginBottom="$2"
-          />
-          <Text
-            fontSize={12}
-            fontWeight="600"
-            color="$placeholderColor"
-            textTransform="uppercase"
-            letterSpacing={0.5}
-          >
-            No longer receiving updates
+        <YStack gap="$3" marginTop="$1">
+          <XStack alignItems="center" gap="$2">
+            <YStack flex={1} height={1} backgroundColor="$borderColor" opacity={0.75} />
+            <Text
+              fontSize={10}
+              fontWeight="700"
+              color="$placeholderColor"
+              textTransform="uppercase"
+              letterSpacing={1}
+            >
+              Archived
+            </Text>
+            <YStack flex={1} height={1} backgroundColor="$borderColor" opacity={0.75} />
+          </XStack>
+          <Text fontSize={12} color="$placeholderColor" lineHeight={18} opacity={0.9}>
+            Vehicles you’re no longer tracking in the live stack
           </Text>
           {parkedVehicles.map((vehicle) => {
             const headline = [vehicle.year, vehicle.make, vehicle.model, vehicle.trim]

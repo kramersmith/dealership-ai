@@ -446,7 +446,7 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. Core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
+The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. Core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. After `done`, panel generation continues asynchronously via `panel_started`, then a single atomic `panel_done` (canonical `cards` + panel-phase `usage` + `assistant_message_id` binding the snapshot to the persisted assistant row) or `panel_error`. **Incremental `panel_card` events are not emitted** on this contract — the model may still stream partial JSON internally; only `panel_done` carries client-visible card data. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
 
 **`compaction_started` event** — Compaction began (heuristic input estimate crossed auto threshold):
 ```
@@ -496,16 +496,10 @@ event: panel_started
 data: {"attempt": 1, "max_tokens": 2048}
 ```
 
-**`panel_card` event** — Incremental panel card arrival:
-```
-event: panel_card
-data: {"index": 0, "attempt": 1, "card": {"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}}
-```
-
-**`panel_done` event** — Panel generation completed with canonical cards + panel-phase usage:
+**`panel_done` event** — Panel generation completed with canonical cards, panel-phase usage, and the server id of the assistant message row this snapshot belongs to:
 ```
 event: panel_done
-data: {"cards": [{"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}}
+data: {"cards": [{"kind": "phase", "template": "briefing", "title": "Status", "content": {"stance": "researching", "situation": "at_dealership"}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}, "assistant_message_id": "uuid-of-assistant-row"}
 ```
 
 **`panel_error` event** — Panel generation failed after retries:
@@ -525,7 +519,7 @@ data: {"message": "AI response failed. Please try again."}
 - Optional auto-compaction may run first inside the stream: can persist `Message(role=system)` notice, update `ChatSession.compaction_state`, and `commit` before the user row is created or updated
 - Either a **new** user message is inserted after compaction side effects, or an **existing** user message is updated when `existing_user_message_id` is set; chat streaming then runs. Only **newly inserted** user messages are deleted on stream failure or failed step loop (retries after VIN resume do not delete the pre-persisted row; see ADR 0016 / ADR 0017)
 - The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
-- Panel generation runs after `done`; incremental cards are streamed via `panel_card`, and panel-phase usage is reported on `panel_done`
+- Panel generation runs after `done`; the client applies the canonical card list from `panel_done` only (no incremental `panel_card` SSE). The same snapshot is persisted on `Message.panel_cards` for that assistant turn; `DealState.ai_panel_cards` remains the session-level “current” view
 - Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals
 - The backend may emit a safe `error` event after `done` if a later persistence step fails; clients should keep the delivered reply and show the warning
 - If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
@@ -639,6 +633,7 @@ Get the full message history for a session, ordered by creation time, plus **con
         "cacheReadInputTokens": 620,
         "totalTokens": 1428
       },
+      "panel_cards": null,
       "created_at": "2026-03-24T12:00:01Z"
     }
   ],
@@ -650,7 +645,7 @@ Get the full message history for a session, ordered by creation time, plus **con
 }
 ```
 
-Message-level `usage` remains per assistant turn. Session-wide totals are exposed on the session resource. Stream usage is phase-specific (`done` for chat phase, `panel_done` for panel phase).
+Message-level `usage` remains per assistant turn. Assistant rows may include **`panel_cards`** (canonical snapshot after a successful panel phase, else `null`). Session-wide totals are exposed on the session resource. Stream usage is phase-specific (`done` for chat phase, `panel_done` for panel phase).
 
 **Error responses:**
 
