@@ -1,4 +1,4 @@
-import { YStack, Text } from 'tamagui'
+import { XStack, YStack, Text } from 'tamagui'
 import { Bookmark } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
 import { CardTitle } from './CardTitle'
@@ -31,10 +31,15 @@ export function NotesCard({ title, content }: NotesCardProps) {
       <YStack gap="$2.5">
         <CardTitle icon={<Bookmark size={14} color="$placeholderColor" />}>{title}</CardTitle>
         <YStack gap="$2.5">
-          {items.map((item) => (
-            <Text key={item} fontSize={12} lineHeight={19} color="$color">
-              {'\u2022'} {item}
-            </Text>
+          {items.map((item, index) => (
+            <XStack key={`${item}-${index}`} alignItems="flex-start" gap="$2">
+              <Text fontSize={12} lineHeight={19} color="$color">
+                {'\u2022'}
+              </Text>
+              <Text flex={1} fontSize={12} lineHeight={19} color="$color">
+                {item}
+              </Text>
+            </XStack>
           ))}
         </YStack>
       </YStack>
