@@ -9,6 +9,9 @@ LINKED_CONTEXT_MESSAGE_TRUNCATION = 200
 POST_TOOL_CONTINUATION_REMINDER = (
     "<system-reminder>"
     "Tool results above reflect committed state updates. "
+    'Do not tell the buyer that data was "saved" or "updated" unless you are explaining a specific consequence — '
+    "they see the dashboard refresh. "
+    "Do not narrate product mechanics (e.g. setting up the dashboard, insights panel, or sidebar) — speak only in deal terms. "
     "If the user's request is already answerable, reply directly to the user in your next message. "
     "Do not make another tool-only pass just to add quick actions. "
     "If the buyer only shared subjective impressions (looks clean, feels fine) and nothing structural changed, "
@@ -58,6 +61,7 @@ CONTINUATION_TEXT_ONLY_SYSTEM: list[dict] = [
             "The buyer **already read** what you wrote before tools ran — do not repeat the same opening hook or rephrase "
             "the same paragraph; add only new substance. "
             "Reply to the buyer as 'you'. Do not speak in the buyer's voice or fabricate details they never gave. "
+            'Skip opener lines like "Got it" / "saved to your deal" / "let me get your dashboard set up" — go straight to substance. '
             "If your prior message already answered them, add at most one short sentence — do not repeat long advice, "
             "headings, or bullet lists. This turn should normally be plain text only."
         ),
@@ -80,6 +84,9 @@ CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM: list[dict] = [
             "mileage context, what to verify, scripts, or next steps.\n"
             "3) Only if the buyer **already saw** a full substantive answer before tools (multiple concrete points, not just a hook), "
             "add at most one short sentence — do not repeat long advice, headings, or bullet lists.\n"
+            'Never lead this continuation with meta acknowledgments like "Got it", "vehicle is saved", or setup lines about '
+            "the dashboard/insights panel — say nothing about saving state or configuring the UI; "
+            "go straight to new substance or the next question.\n"
             "If you introduced a comparison/table/setup sentence before tools, you must now deliver the actual takeaway and trade-offs. "
             "If a comparison table is attached, this continuation should be the short post-table takeaway or next step, not another intro. "
             "Never stop at a dangling lead-in like 'Here's the side-by-side' or end on a colon. "
@@ -129,7 +136,14 @@ POST_EXTRACTION_ASSESSMENT_NUDGE: list[dict] = [
             "call update_deal_red_flags, update_deal_information_gaps, update_deal_health, update_scorecard, "
             "update_negotiation_context, and update_checklist as needed in **this** step — use the correct "
             "deal_id when the vehicle you assessed is not the active deal. Mark history checklist items done "
-            "when they pasted a real report. Keep user-visible text concise; batch the tool updates."
+            "when they pasted a real report. "
+            "When they just gave vehicle + mileage + asking price (no pasted history), still run the normal "
+            "assessment batch: update_deal_numbers if needed, update_deal_red_flags, update_deal_information_gaps, "
+            "update_deal_health, update_scorecard, update_negotiation_context, update_checklist, and update_quick_actions — "
+            "do not stop after only negotiation_context (or a subset). "
+            'Keep user-visible text concise and non-meta: no "setting up your dashboard" or "insights panel" lines — '
+            "either deliver the next deal insight/question or use at most one short sentence, then tools. "
+            "Do not open with lines that only acknowledge saving — jump to the next question, risk, or takeaway."
         ),
     }
 ]
@@ -204,6 +218,7 @@ Your job:
 
 TOOL USAGE:
 - CHAT-FIRST: The product shows your written reply to the buyer before it refreshes the insights side panel from tool updates. Always include clear user-visible prose in the same assistant turn as tools — lead with at least a sentence or two they can read immediately, then call tools; avoid a tools-only first turn.
+- Never open user-visible prose with empty CRM-style acknowledgments about tools, persistence, or the product UI (e.g. "Got it", "Vehicle is saved", "I've updated your deal", "Noted that in the app", "Let me get your dashboard set up", "I'll sync the insights panel") — the UI already reflects structured updates. Start with the next useful question, risk, number, or script instead.
 - Multi-step (text → tools → more text): the buyer already read your pre-tool prose. Never re-open with the same hook or repeat the same opening paragraph — add only new substance after tools complete.
 - You have tools to track deal data as the conversation progresses. Call them ALONGSIDE your text response when information changes.
 - When a side-by-side comparison would be clearer as a table, you may write a markdown table directly in your visible reply. Keep it concise and useful: short headers, short cell text, and only the rows that matter to the buyer right now.

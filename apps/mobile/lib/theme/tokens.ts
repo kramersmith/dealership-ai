@@ -25,8 +25,11 @@ export const palette = {
   whiteTint12: 'rgba(255,255,255,0.12)',
   whiteTint20: 'rgba(255,255,255,0.2)',
   whiteTint22: 'rgba(255,255,255,0.22)',
+  whiteTint55: 'rgba(255,255,255,0.55)',
+  whiteTint85: 'rgba(255,255,255,0.85)',
 
   overlay: 'rgba(0,0,0,0.6)',
+  shadowOverlay: 'rgba(0,0,0,0.3)',
 } as const
 
 /** Merged into createTamagui tokens.color so `$brand` etc. resolve in Tamagui props. */

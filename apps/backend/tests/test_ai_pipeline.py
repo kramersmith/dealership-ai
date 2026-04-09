@@ -19,6 +19,7 @@ from app.models.deal_state import DealState
 from app.models.enums import BuyerContext, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
+from app.services.buyer_chat_stream import stream_buyer_chat_turn
 from app.services.claude import (
     CHAT_TOOLS,
     POST_TOOL_CONTINUATION_REMINDER,
@@ -317,6 +318,7 @@ def test_context_message_includes_temporal_hint_for_model_year(_mock_date):
                     "make": "Ford",
                     "model": "F-250",
                     "trim": "Lariat",
+                    "mileage": 175000,
                 }
             ],
             "deals": [{"id": "d1", "vehicle_id": "v1", "phase": "research"}],
@@ -329,6 +331,51 @@ def test_context_message_includes_temporal_hint_for_model_year(_mock_date):
     assert "model year 2022" in content
     assert "~4 full" in content
     assert "miles/year" in content
+    assert "Computed annualized miles:" in content
+    assert "175,000" in content
+    assert "43,750" in content
+
+
+@patch(
+    "app.services.claude.context_message.current_utc_date_iso",
+    return_value="2026-04-08",
+)
+def test_context_message_provisional_temporal_hint_from_user_text_when_no_vehicle(
+    _mock_date,
+):
+    context_message = build_context_message(
+        {
+            "buyer_context": BuyerContext.RESEARCHING,
+            "vehicles": [],
+            "deals": [],
+        },
+        user_turn_text=(
+            "It's a 2021 FORD F-250 SUPER DUTY LARIAT with 175k miles for 34k"
+        ),
+    )
+
+    assert context_message is not None
+    body = context_message["content"]
+    assert "Temporal hint (from this user message):" in body
+    assert "model year 2021" in body
+    assert "~5 full" in body
+    assert "35,000" in body
+
+
+def test_context_message_includes_timeline_fork_reminder_when_requested():
+    context_message = build_context_message(
+        {
+            "buyer_context": BuyerContext.RESEARCHING,
+            "vehicles": [],
+            "deals": [],
+        },
+        include_timeline_fork_reminder=True,
+    )
+
+    assert context_message is not None
+    body = context_message["content"]
+    assert "Session branch:" in body
+    assert "Structured deal and vehicle records were cleared" in body
 
 
 def test_build_temporal_hint_line_none_without_vehicle_year():
@@ -1990,6 +2037,7 @@ async def test_send_message_sse_done_before_panel_updates(
     await adb.refresh(session)
     await adb.refresh(deal_state)
     token = create_access_token({"sub": async_buyer_user.id})
+    panel_all_messages: list[dict] | None = None
 
     async def fake_stream_chat_loop(*args, **kwargs):
         result = args[4]
@@ -2029,6 +2077,8 @@ async def test_send_message_sse_done_before_panel_updates(
         )
 
     async def fake_stream_panel_cards_with_usage(*args, **kwargs):
+        nonlocal panel_all_messages
+        panel_all_messages = args[2]
         yield SimpleNamespace(
             type="panel_started", data={"attempt": 1, "max_tokens": 2048}
         )
@@ -2074,12 +2124,16 @@ async def test_send_message_sse_done_before_panel_updates(
         )
 
     with (
-        patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
         patch(
-            "app.routes.chat.stream_ai_panel_cards_with_usage",
+            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+        ),
+        patch(
+            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
             new=fake_stream_panel_cards_with_usage,
         ),
-        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
     ):
         async with async_client.stream(
             "POST",
@@ -2114,6 +2168,13 @@ async def test_send_message_sse_done_before_panel_updates(
         "cacheReadInputTokens": 180,
         "totalTokens": 336,
     }
+    assert panel_all_messages == [
+        {"role": "user", "content": "They came back at 30,200"},
+        {
+            "role": "assistant",
+            "content": "Hold at $28,500 and get the out-the-door total in writing.",
+        },
+    ]
     panel_done = next(data for name, data in events if name == "panel_done")
     assert panel_done["cards"][0]["title"] == "Next Best Move"
 
@@ -2292,12 +2353,16 @@ async def test_send_message_runs_compaction_before_chat_when_over_budget(
             "app.services.compaction.create_anthropic_client",
             return_value=mock_summarizer,
         ),
-        patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
         patch(
-            "app.routes.chat.stream_ai_panel_cards_with_usage",
+            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+        ),
+        patch(
+            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
             new=fake_stream_panel_cards_with_usage,
         ),
-        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
     ):
         async with async_client.stream(
             "POST",
@@ -2386,12 +2451,16 @@ async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(
         )
 
     with (
-        patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
         patch(
-            "app.routes.chat.stream_ai_panel_cards_with_usage",
+            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+        ),
+        patch(
+            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
             new=fake_stream_panel_cards_with_usage,
         ),
-        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
     ):
         async with async_client.stream(
             "POST",
@@ -2441,8 +2510,13 @@ async def test_send_message_stops_after_stream_failure(
         )
 
     with (
-        patch("app.routes.chat.stream_chat_loop", new=failing_stream_chat_loop),
-        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+        patch(
+            "app.services.buyer_chat_stream.stream_chat_loop",
+            new=failing_stream_chat_loop,
+        ),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
     ):
         async with async_client.stream(
             "POST",
@@ -2483,8 +2557,13 @@ async def test_send_message_failed_turn_does_not_accumulate_duplicate_user_rows(
         )
 
     with (
-        patch("app.routes.chat.stream_chat_loop", new=failing_stream_chat_loop),
-        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+        patch(
+            "app.services.buyer_chat_stream.stream_chat_loop",
+            new=failing_stream_chat_loop,
+        ),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
     ):
         for _ in range(3):
             async with async_client.stream(
@@ -2501,6 +2580,83 @@ async def test_send_message_failed_turn_does_not_accumulate_duplicate_user_rows(
             select(Message).where(Message.session_id == session.id)
         )
         assert message_result.scalars().all() == []
+
+
+async def test_stream_buyer_chat_turn_emits_error_and_removes_orphan_user_when_assistant_persist_fails(
+    adb, async_buyer_user
+):
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
+
+    deal_state_dict = await deal_state_to_dict(deal_state, adb)
+    original_commit = adb.commit
+    commit_count = 0
+
+    async def commit_with_assistant_failure():
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise RuntimeError("assistant insert failed")
+        await original_commit()
+
+    async def fake_stream_chat_loop(*args, **kwargs):
+        result = args[4]
+        result.full_text = "Assistant reply before persist"
+        result.completed = True
+        yield ('event: text\ndata: {"chunk": "Assistant reply before persist"}\n\n')
+
+    with (
+        patch.object(
+            adb, "commit", new=AsyncMock(side_effect=commit_with_assistant_failure)
+        ),
+        patch(
+            "app.services.buyer_chat_stream.run_auto_compaction_if_needed",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    sse_chunks=[],
+                    updated_state=None,
+                    system_notice_content=None,
+                )
+            ),
+        ),
+        patch(
+            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+        ),
+    ):
+        events = await _collect_generator_events(
+            stream_buyer_chat_turn(
+                db=adb,
+                session=session,
+                session_id=session.id,
+                content="Please help",
+                image_url=None,
+                resumed_user_row=None,
+                history=[],
+                deal_state=deal_state,
+                deal_state_dict=deal_state_dict,
+                linked_messages=None,
+                system_prompt=[],
+            )
+        )
+
+    assert events == [
+        ("text", {"chunk": "Assistant reply before persist"}),
+        (
+            "error",
+            {"message": "We could not save the assistant response. Please try again."},
+        ),
+    ]
+
+    message_result = await adb.execute(
+        select(Message)
+        .where(Message.session_id == session.id)
+        .order_by(Message.created_at)
+    )
+    assert message_result.scalars().all() == []
 
 
 async def test_send_message_emits_panel_error_when_panel_stream_crashes_after_start(
@@ -2524,12 +2680,16 @@ async def test_send_message_emits_panel_error_when_panel_stream_crashes_after_st
         raise RuntimeError("panel stream crashed")
 
     with (
-        patch("app.routes.chat.stream_chat_loop", new=fake_stream_chat_loop),
         patch(
-            "app.routes.chat.stream_ai_panel_cards_with_usage",
+            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+        ),
+        patch(
+            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
             new=failing_stream_panel_cards_with_usage,
         ),
-        patch("app.routes.chat.update_session_metadata", new=AsyncMock()),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
     ):
         async with async_client.stream(
             "POST",

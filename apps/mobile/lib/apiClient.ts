@@ -38,9 +38,53 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(`API ${res.status}: ${text}`)
+    throw new Error(extractHttpErrorMessage(res.status, text, 'API'))
   }
   return res.json()
+}
+
+function extractStructuredErrorMessage(responseText: string): string | null {
+  const trimmed = responseText.trim()
+  if (!trimmed) return null
+
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown; message?: unknown }
+    if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+      return parsed.detail.trim()
+    }
+    if (typeof parsed.message === 'string' && parsed.message.trim()) {
+      return parsed.message.trim()
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function extractHttpErrorMessage(
+  status: number,
+  responseText: string,
+  fallbackPrefix: 'API' | 'Chat API'
+): string {
+  const fallback = `${fallbackPrefix} ${status}`
+  const trimmed = responseText.trim()
+  if (!trimmed) return fallback
+
+  const canExposeClientDetail = status >= 400 && status < 500
+
+  if (!canExposeClientDetail) {
+    return fallback
+  }
+
+  const structuredMessage = extractStructuredErrorMessage(trimmed)
+  if (structuredMessage) return structuredMessage
+
+  return fallback
+}
+
+function extractStreamErrorMessage(status: number, responseText: string): string {
+  return extractHttpErrorMessage(status, responseText, 'Chat API')
 }
 
 function mapDealSummary(rawSummary: any): import('./types').DealSummary | null {
@@ -382,6 +426,270 @@ function toSnakeCase(
   return result
 }
 
+type StreamBuyerChatCallbacks = {
+  onChunk?: (text: string) => void
+  onToolResult?: (toolCall: ToolCall) => void
+  onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void
+  onNonFatalError?: (message: string) => void
+  onRetry?: (data: { attempt: number; reason: string }) => void
+  onStep?: (data: { step: number }) => void
+  onPanelStarted?: () => void
+  onPanelFinished?: () => void
+  onCompaction?: (phase: 'started' | 'done' | 'error') => void
+}
+
+/** Shared XHR + SSE parser for POST /chat/.../message and .../branch. */
+function streamBuyerChatSse(
+  pathRelativeToApi: string,
+  body: Record<string, unknown>,
+  sessionId: string,
+  callbacks: StreamBuyerChatCallbacks
+): Promise<Message> {
+  const {
+    onChunk,
+    onToolResult,
+    onTextDone,
+    onNonFatalError,
+    onRetry,
+    onStep,
+    onPanelStarted,
+    onPanelFinished,
+    onCompaction,
+  } = callbacks
+
+  return new Promise((resolve, reject) => {
+    const streamRequest = new XMLHttpRequest()
+    streamRequest.open('POST', `${API_BASE}/${pathRelativeToApi}`)
+    streamRequest.setRequestHeader('Content-Type', 'application/json')
+    if (authToken) streamRequest.setRequestHeader('Authorization', `Bearer ${authToken}`)
+
+    streamRequest.timeout = 150000
+
+    let fullText = ''
+    let messageUsage: MessageUsage | undefined
+    let sessionUsage: SessionUsage | undefined
+    const toolCalls: ToolCall[] = []
+    const pendingDealToolResults: ToolCall[] = []
+    let processed = 0
+    let buffer = ''
+    let sseError: string | null = null
+    let protocolError: string | null = null
+    let sawDoneEvent = false
+    let panelStreamActive = false
+    const streamedPanelCards: unknown[] = []
+
+    const flushPendingDealToolResults = () => {
+      if (pendingDealToolResults.length === 0) return
+      for (const pendingToolCall of pendingDealToolResults) {
+        toolCalls.push(pendingToolCall)
+        onToolResult?.(pendingToolCall)
+      }
+      pendingDealToolResults.length = 0
+    }
+
+    const finishPanelStream = () => {
+      if (!panelStreamActive) return
+      panelStreamActive = false
+      onPanelFinished?.()
+    }
+
+    const processSseMessage = (message: string) => {
+      if (!message.trim()) return
+
+      let eventType = ''
+      const dataLines: string[] = []
+
+      for (const line of message.split('\n')) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim()
+        } else if (line.startsWith('data: ')) {
+          dataLines.push(line.slice(6))
+        }
+      }
+
+      const dataStr = dataLines.join('\n')
+      if (!eventType || !dataStr) return
+
+      try {
+        const data = JSON.parse(dataStr)
+        if (eventType === 'text' && data.chunk) {
+          fullText += data.chunk
+          onChunk?.(fullText)
+        } else if (eventType === 'done') {
+          sawDoneEvent = true
+          fullText = data.text ?? fullText
+          messageUsage = data.usage
+          sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
+          onTextDone?.(fullText, messageUsage, sessionUsage)
+          flushPendingDealToolResults()
+        } else if (eventType === 'panel_started') {
+          console.debug('[apiClient] panel stream started')
+          panelStreamActive = true
+          streamedPanelCards.length = 0
+          onPanelStarted?.()
+        } else if (eventType === 'panel_card' && data.card) {
+          if (!panelStreamActive) {
+            panelStreamActive = true
+            streamedPanelCards.length = 0
+            onPanelStarted?.()
+          }
+          const index =
+            typeof data.index === 'number' && Number.isInteger(data.index) && data.index >= 0
+              ? data.index
+              : streamedPanelCards.length
+          streamedPanelCards[index] = data.card
+          const toolCall: ToolCall = {
+            name: 'update_insights_panel',
+            args: { mode: PANEL_UPDATE_MODE.APPEND, card: data.card, index },
+          }
+          toolCalls.push(toolCall)
+          onToolResult?.(toolCall)
+        } else if (eventType === 'panel_done') {
+          if (data.usage) {
+            messageUsage = mergeMessageUsage(messageUsage, data.usage)
+          }
+          finishPanelStream()
+          const finalCards = (data.cards ?? []) as unknown[]
+          const toolCall: ToolCall = {
+            name: 'update_insights_panel',
+            args: { mode: PANEL_UPDATE_MODE.REPLACE, cards: finalCards },
+          }
+          toolCalls.push(toolCall)
+          onToolResult?.(toolCall)
+        } else if (eventType === 'panel_error') {
+          console.warn('[apiClient] panel stream error')
+          finishPanelStream()
+        } else if (eventType === 'error') {
+          const errorMessage =
+            typeof data.message === 'string' && data.message.trim().length > 0
+              ? data.message
+              : 'An error occurred'
+          if (sawDoneEvent) {
+            console.error('[apiClient] non-fatal SSE error event after done')
+            onNonFatalError?.(errorMessage)
+          } else {
+            console.error('[apiClient] SSE error event')
+            sseError = errorMessage
+          }
+        } else if (eventType === 'retry') {
+          if (data.reset_text) {
+            fullText = ''
+            onChunk?.('')
+          }
+          onRetry?.(data)
+        } else if (eventType === 'step') {
+          onStep?.(data)
+        } else if (eventType === 'compaction_started') {
+          onCompaction?.('started')
+        } else if (eventType === 'compaction_done') {
+          onCompaction?.('done')
+        } else if (eventType === 'compaction_error') {
+          onCompaction?.('error')
+        } else if (eventType === 'tool_error') {
+          console.warn(
+            '[apiClient] Tool execution error:',
+            typeof data.tool === 'string' ? data.tool : 'unknown_tool'
+          )
+        } else if (eventType === 'tool_result' && data.tool) {
+          const toolCall: ToolCall = { name: data.tool as ToolCall['name'], args: data.data }
+          pendingDealToolResults.push(toolCall)
+        }
+      } catch (parseError) {
+        if (!sawDoneEvent) {
+          protocolError = 'Received an invalid response from the chat service'
+          console.error(
+            '[apiClient] Malformed SSE payload before done event',
+            eventType || 'unknown_event',
+            parseError instanceof Error ? parseError.message : parseError
+          )
+          streamRequest.abort()
+          return
+        }
+
+        console.warn(
+          '[apiClient] Ignoring malformed post-text SSE payload',
+          eventType || 'unknown_event',
+          parseError instanceof Error ? parseError.message : parseError
+        )
+        finishPanelStream()
+      }
+    }
+
+    const processBufferedMessages = (includeTrailingMessage: boolean) => {
+      const messages = buffer.split('\n\n')
+      if (!includeTrailingMessage) {
+        buffer = messages.pop() ?? ''
+      } else {
+        buffer = ''
+      }
+
+      for (const message of messages) {
+        processSseMessage(message)
+        if (protocolError) return
+      }
+    }
+
+    streamRequest.onprogress = () => {
+      const newData = streamRequest.responseText.slice(processed)
+      processed = streamRequest.responseText.length
+      buffer += newData
+
+      processBufferedMessages(false)
+    }
+
+    streamRequest.onload = () => {
+      if (streamRequest.status >= 200 && streamRequest.status < 300) {
+        const newData = streamRequest.responseText.slice(processed)
+        processed = streamRequest.responseText.length
+        buffer += newData
+        processBufferedMessages(true)
+        if (protocolError) {
+          finishPanelStream()
+          reject(new Error(protocolError))
+          return
+        }
+        if (sseError) {
+          finishPanelStream()
+          reject(new Error(sseError))
+          return
+        }
+        // If the stream ended without a `done` event, still apply buffered deal tools
+        // and resolve with whatever text we accumulated. Matches the pre-refactor
+        // behavior covered by the panel-cleanup-without-terminal-event tests.
+        flushPendingDealToolResults()
+        if (panelStreamActive) {
+          console.warn('[apiClient] panel stream ended without terminal event')
+          finishPanelStream()
+        }
+        resolve({
+          id: Math.random().toString(36).substring(2),
+          sessionId,
+          role: 'assistant',
+          content: fullText,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          usage: messageUsage,
+          createdAt: new Date().toISOString(),
+        })
+      } else {
+        finishPanelStream()
+        reject(
+          new Error(extractStreamErrorMessage(streamRequest.status, streamRequest.responseText))
+        )
+      }
+    }
+
+    streamRequest.onerror = () => {
+      finishPanelStream()
+      reject(new Error(protocolError ?? 'Network error'))
+    }
+    streamRequest.ontimeout = () => {
+      finishPanelStream()
+      reject(new Error('Request timed out'))
+    }
+    streamRequest.send(JSON.stringify(body))
+  })
+}
+
 class ApiClient implements ApiService {
   // ─── Auth ───
 
@@ -443,7 +751,7 @@ class ApiClient implements ApiService {
     })
     if (!res.ok) {
       const text = await res.text()
-      throw new Error(`API ${res.status}: ${text}`)
+      throw new Error(extractHttpErrorMessage(res.status, text, 'API'))
     }
   }
 
@@ -454,14 +762,17 @@ class ApiClient implements ApiService {
     contextPressure: ContextPressure
   }> {
     const res = await request<any>(`/chat/${sessionId}/messages`)
-    const raw = res.messages ?? []
-    const cp = res.context_pressure ?? {}
+    const rawMessages = res.messages ?? []
+    const rawContextPressure = res.context_pressure ?? {}
     return {
-      messages: raw.map(mapMessage),
+      messages: rawMessages.map(mapMessage),
       contextPressure: {
-        level: cp.level === 'warn' || cp.level === 'critical' ? cp.level : 'ok',
-        estimatedInputTokens: Number(cp.estimated_input_tokens ?? 0),
-        inputBudget: Number(cp.input_budget ?? 0),
+        level:
+          rawContextPressure.level === 'warn' || rawContextPressure.level === 'critical'
+            ? rawContextPressure.level
+            : 'ok',
+        estimatedInputTokens: Number(rawContextPressure.estimated_input_tokens ?? 0),
+        inputBudget: Number(rawContextPressure.input_budget ?? 0),
       },
     }
   }
@@ -471,11 +782,11 @@ class ApiClient implements ApiService {
     content: string,
     imageUri?: string
   ): Promise<Message> {
-    const persistedMessage = await request<any>(`/chat/${sessionId}/user-message`, {
+    const persistedUserMessage = await request<any>(`/chat/${sessionId}/user-message`, {
       method: 'POST',
       body: JSON.stringify({ content, image_url: imageUri ?? null }),
     })
-    return mapMessage(persistedMessage)
+    return mapMessage(persistedUserMessage)
   }
 
   sendMessage(
@@ -490,201 +801,60 @@ class ApiClient implements ApiService {
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
     onCompaction?: (phase: 'started' | 'done' | 'error') => void,
-    existingUserMessageId?: string
+    existingUserMessageId?: string,
+    onNonFatalError?: (message: string) => void
   ): Promise<Message> {
-    // Use XMLHttpRequest for true incremental streaming — fetch's ReadableStream
-    // is buffered by React Native's polyfill and doesn't deliver chunks live.
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('POST', `${API_BASE}/chat/${sessionId}/message`)
-      xhr.setRequestHeader('Content-Type', 'application/json')
-      if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`)
-
-      xhr.timeout = 150000 // 150s — slightly above backend's 120s API timeout
-
-      let fullText = ''
-      let messageUsage: MessageUsage | undefined
-      let sessionUsage: SessionUsage | undefined
-      const toolCalls: ToolCall[] = []
-      /** Chat-loop tool results only — held until `done` so the UI can finalize the reply before insights/deal updates. */
-      const pendingDealToolResults: ToolCall[] = []
-      let processed = 0
-      let buffer = ''
-      let sseError: string | null = null
-      let panelStreamActive = false
-      const streamedPanelCards: unknown[] = []
-
-      const flushPendingDealToolResults = () => {
-        if (pendingDealToolResults.length === 0) return
-        for (const tc of pendingDealToolResults) {
-          toolCalls.push(tc)
-          onToolResult?.(tc)
-        }
-        pendingDealToolResults.length = 0
-      }
-
-      const finishPanelStream = () => {
-        if (!panelStreamActive) return
-        panelStreamActive = false
-        onPanelFinished?.()
-      }
-
-      xhr.onprogress = () => {
-        const newData = xhr.responseText.slice(processed)
-        processed = xhr.responseText.length
-        buffer += newData
-
-        // SSE messages are delimited by double newlines
-        const messages = buffer.split('\n\n')
-        // Last element may be incomplete — keep it in the buffer
-        buffer = messages.pop() ?? ''
-
-        for (const message of messages) {
-          if (!message.trim()) continue
-          let eventType = ''
-          let dataStr = ''
-
-          for (const line of message.split('\n')) {
-            if (line.startsWith('event: ')) {
-              eventType = line.slice(7).trim()
-            } else if (line.startsWith('data: ')) {
-              dataStr = line.slice(6)
-            }
-          }
-
-          if (!eventType || !dataStr) continue
-
-          try {
-            const data = JSON.parse(dataStr)
-            if (eventType === 'text' && data.chunk) {
-              fullText += data.chunk
-              onChunk?.(fullText)
-            } else if (eventType === 'done') {
-              // Text streaming is complete — finalize immediately.
-              // Panel cards continue in a separate async phase after this.
-              fullText = data.text ?? fullText
-              messageUsage = data.usage
-              sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
-              onTextDone?.(fullText, messageUsage, sessionUsage)
-              // Apply step-loop deal/insights-driving tools only after the reply is finalized.
-              flushPendingDealToolResults()
-            } else if (eventType === 'panel_started') {
-              console.debug('[apiClient] panel stream started', data)
-              panelStreamActive = true
-              streamedPanelCards.length = 0
-              onPanelStarted?.()
-            } else if (eventType === 'panel_card' && data.card) {
-              if (!panelStreamActive) {
-                panelStreamActive = true
-                streamedPanelCards.length = 0
-              }
-              const index =
-                typeof data.index === 'number' && Number.isInteger(data.index) && data.index >= 0
-                  ? data.index
-                  : streamedPanelCards.length
-              streamedPanelCards[index] = data.card
-              const toolCall: ToolCall = {
-                name: 'update_insights_panel',
-                args: { mode: PANEL_UPDATE_MODE.APPEND, card: data.card, index },
-              }
-              toolCalls.push(toolCall)
-              onToolResult?.(toolCall)
-            } else if (eventType === 'panel_done') {
-              if (data.usage) {
-                messageUsage = mergeMessageUsage(messageUsage, data.usage)
-              }
-              finishPanelStream()
-              const finalCards = (data.cards ?? []) as unknown[]
-              // Always reconcile to server-final cards so empty results clear stale UI state.
-              const toolCall: ToolCall = {
-                name: 'update_insights_panel',
-                args: { mode: PANEL_UPDATE_MODE.REPLACE, cards: finalCards },
-              }
-              toolCalls.push(toolCall)
-              onToolResult?.(toolCall)
-            } else if (eventType === 'panel_error') {
-              console.warn('[apiClient] panel stream error:', data.message ?? data)
-              finishPanelStream()
-            } else if (eventType === 'error') {
-              console.error('[apiClient] SSE error event:', data.message ?? data)
-              sseError = data.message ?? 'An error occurred'
-            } else if (eventType === 'retry') {
-              if (data.reset_text) {
-                fullText = ''
-                onChunk?.('')
-              }
-              onRetry?.(data)
-            } else if (eventType === 'step') {
-              onStep?.(data)
-            } else if (eventType === 'compaction_started') {
-              onCompaction?.('started')
-            } else if (eventType === 'compaction_done') {
-              onCompaction?.('done')
-            } else if (eventType === 'compaction_error') {
-              onCompaction?.('error')
-            } else if (eventType === 'tool_error') {
-              console.warn('[apiClient] Tool execution error:', data.tool, data.error)
-            } else if (eventType === 'tool_result' && data.tool) {
-              const toolCall: ToolCall = { name: data.tool as ToolCall['name'], args: data.data }
-              pendingDealToolResults.push(toolCall)
-            }
-          } catch (e) {
-            console.debug(
-              '[apiClient] Skipping malformed SSE data',
-              eventType || 'unknown_event',
-              e instanceof Error ? e.message : e
-            )
-          }
-        }
-      }
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          // Process any remaining data not caught by onprogress
-          xhr.onprogress?.(null as any)
-          // If the stream ended without a `done` event, still apply buffered deal tools.
-          flushPendingDealToolResults()
-          if (sseError) {
-            finishPanelStream()
-            reject(new Error(sseError))
-            return
-          }
-          if (panelStreamActive) {
-            console.warn('[apiClient] panel stream ended without terminal event')
-            finishPanelStream()
-          }
-          resolve({
-            id: Math.random().toString(36).substring(2),
-            sessionId,
-            role: 'assistant',
-            content: fullText,
-            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            usage: messageUsage,
-            createdAt: new Date().toISOString(),
-          })
-        } else {
-          finishPanelStream()
-          reject(new Error(`Chat API ${xhr.status}`))
-        }
-      }
-
-      xhr.onerror = () => {
-        finishPanelStream()
-        reject(new Error('Network error'))
-      }
-      xhr.ontimeout = () => {
-        finishPanelStream()
-        reject(new Error('Request timed out'))
-      }
-      const payload: Record<string, unknown> = {
-        content,
-        image_url: imageUri ?? null,
-      }
-      if (existingUserMessageId) {
-        payload.existing_user_message_id = existingUserMessageId
-      }
-      xhr.send(JSON.stringify(payload))
+    const payload: Record<string, unknown> = {
+      content,
+      image_url: imageUri ?? null,
+    }
+    if (existingUserMessageId) {
+      payload.existing_user_message_id = existingUserMessageId
+    }
+    return streamBuyerChatSse(`chat/${sessionId}/message`, payload, sessionId, {
+      onChunk,
+      onToolResult,
+      onTextDone,
+      onRetry,
+      onStep,
+      onPanelStarted,
+      onPanelFinished,
+      onCompaction,
+      onNonFatalError,
     })
+  }
+
+  branchFromUserMessage(
+    sessionId: string,
+    anchorUserMessageId: string,
+    content: string,
+    imageUri?: string,
+    onChunk?: (text: string) => void,
+    onToolResult?: (toolCall: ToolCall) => void,
+    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
+    onRetry?: (data: { attempt: number; reason: string }) => void,
+    onStep?: (data: { step: number }) => void,
+    onPanelStarted?: () => void,
+    onPanelFinished?: () => void,
+    onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    onNonFatalError?: (message: string) => void
+  ): Promise<Message> {
+    return streamBuyerChatSse(
+      `chat/${sessionId}/messages/${anchorUserMessageId}/branch`,
+      { content, image_url: imageUri ?? null },
+      sessionId,
+      {
+        onChunk,
+        onToolResult,
+        onTextDone,
+        onRetry,
+        onStep,
+        onPanelStarted,
+        onPanelFinished,
+        onCompaction,
+        onNonFatalError,
+      }
+    )
   }
 
   // ─── Deal State ───
@@ -736,14 +906,14 @@ class ApiClient implements ApiService {
     const payload: Record<string, any> = {}
 
     if (corrections.vehicleCorrections) {
-      payload.vehicle_corrections = corrections.vehicleCorrections.map((vc) =>
-        toSnakeCase(vc, VEHICLE_FIELD_MAP)
+      payload.vehicle_corrections = corrections.vehicleCorrections.map((vehicleCorrection) =>
+        toSnakeCase(vehicleCorrection, VEHICLE_FIELD_MAP)
       )
     }
 
     if (corrections.dealCorrections) {
-      payload.deal_corrections = corrections.dealCorrections.map((dc) =>
-        toSnakeCase(dc, DEAL_FIELD_MAP)
+      payload.deal_corrections = corrections.dealCorrections.map((dealCorrection) =>
+        toSnakeCase(dealCorrection, DEAL_FIELD_MAP)
       )
     }
 
@@ -817,12 +987,12 @@ class ApiClient implements ApiService {
 
   async getScenarios(): Promise<Scenario[]> {
     const scenarios = await request<any[]>('/simulations/scenarios')
-    return scenarios.map((s) => ({
-      id: s.id,
-      title: s.title,
-      description: s.description,
-      difficulty: s.difficulty,
-      aiPersona: s.ai_persona,
+    return scenarios.map((scenario) => ({
+      id: scenario.id,
+      title: scenario.title,
+      description: scenario.description,
+      difficulty: scenario.difficulty,
+      aiPersona: scenario.ai_persona,
     }))
   }
 

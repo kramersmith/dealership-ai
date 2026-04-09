@@ -1,4 +1,5 @@
 import { StyleSheet } from 'react-native'
+
 import { palette } from '@/lib/theme/tokens'
 
 interface MarkdownColorParams {
@@ -24,16 +25,21 @@ export function getAssistantMarkdownColors(theme: {
 }): MarkdownColorParams {
   const textColor = (theme.color?.val as string) ?? palette.white
   const bodyTextColor = (theme.colorPress?.val as string) ?? textColor
+  const hoverSurface =
+    (theme.backgroundHover?.val as string) ??
+    (theme.background?.val as string) ??
+    palette.brandSubtle
+  const subtleSurface = (theme.background?.val as string) ?? hoverSurface
+  const tableBorderColor = (theme.borderColor?.val as string) ?? hoverSurface
+
   return {
     textColor,
     bodyTextColor,
-    codeBg: (theme.backgroundHover?.val as string) ?? palette.brandSubtle,
-    subtleSurface: (theme.background?.val as string) ?? palette.brandSubtle,
-    tableBorderColor: (theme.borderColor?.val as string) ?? palette.brandSubtle,
-    tableHeaderBg: (theme.backgroundHover?.val as string) ?? palette.brandSubtle,
-    // Use text color with opacity in `hr` style so dividers read as light gray
-    // in dark mode and medium gray in light mode.
-    hrColor: (theme.colorPress?.val as string) ?? palette.white,
+    codeBg: hoverSurface,
+    subtleSurface,
+    tableBorderColor,
+    tableHeaderBg: hoverSurface,
+    hrColor: (theme.colorPress?.val as string) ?? textColor,
   }
 }
 

@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
@@ -12,6 +13,7 @@ import {
 } from 'react-native'
 import { YStack, XStack, Text, Theme, useTheme } from 'tamagui'
 import {
+  ConfirmModal,
   ThemedSafeArea,
   LoadingIndicator,
   RoleGuard,
@@ -35,6 +37,7 @@ import type { BuyerContext, DealState, HealthStatus } from '@/lib/types'
 import { formatCurrency, getActiveDeal } from '@/lib/utils'
 import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { getVehicleAwareHeaderTitleInfo } from '@/lib/headerTitles'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
@@ -143,6 +146,14 @@ type PreviewItem =
   | { type: 'savings'; label: string }
   | { type: 'flagCount'; count: number }
 
+function getUserVisibleErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback
+  const message = error.message.trim()
+  if (!message) return fallback
+  if (/^(?:API|Chat API) \d+\b/.test(message)) return fallback
+  return message
+}
+
 const GREETING_MESSAGES: Record<BuyerContext, string> = {
   researching:
     'What car are you looking at? Tell me the year, make, and model ' +
@@ -156,10 +167,16 @@ const GREETING_MESSAGES: Record<BuyerContext, string> = {
     'just said or offered, and I\u2019ll tell you exactly how to respond.',
 }
 
+const EDIT_BRANCH_CONFIRM_TITLE = 'Edit from here'
+const EDIT_BRANCH_CONFIRM_MESSAGE =
+  'If there are replies after this message, they will be removed. Deal and vehicle details stored for this chat will be cleared. Your shopping situation (such as researching or at the dealership) is kept.'
+const EDIT_BRANCH_CONFIRM_CONTINUE_LABEL = 'Continue'
+const EDIT_BRANCH_CONFIRM_CANCEL_DOM_ID = 'edit-branch-confirm-cancel'
+
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
   const activeSessionTitle = useChatStore(
-    (state) => state.sessions.find((s) => s.id === state.activeSessionId)?.title
+    (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.title
   )
   const createSession = useChatStore((state) => state.createSession)
   const addGreeting = useChatStore((state) => state.addGreeting)
@@ -181,6 +198,15 @@ export default function ChatScreen() {
 
   const { messages, isSending, isLoading, streamingText, send, handleQuickAction } =
     useChat(activeSessionId)
+  const editingUserMessageId = useChatStore((state) => state.editingUserMessageId)
+  const startEditUserMessage = useChatStore((state) => state.startEditUserMessage)
+  const cancelEditUserMessage = useChatStore((state) => state.cancelEditUserMessage)
+  const sendBranchFromEdit = useChatStore((state) => state.sendBranchFromEdit)
+  const sendError = useChatStore((state) => state.sendError)
+  const clearSendError = useChatStore((state) => state.clearSendError)
+  const [editDraft, setEditDraft] = useState('')
+  const [editBranchConfirmOpen, setEditBranchConfirmOpen] = useState(false)
+  const editBranchConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
   /** Hide quick-action chips while a message is paused for VIN decode/confirm (avoids overlap with VIN assist UI). */
   const pendingVinIntercept = useChatStore((state) => state._pendingSend != null)
@@ -195,10 +221,38 @@ export default function ChatScreen() {
   const mobileEntrance = useSlideIn(isDesktop ? 0 : 260, 40)
 
   // Subscribe to dealState only for mobile preview — desktop doesn't need it
-  const dealState = useDealStore((s) => s.dealState)
+  const dealState = useDealStore((state) => state.dealState)
 
-  const dismissedFlagIds = useDealStore((s) => s.dismissedFlagIds)
+  const dismissedFlagIds = useDealStore((state) => state.dismissedFlagIds)
   const showContextPicker = !activeSessionId && !isLoading
+
+  useEffect(() => {
+    if (!editingUserMessageId) {
+      setEditDraft('')
+      return
+    }
+    const editingMessage = messages.find((message) => message.id === editingUserMessageId)
+    setEditDraft(editingMessage?.content ?? '')
+  }, [editingUserMessageId, messages])
+
+  useEffect(() => {
+    if (
+      Platform.OS !== 'web' ||
+      !editingUserMessageId ||
+      showContextPicker ||
+      editBranchConfirmOpen
+    ) {
+      return
+    }
+    const onKeyDown = (keyboardEvent: KeyboardEvent) => {
+      if (keyboardEvent.key !== 'Escape' && keyboardEvent.code !== 'Escape') return
+      keyboardEvent.preventDefault()
+      keyboardEvent.stopPropagation()
+      cancelEditUserMessage()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [editingUserMessageId, editBranchConfirmOpen, cancelEditUserMessage, showContextPicker])
 
   const headerTitleInfo = useMemo(
     () => getVehicleAwareHeaderTitleInfo(activeSessionTitle, dealState, APP_NAME),
@@ -233,6 +287,7 @@ export default function ChatScreen() {
         contextPressure: null,
         isCompacting: false,
         suppressContextWarningUntilUsageRefresh: false,
+        editingUserMessageId: null,
       })
     },
   })
@@ -244,6 +299,13 @@ export default function ChatScreen() {
       navigateBackOrChats()
     }
   }, [isDesktopChatActive, desktopTransition, navigateBackOrChats])
+
+  const dismissEditBranchConfirm = useCallback((confirmed: boolean) => {
+    const resolve = editBranchConfirmResolveRef.current
+    editBranchConfirmResolveRef.current = null
+    resolve?.(confirmed)
+    setEditBranchConfirmOpen(false)
+  }, [])
 
   useEffect(() => {
     if (!showMobileInsightsToggle && isInsightsOpen) {
@@ -296,8 +358,8 @@ export default function ChatScreen() {
       if (session) {
         addGreeting(GREETING_MESSAGES[context])
       }
-    } catch {
-      // Error already logged in chatStore
+    } catch (error) {
+      Alert.alert('Unable to start chat', getUserVisibleErrorMessage(error, 'Please try again.'))
     } finally {
       isCreating.current = false
     }
@@ -312,8 +374,11 @@ export default function ChatScreen() {
       if (session) {
         await useChatStore.getState().submitVinFromPanel(vin)
       }
-    } catch {
-      // Error already logged in chatStore
+    } catch (error) {
+      Alert.alert(
+        'Unable to start VIN lookup',
+        getUserVisibleErrorMessage(error, 'Please try again.')
+      )
     } finally {
       isCreating.current = false
     }
@@ -329,12 +394,38 @@ export default function ChatScreen() {
         if (session) {
           await send(content, imageUri)
         }
-      } catch {
-        // Error already logged in chatStore
+      } catch (error) {
+        Alert.alert(
+          'Unable to send message',
+          getUserVisibleErrorMessage(error, 'Please try again.')
+        )
       } finally {
         isCreating.current = false
       }
     } else {
+      if (editingUserMessageId) {
+        let confirmed: boolean
+        if (Platform.OS === 'web') {
+          confirmed = await new Promise<boolean>((resolve) => {
+            editBranchConfirmResolveRef.current = resolve
+            setEditBranchConfirmOpen(true)
+          })
+        } else {
+          confirmed = await new Promise<boolean>((resolve) => {
+            Alert.alert(EDIT_BRANCH_CONFIRM_TITLE, EDIT_BRANCH_CONFIRM_MESSAGE, [
+              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+              {
+                text: EDIT_BRANCH_CONFIRM_CONTINUE_LABEL,
+                style: 'default',
+                onPress: () => resolve(true),
+              },
+            ])
+          })
+        }
+        if (!confirmed) return
+        await sendBranchFromEdit(content, imageUri)
+        return
+      }
       await send(content, imageUri)
     }
   }
@@ -357,6 +448,7 @@ export default function ChatScreen() {
       contextPressure: null,
       isCompacting: false,
       suppressContextWarningUntilUsageRefresh: false,
+      editingUserMessageId: null,
     })
   }
 
@@ -388,6 +480,10 @@ export default function ChatScreen() {
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewItems = getPreviewItems(dealState, dismissedFlagIds)
   const activeDealForPreview = dealState ? getActiveDeal(dealState) : null
+  const sendErrorText =
+    sendError && editingUserMessageId
+      ? `${sendError} Edit the highlighted message and send again.`
+      : sendError
 
   const quickActionsFooter = useMemo(
     () =>
@@ -431,11 +527,13 @@ export default function ChatScreen() {
         onPress={() => setIsInsightsOpen(true)}
         accessibilityRole="button"
         accessibilityLabel="Open insights"
-        style={{
+        style={({ pressed }) => ({
           marginHorizontal: 12,
           marginTop: 8,
           marginBottom: 6,
           minHeight: 44,
+          opacity: pressed ? 0.96 : 1,
+          transform: [{ scale: pressed ? 0.995 : 1 }],
           backgroundColor: 'transparent',
           borderWidth: 0,
           borderColor: 'transparent',
@@ -444,9 +542,10 @@ export default function ChatScreen() {
                 outlineWidth: 0,
                 boxShadow: 'none',
                 appearance: 'none',
+                cursor: 'pointer',
               }
             : null),
-        }}
+        })}
       >
         <XStack
           alignItems="center"
@@ -546,6 +645,15 @@ export default function ChatScreen() {
             bottomPadding={pendingVinIntercept ? 28 : 12}
             footer={quickActionsFooter}
             scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
+            onStartEditUserMessage={startEditUserMessage}
+            editingUserMessageId={editingUserMessageId}
+            editingDraft={editDraft}
+            onEditingUserMessageDraftChange={setEditDraft}
+            onBranchEditSubmitFromBubble={() => {
+              const trimmedEditDraft = editDraft.trim()
+              if (!trimmedEditDraft) return
+              void handleDirectSend(trimmedEditDraft)
+            }}
           />
           {mobileInsightsPreview ? (
             <YStack
@@ -599,12 +707,64 @@ export default function ChatScreen() {
           </YStack>
         </Theme>
       ) : null}
+      {sendErrorText ? (
+        <Theme name="warning">
+          <XStack
+            alignItems="center"
+            gap="$2"
+            paddingHorizontal="$3"
+            paddingVertical="$2"
+            borderTopWidth={1}
+            borderTopColor="$borderColor"
+            backgroundColor="$background"
+          >
+            <Text flex={1} fontSize={12} lineHeight={18} color="$color">
+              {sendErrorText}
+            </Text>
+            <TouchableOpacity
+              onPress={clearSendError}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              {...(Platform.OS === 'web'
+                ? ({ 'aria-label': 'Dismiss chat error' } as any)
+                : { accessibilityLabel: 'Dismiss chat error' })}
+            >
+              <XStack width={44} height={44} alignItems="center" justifyContent="center">
+                <X size={18} color="$color" />
+              </XStack>
+            </TouchableOpacity>
+          </XStack>
+        </Theme>
+      ) : null}
       <ChatInput
         onSend={handleDirectSend}
         disabled={isSending}
-        placeholder={showContextPicker ? 'Or just tell me what\u2019s going on' : undefined}
+        placeholder={
+          showContextPicker
+            ? 'Or just tell me what\u2019s going on'
+            : editingUserMessageId
+              ? 'Edit your message\u2026'
+              : undefined
+        }
+        controlledText={editingUserMessageId ? editDraft : null}
+        onControlledTextChange={editingUserMessageId ? setEditDraft : undefined}
+        editModeBanner={editingUserMessageId ? { onCancel: () => cancelEditUserMessage() } : null}
+        editingMessageId={editingUserMessageId}
       />
     </View>
+  )
+
+  const editBranchConfirmModal = (
+    <ConfirmModal
+      visible={editBranchConfirmOpen}
+      title={EDIT_BRANCH_CONFIRM_TITLE}
+      message={EDIT_BRANCH_CONFIRM_MESSAGE}
+      confirmLabel={EDIT_BRANCH_CONFIRM_CONTINUE_LABEL}
+      confirmVariant="primary"
+      webCancelDomId={EDIT_BRANCH_CONFIRM_CANCEL_DOM_ID}
+      onConfirm={() => dismissEditBranchConfirm(true)}
+      onCancel={() => dismissEditBranchConfirm(false)}
+    />
   )
 
   if (isDesktop) {
@@ -662,6 +822,7 @@ export default function ChatScreen() {
             </View>
           </YStack>
         </ThemedSafeArea>
+        {editBranchConfirmModal}
       </RoleGuard>
     )
   }
@@ -693,8 +854,30 @@ export default function ChatScreen() {
           transparent
           animationType="none"
           onRequestClose={() => setIsInsightsOpen(false)}
+          onShow={() =>
+            focusDomElementByIdsAfterModalShow(
+              'chat-mobile-insights-close',
+              'chat-mobile-insights-focus-root'
+            )
+          }
         >
           <View style={{ flex: 1, fontFamily: WEB_FONT_FAMILY } as any}>
+            {Platform.OS === 'web' ? (
+              <View
+                {...({
+                  id: 'chat-mobile-insights-focus-root',
+                  tabIndex: -1,
+                } as any)}
+                style={{
+                  position: 'absolute',
+                  width: 1,
+                  height: 1,
+                  opacity: 0,
+                  overflow: 'hidden',
+                  pointerEvents: 'none',
+                }}
+              />
+            ) : null}
             <Animated.View
               style={{
                 position: 'absolute',
@@ -733,11 +916,11 @@ export default function ChatScreen() {
                 {...(Platform.OS === 'web'
                   ? {
                       style: {
-                        boxShadow: `-8px 0 24px ${theme.shadowColor?.val ?? palette.overlay}`,
+                        boxShadow: `-8px 0 24px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
                       },
                     }
                   : {
-                      shadowColor: theme.shadowColor?.val ?? palette.overlay,
+                      shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
                       shadowOffset: { width: -4, height: 0 },
                       shadowOpacity: 1,
                       shadowRadius: 12,
@@ -758,6 +941,7 @@ export default function ChatScreen() {
                         Insights
                       </Text>
                       <HeaderIconButton
+                        webDomId="chat-mobile-insights-close"
                         onPress={() => setIsInsightsOpen(false)}
                         accessibilityLabel="Close insights"
                       >
@@ -779,6 +963,7 @@ export default function ChatScreen() {
           </View>
         </Modal>
       </ThemedSafeArea>
+      {editBranchConfirmModal}
     </RoleGuard>
   )
 }

@@ -30,8 +30,10 @@ interface DealStore {
   /** IDs of red flags the user has dismissed (ephemeral, clears on session change). */
   dismissedFlagIds: Set<string>
 
-  loadDealState: (sessionId: string) => Promise<void>
+  loadDealState: (sessionId: string, opts?: { strict?: boolean }) => Promise<void>
   resetDealState: (sessionId: string, buyerContext?: BuyerContext) => void
+  /** Clear panel cards when a new SSE panel stream starts so APPEND merges never keep prior-turn rows. */
+  clearAiPanelCards: () => void
   applyToolCall: (toolCall: ToolCall) => void
   applyToolCalls: (toolCalls: ToolCall[]) => void
 
@@ -114,18 +116,18 @@ function debouncedSendCorrections(sessionId: string, set: any, get: any) {
 
       // Apply Haiku re-assessment to the relevant deal
       if (result.dealId && result.healthStatus !== null) {
-        const deals = dealState.deals.map((d: Deal) => {
-          if (d.id !== result.dealId) return d
+        const deals = dealState.deals.map((deal: Deal) => {
+          if (deal.id !== result.dealId) return deal
           const updates: Partial<Deal> = {}
           updates.health = {
             status: result.healthStatus as any,
             summary: result.healthSummary ?? '',
             recommendation: result.recommendation ?? null,
           }
-          if (result.redFlags.length > 0 || d.redFlags.length > 0) {
+          if (result.redFlags.length > 0 || deal.redFlags.length > 0) {
             updates.redFlags = result.redFlags
           }
-          return { ...d, ...updates }
+          return { ...deal, ...updates }
         })
         set({ dealState: { ...get().dealState, deals } })
       }
@@ -188,17 +190,19 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       }
 
       let vehicles = [...dealState.vehicles]
-      const existingIdx = vehicles.findIndex((v) => v.id === vehicleId)
-      if (existingIdx >= 0) {
+      const existingVehicleIndex = vehicles.findIndex((vehicle) => vehicle.id === vehicleId)
+      if (existingVehicleIndex >= 0) {
         // Update existing -- merge non-undefined fields
-        vehicles[existingIdx] = {
-          ...vehicles[existingIdx],
-          ...Object.fromEntries(Object.entries(newVehicle).filter(([_, v]) => v !== undefined)),
+        vehicles[existingVehicleIndex] = {
+          ...vehicles[existingVehicleIndex],
+          ...Object.fromEntries(
+            Object.entries(newVehicle).filter(([, value]) => value !== undefined)
+          ),
         }
       } else {
         // If trade_in and one exists, replace
         if (role === 'trade_in') {
-          vehicles = vehicles.filter((v) => v.role !== 'trade_in')
+          vehicles = vehicles.filter((vehicle) => vehicle.role !== 'trade_in')
         }
         vehicles.push(newVehicle)
       }
@@ -243,20 +247,20 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       const args = snakeToCamel(toolCall.args)
       const dealId = (args.dealId ?? dealState.activeDealId) as string | null
       if (!dealId) return dealState
-      const deals = dealState.deals.map((d) => {
-        if (d.id !== dealId) return d
-        const numbers = { ...d.numbers }
+      const deals = dealState.deals.map((deal) => {
+        if (deal.id !== dealId) return deal
+        const numbers = { ...deal.numbers }
         for (const [key, value] of Object.entries(args)) {
           if (key === 'dealId') continue
           if (key in numbers) {
             ;(numbers as any)[key] = value
           }
         }
-        let firstOffer = d.firstOffer
+        let firstOffer = deal.firstOffer
         if (numbers.currentOffer !== null && firstOffer === null) {
           firstOffer = numbers.currentOffer
         }
-        return { ...d, numbers, firstOffer }
+        return { ...deal, numbers, firstOffer }
       })
       return { ...dealState, deals }
     }
@@ -265,14 +269,14 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       const args = snakeToCamel(toolCall.args)
       const dealId = (args.dealId ?? dealState.activeDealId) as string | null
       if (!dealId) return dealState
-      const deals = dealState.deals.map((d) => {
-        if (d.id !== dealId) return d
+      const deals = dealState.deals.map((deal) => {
+        if (deal.id !== dealId) return deal
         const phase = args.phase as DealPhase
-        let preFiPrice = d.preFiPrice
-        if (phase === 'financing' && preFiPrice === null && d.numbers.currentOffer !== null) {
-          preFiPrice = d.numbers.currentOffer
+        let preFiPrice = deal.preFiPrice
+        if (phase === 'financing' && preFiPrice === null && deal.numbers.currentOffer !== null) {
+          preFiPrice = deal.numbers.currentOffer
         }
-        return { ...d, phase, preFiPrice }
+        return { ...deal, phase, preFiPrice }
       })
       return { ...dealState, deals }
     }
@@ -281,15 +285,15 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       const args = snakeToCamel(toolCall.args)
       const dealId = (args.dealId ?? dealState.activeDealId) as string | null
       if (!dealId) return dealState
-      const deals = dealState.deals.map((d) => {
-        if (d.id !== dealId) return d
+      const deals = dealState.deals.map((deal) => {
+        if (deal.id !== dealId) return deal
         const updates: Partial<Scorecard> = {}
         if (args.scorePrice !== undefined) updates.price = args.scorePrice
         if (args.scoreFinancing !== undefined) updates.financing = args.scoreFinancing
         if (args.scoreTradeIn !== undefined) updates.tradeIn = args.scoreTradeIn
         if (args.scoreFees !== undefined) updates.fees = args.scoreFees
         if (args.scoreOverall !== undefined) updates.overall = args.scoreOverall
-        return { ...d, scorecard: { ...d.scorecard, ...updates } }
+        return { ...deal, scorecard: { ...deal.scorecard, ...updates } }
       })
       return { ...dealState, deals }
     }
@@ -303,9 +307,9 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
         summary: args.summary,
         recommendation: args.recommendation ?? null,
       }
-      const deals = dealState.deals.map((d) => {
-        if (d.id !== dealId) return d
-        return { ...d, health }
+      const deals = dealState.deals.map((deal) => {
+        if (deal.id !== dealId) return deal
+        return { ...deal, health }
       })
       return { ...dealState, deals }
     }
@@ -316,9 +320,9 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       if (!dealId) return dealState
       const rawFlags = args.flags ?? []
       const flags = (Array.isArray(rawFlags) ? rawFlags : (rawFlags.flags ?? [])) as RedFlag[]
-      const deals = dealState.deals.map((d) => {
-        if (d.id !== dealId) return d
-        return { ...d, redFlags: flags }
+      const deals = dealState.deals.map((deal) => {
+        if (deal.id !== dealId) return deal
+        return { ...deal, redFlags: flags }
       })
       return { ...dealState, deals }
     }
@@ -335,9 +339,9 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       if (!dealId) return dealState
       const rawGaps = args.gaps ?? []
       const gaps = (Array.isArray(rawGaps) ? rawGaps : (rawGaps.gaps ?? [])) as InformationGap[]
-      const deals = dealState.deals.map((d) => {
-        if (d.id !== dealId) return d
-        return { ...d, informationGaps: gaps }
+      const deals = dealState.deals.map((deal) => {
+        if (deal.id !== dealId) return deal
+        return { ...deal, informationGaps: gaps }
       })
       return { ...dealState, deals }
     }
@@ -356,10 +360,10 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
     case 'remove_vehicle': {
       const args = snakeToCamel(toolCall.args)
       const vehicleId = args.vehicleId as string
-      const vehicles = dealState.vehicles.filter((v) => v.id !== vehicleId)
-      const deals = dealState.deals.filter((d) => d.vehicleId !== vehicleId)
+      const vehicles = dealState.vehicles.filter((vehicle) => vehicle.id !== vehicleId)
+      const deals = dealState.deals.filter((deal) => deal.vehicleId !== vehicleId)
       let activeDealId = dealState.activeDealId
-      if (activeDealId && !deals.some((d) => d.id === activeDealId)) {
+      if (activeDealId && !deals.some((deal) => deal.id === activeDealId)) {
         activeDealId = deals.length > 0 ? deals[0].id : null
       }
       return { ...dealState, vehicles, deals, activeDealId }
@@ -431,7 +435,7 @@ export const useDealStore = create<DealStore>((set, get) => ({
   isLoading: false,
   dismissedFlagIds: new Set(),
 
-  loadDealState: async (sessionId) => {
+  loadDealState: async (sessionId, opts) => {
     set({ isLoading: true })
     try {
       const state = await api.getDealState(sessionId)
@@ -439,6 +443,9 @@ export const useDealStore = create<DealStore>((set, get) => ({
     } catch (err) {
       console.debug('[dealStore] loadDealState failed:', err instanceof Error ? err.message : err)
       set({ isLoading: false })
+      if (opts?.strict) {
+        throw err
+      }
     }
   },
 
@@ -460,6 +467,12 @@ export const useDealStore = create<DealStore>((set, get) => ({
       },
       dismissedFlagIds: new Set(),
     })
+  },
+
+  clearAiPanelCards: () => {
+    const { dealState } = get()
+    if (!dealState) return
+    set({ dealState: { ...dealState, aiPanelCards: [] } })
   },
 
   applyToolCall: (toolCall) => {
@@ -493,10 +506,10 @@ export const useDealStore = create<DealStore>((set, get) => ({
     })
   },
 
-  dismissRedFlag: (id) => {
+  dismissRedFlag: (redFlagId) => {
     const { dismissedFlagIds } = get()
     const next = new Set(dismissedFlagIds)
-    next.add(id)
+    next.add(redFlagId)
     set({ dismissedFlagIds: next })
   },
 
@@ -505,9 +518,9 @@ export const useDealStore = create<DealStore>((set, get) => ({
     if (!dealState) return
 
     // Update locally immediately
-    const deals = dealState.deals.map((d) => {
-      if (d.id !== dealId) return d
-      return { ...d, numbers: { ...d.numbers, [field]: value } }
+    const deals = dealState.deals.map((deal) => {
+      if (deal.id !== dealId) return deal
+      return { ...deal, numbers: { ...deal.numbers, [field]: value } }
     })
     set({ dealState: { ...dealState, deals } })
 
@@ -526,9 +539,9 @@ export const useDealStore = create<DealStore>((set, get) => ({
     if (!dealState) return
 
     // Update locally immediately
-    const vehicles = dealState.vehicles.map((v) => {
-      if (v.id !== vehicleId) return v
-      return { ...v, [field]: value }
+    const vehicles = dealState.vehicles.map((vehicle) => {
+      if (vehicle.id !== vehicleId) return vehicle
+      return { ...vehicle, [field]: value }
     })
     set({ dealState: { ...dealState, vehicles } })
 

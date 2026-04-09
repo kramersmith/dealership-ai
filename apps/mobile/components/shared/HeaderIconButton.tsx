@@ -7,6 +7,8 @@ interface HeaderIconButtonProps {
   accessibilityLabel: string
   children: ReactNode
   filled?: boolean
+  /** Web: DOM id for moving focus after opening a Modal (see `focusDomElementByIdsAfterModalShow`). */
+  webDomId?: string
 }
 
 export function HeaderIconButton({
@@ -14,6 +16,7 @@ export function HeaderIconButton({
   accessibilityLabel,
   children,
   filled = false,
+  webDomId,
 }: HeaderIconButtonProps) {
   const theme = useTheme()
   const [isHovered, setIsHovered] = useState(false)
@@ -45,6 +48,7 @@ export function HeaderIconButton({
 
   return (
     <TouchableOpacity
+      {...(Platform.OS === 'web' && webDomId ? ({ id: webDomId } as any) : {})}
       onPress={onPress}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}

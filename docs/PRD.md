@@ -1,6 +1,6 @@
 # Product Requirements Document: Dealership AI
 
-**Last updated:** 2026-04-08
+**Last updated:** 2026-04-09
 
 ---
 
@@ -123,9 +123,10 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 3. Buyer chats with the AI as the deal progresses: "They're offering $34,000" or "The rate they quoted is 7.5%."
 4. AI automatically updates the numbers dashboard, scorecard (green/yellow/red), and checklist via tool calls.
 5. Buyer uses quick actions: "What do I say?", "Should I walk?", or "Analyze this photo."
-6. Buyer photographs the deal sheet. AI decodes it, populates all dashboard fields, and flags discrepancies.
-7. Timer tracks time at the dealership. AI alerts if wait time suggests a pressure tactic.
-8. When the deal reaches F&I, the phase updates and the checklist surfaces F&I-specific items (verify APR, decline unnecessary add-ons, confirm numbers match verbal agreement).
+6. If the buyer realizes an earlier message had the wrong numbers or wording, they can use an explicit "Edit from here" action on that earlier user message, confirm the destructive scope, and continue the conversation from that point with later replies removed.
+7. Buyer photographs the deal sheet. AI decodes it, populates all dashboard fields, and flags discrepancies.
+8. Timer tracks time at the dealership. AI alerts if wait time suggests a pressure tactic.
+9. When the deal reaches F&I, the phase updates and the checklist surfaces F&I-specific items (verify APR, decline unnecessary add-ons, confirm numbers match verbal agreement).
 
 ### Journey 3: Deal Decoder Photo Upload (Buyer)
 
@@ -180,6 +181,8 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 - Server-side quick action generation via Haiku when Claude doesn't suggest them
 - Maintains full conversation history in the database; the model receives a projected window (rolling summary when compaction has run, plus up to the last 20 user/assistant turns). Long sessions can trigger automatic summarization with a visible system notice (ADR 0017).
 - **Context pressure** — the chat screen can surface when estimated context use is approaching limits (from `context_pressure` on the messages API), nudging the user without blocking chat.
+- **Edit from here** — buyers can revise an earlier user message via an explicit branch action. The app confirms that later replies will be removed, then restarts the conversation from that user turn.
+- **Late failure handling** — if the assistant reply was already delivered but a later save/update step fails, the UI keeps the delivered reply visible and shows a warning instead of discarding the turn.
 - Voice input via device speech-to-text
 - Context-aware system prompt preambles adapt AI tone and advice style based on buyer context (researching, reviewing a deal, at the dealership)
 
@@ -231,6 +234,7 @@ Side-by-side comparisons (formerly the `comparison` panel card) are no longer re
 - **Sectioned list**: Sessions are organized into Active (sessions with recent activity) and Past sections
 - Buyer context (researching, reviewing deal, at dealership) is set at session creation and can be updated mid-conversation by the AI via `update_buyer_context` tool
 - **Single-session fast-path**: If the buyer has only one session, they are navigated directly to it
+- **Server-authoritative branch editing**: Editing from an earlier user message removes later replies for that session and rebuilds structured deal state from the branched turn while preserving the buyer's current shopping situation (`buyer_context`).
 
 #### 4.4 Deal Decoder (Buyer)
 

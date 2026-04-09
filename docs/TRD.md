@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-04-08**
+**Last updated: 2026-04-09**
 
 ---
 
@@ -94,7 +94,7 @@ graph TB
 
 ### Request Flow: Chat Message with Tool Use
 
-1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL). For gated VIN intercept flows the client may first call `POST /api/chat/{session_id}/user-message` to pre-persist the user message row (so it appears in `GET /messages` while decode/confirm runs), then invoke `/message` with `existing_user_message_id` to resume streaming on that row — see ADR 0019.
+1. Client sends `POST /api/chat/{session_id}/message` with user text (and optional image URL). For gated VIN intercept flows the client may first call `POST /api/chat/{session_id}/user-message` to pre-persist the user message row (so it appears in `GET /messages` while decode/confirm runs), then invoke `/message` with `existing_user_message_id` to resume streaming on that row. `existing_user_message_id` is latest-message-only; editing earlier history must use `POST /api/chat/{session_id}/messages/{message_id}/branch`, which truncates later messages, clears session commerce state, and then runs the same SSE stream from that anchor — see ADR 0019 and ADR 0020.
 2. Backend loads persisted message history for the session, deal state, and (if configured) linked-session messages **before** saving the new user turn.
 3. Inside the SSE stream, **optional auto context compaction** may run first when a heuristic input-token estimate crosses a policy threshold (see ADR 0017): the backend can call the primary model (`CLAUDE_MODEL`) to refresh a rolling summary, update `ChatSession.compaction_state`, persist a `Message(role=system)` notice, emit `compaction_started` / `compaction_done` or `compaction_error`, and refresh history for projection.
 4. Backend persists the new user message, constructs a `TurnContext` (session, deal state, DB session), and builds the Claude message list: projected dialogue (rolling-summary prefix when present, then up to `CLAUDE_MAX_HISTORY` user/assistant turns) plus the new user turn. A per-turn context message — deal state, context-aware preamble based on `buyer_context`, negotiation context summary, linked session context, and current UTC date for temporal grounding — is merged into the user message as content blocks (no synthetic assistant reply). The system prompt stays stable and cacheable across turns.
@@ -106,7 +106,7 @@ graph TB
     - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
     - `event: retry` -- stream recovery or `max_tokens` replay signal, including `reset_text` when the client should discard partial text
     - `event: step` -- step-loop progress for multi-step turns
-    - `event: error` -- unrecoverable API failure with a safe user-visible message
+    - `event: error` -- safe user-visible failure; before `done` it terminates the turn, after `done` it means the reply was delivered but a later persistence/update step failed
     - `event: done` -- chat text completion payload (input can unblock immediately)
     - `event: panel_started` / `event: panel_card` / `event: panel_done` / `event: panel_error` -- asynchronous panel lifecycle events after `done`
 8. If the step loop raises an unrecoverable error (e.g. Anthropic billing, authentication), the backend emits an `error` SSE event with a safe user-visible message and deletes the orphan user message to prevent duplicate history on retry. Known API errors are mapped to specific but non-leaking messages.
@@ -199,7 +199,9 @@ graph TB
 | `GET`    | `/api/sessions/{session_id}`      | Yes  | Get single session                  |
 | `PATCH`  | `/api/sessions/{session_id}`      | Yes  | Update title or linked sessions     |
 | `DELETE` | `/api/sessions/{session_id}`      | Yes  | Delete session                      |
+| `POST`   | `/api/chat/{session_id}/user-message` | Yes | Persist user message without starting the stream |
 | `POST`   | `/api/chat/{session_id}/message`  | Yes  | Send message, receive SSE stream    |
+| `POST`   | `/api/chat/{session_id}/messages/{message_id}/branch` | Yes | Edit from an earlier user message, truncate later history, then stream |
 | `GET`    | `/api/chat/{session_id}/messages` | Yes  | Message history plus `context_pressure` (estimated next-turn input vs budget) |
 | `GET`    | `/api/deal/{session_id}`          | Yes  | Get deal state for session          |
 | `PATCH`  | `/api/deal/{session_id}`          | Yes  | User corrections → Sonnet re-assessment |
@@ -245,7 +247,7 @@ event: panel_done
 data: {"cards": [{"type": "briefing", "title": "Hold Firm", "content": {"body": "Their latest counter is still above your target."}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}}
 ```
 
-The `done` event marks chat text completion only. Panel generation continues in the same SSE stream and is represented by `panel_*` events. The final persisted assistant usage summary includes both chat-phase and panel-phase usage.
+The `done` event marks chat text completion only. Panel generation continues in the same SSE stream and is represented by `panel_*` events. An `error` emitted before `done` is fatal for that turn. An `error` emitted after `done` is a non-fatal warning: the user-visible reply was already delivered, but a later save or post-stream update failed. The final persisted assistant usage summary includes both chat-phase and panel-phase usage.
 
 For detailed endpoint schemas (request/response bodies, status codes), see the Pydantic schemas in `apps/backend/app/schemas/`.
 

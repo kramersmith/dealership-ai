@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import {
   buildColumnGrowthWeights,
   buildColumnWidths,
@@ -54,6 +55,19 @@ describe('markdownTableUtils', () => {
       const blocks = splitMarkdownBlocks(markdown)
 
       expect(blocks).toEqual([{ type: 'markdown', content: markdown }])
+    })
+
+    it('does not treat fenced code blocks as tables', () => {
+      const markdown = [
+        'Here is the raw markdown:',
+        '```md',
+        '| Name | Price |',
+        '| --- | --- |',
+        '| Item | $10 |',
+        '```',
+      ].join('\n')
+
+      expect(splitMarkdownBlocks(markdown)).toEqual([{ type: 'markdown', content: markdown }])
     })
   })
 

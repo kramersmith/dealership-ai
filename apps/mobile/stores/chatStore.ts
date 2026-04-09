@@ -77,8 +77,204 @@ function buildDecodedVehicle(decoded: {
   }
 }
 
+function redactVinForLog(vin: unknown): string | null {
+  if (typeof vin !== 'string') return null
+  const normalizedVin = vin.trim().toUpperCase()
+  if (!normalizedVin) return null
+  return normalizedVin.length <= 6
+    ? normalizedVin
+    : `${'*'.repeat(normalizedVin.length - 6)}${normalizedVin.slice(-6)}`
+}
+
+function sanitizeVinAssistLogData(data: Record<string, unknown>): Record<string, unknown> {
+  const sanitizedData = { ...data }
+  const redactedVin = redactVinForLog(sanitizedData.vin)
+  if (redactedVin) {
+    sanitizedData.vin = redactedVin
+  } else {
+    delete sanitizedData.vin
+  }
+  return sanitizedData
+}
+
 function trackVinAssistEvent(event: string, data: Record<string, unknown>) {
-  console.info(`[vin_assist] ${event}`, data)
+  const sanitizedData = sanitizeVinAssistLogData(data)
+  if (event.endsWith('_failed')) {
+    console.error(`[vin_assist] ${event}`, sanitizedData)
+    return
+  }
+  console.info(`[vin_assist] ${event}`, sanitizedData)
+}
+
+/** True if ``id`` is a server UUID (editable branch anchor), not a client greeting placeholder. */
+export function isServerMessageId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+}
+
+/** Invokes one of the buyer-chat SSE endpoints with a single shared callback bundle. */
+type BuyerTurnStreamInvoker = (callbacks: {
+  onChunk: (text: string) => void
+  onToolResult: (toolCall: ToolCall) => void
+  onTextDone: (finalText: string, usage?: MessageUsage) => void
+  onNonFatalError: (message: string) => void
+  onRetry: () => void
+  onStep: () => void
+  onPanelStarted: () => void
+  onPanelFinished: () => void
+  onCompaction: (phase: 'started' | 'done' | 'error') => void
+}) => Promise<Message>
+
+/**
+ * Shared runner for the two buyer-chat stream flows (send + branch).
+ *
+ * Centralizes the stream-consumer bookkeeping that used to be duplicated in
+ * ``sendMessage`` and ``sendBranchFromEdit``: handleTextDone/handleToolResult
+ * closures, fallback finalize path, post-stream refresh, and error-path row
+ * marking. Returns true on success so callers can optionally run extra refresh
+ * work only when the stream succeeded.
+ */
+async function runBuyerTurnStream(params: {
+  get: () => ChatState
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
+  activeSessionId: string
+  failedMessageId: string | null
+  invokeStream: BuyerTurnStreamInvoker
+  onSuccess?: () => Promise<void> | void
+  errorLogLabel: string
+}): Promise<boolean> {
+  const { get, set, activeSessionId, failedMessageId, invokeStream, onSuccess, errorLogLabel } =
+    params
+
+  try {
+    set({ suppressContextWarningUntilUsageRefresh: true, isCompacting: false })
+    const newResponseCount = get().aiResponseCount + 1
+    let messageFinalized = false
+
+    // Finalize the assistant message as soon as text streaming completes
+    // (the "done" SSE event), so the StreamingBubble is replaced by a
+    // permanent ChatBubble immediately — not seconds later on the first
+    // tool_result.
+    const handleTextDone = (finalText: string, usage?: MessageUsage) => {
+      if (messageFinalized) return
+      messageFinalized = true
+      if (finalText.trim()) {
+        const msg: Message = {
+          id: Math.random().toString(36).substring(2),
+          sessionId: activeSessionId,
+          role: 'assistant',
+          content: finalText,
+          usage,
+          createdAt: new Date().toISOString(),
+        }
+        set((state) => ({
+          messages: [...state.messages, msg],
+          isSending: false,
+          streamingText: '',
+          isRetrying: false,
+          isThinking: false,
+          aiResponseCount: newResponseCount,
+        }))
+      } else {
+        set({
+          isSending: false,
+          streamingText: '',
+          isRetrying: false,
+          isThinking: false,
+          aiResponseCount: newResponseCount,
+        })
+      }
+    }
+
+    // Deal-driving tool results: apiClient defers callbacks until after the
+    // `done` event so the assistant message finalizes before the insights
+    // sidebar updates. Panel card events still stream after `done`.
+    const handleToolResult = (toolCall: ToolCall) => {
+      if (toolCall.name === 'update_quick_actions') {
+        const actions = (toolCall.args.actions as QuickAction[]) ?? []
+        const validActions = actions
+          .filter((action) => action.label && action.prompt)
+          .slice(0, MAX_QUICK_ACTIONS)
+        set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
+      } else {
+        useDealStore.getState().applyToolCall(toolCall)
+      }
+    }
+
+    const assistantMessage = await invokeStream({
+      onChunk: (text) => set({ streamingText: text, isRetrying: false, isThinking: false }),
+      onToolResult: handleToolResult,
+      onTextDone: handleTextDone,
+      onNonFatalError: (message) => set({ sendError: message }),
+      onRetry: () => set({ isRetrying: true }),
+      onStep: () => set({ isThinking: true }),
+      onPanelStarted: () => {
+        useDealStore.getState().clearAiPanelCards()
+        set({ isPanelAnalyzing: true })
+      },
+      onPanelFinished: () => set({ isPanelAnalyzing: false }),
+      onCompaction: (phase) => set({ isCompacting: phase === 'started' }),
+    })
+
+    // If no tool results arrived (rare), finalize from onload
+    if (!messageFinalized) {
+      set({ aiResponseCount: newResponseCount })
+      if (assistantMessage.content.trim()) {
+        set((state) => ({
+          messages: [...state.messages, assistantMessage],
+          isSending: false,
+          streamingText: '',
+          isPanelAnalyzing: false,
+        }))
+      } else {
+        set({
+          isSending: false,
+          streamingText: '',
+          isPanelAnalyzing: false,
+        })
+      }
+    }
+
+    // Refresh sessions list (fire-and-forget)
+    get()
+      .loadSessions()
+      .catch((error) => {
+        console.warn(
+          '[chatStore] Background session refresh failed (non-critical):',
+          error instanceof Error ? error.message : error
+        )
+      })
+    await get()
+      .loadMessages(activeSessionId, { silent: true })
+      .catch((error) => {
+        console.warn(
+          '[chatStore] Background message refresh failed (non-critical):',
+          error instanceof Error ? error.message : error
+        )
+      })
+    if (onSuccess) {
+      await onSuccess()
+    }
+    set({ suppressContextWarningUntilUsageRefresh: false, isCompacting: false })
+    return true
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to send message'
+    console.error(`[chatStore] ${errorLogLabel} failed:`, message)
+    set((state) => ({
+      messages: failedMessageId
+        ? state.messages.map((msg) =>
+            msg.id === failedMessageId ? { ...msg, status: 'failed' as const } : msg
+          )
+        : state.messages,
+      isSending: false,
+      streamingText: '',
+      isRetrying: false,
+      isThinking: false,
+      isPanelAnalyzing: false,
+      ...COMPACTION_RESET_SLICE,
+      sendError: message,
+    }))
+    return false
+  }
 }
 
 interface ChatState {
@@ -120,6 +316,8 @@ interface ChatState {
   isCompacting: boolean
   /** Hide the context-usage banner until messages refresh after a send. */
   suppressContextWarningUntilUsageRefresh: boolean
+  /** When set, the composer is editing this user message for a branch send. */
+  editingUserMessageId: string | null
 
   loadSessions: () => Promise<void>
   searchSessions: (query: string) => Promise<Session[]>
@@ -154,6 +352,9 @@ interface ChatState {
   submitVinFromPanel: (vin: string) => Promise<void>
   retrySend: (messageId: string) => Promise<void>
   clearSendError: () => void
+  startEditUserMessage: (messageId: string) => void
+  cancelEditUserMessage: () => void
+  sendBranchFromEdit: (content: string, imageUri?: string, quotedCard?: QuotedCard) => Promise<void>
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -174,6 +375,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   vinAssistItems: [],
   _sessionJustCreated: false,
   _pendingSend: null,
+  editingUserMessageId: null,
   ...COMPACTION_RESET_SLICE,
 
   loadSessions: async () => {
@@ -205,14 +407,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!opts?.silent) set({ isLoading: true })
     try {
       const { messages, contextPressure } = await api.getMessages(sessionId)
-      set((s) => ({
+      set((state) => ({
         messages,
         contextPressure,
-        isLoading: opts?.silent ? s.isLoading : false,
+        isLoading: opts?.silent ? state.isLoading : false,
       }))
     } catch (err) {
       console.error('[chatStore] loadMessages failed:', err instanceof Error ? err.message : err)
       if (!opts?.silent) set({ isLoading: false })
+      throw err
     }
   },
 
@@ -238,6 +441,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isLoading: true,
       _sessionJustCreated: false,
       _pendingSend: null,
+      editingUserMessageId: null,
       ...COMPACTION_RESET_SLICE,
     })
     try {
@@ -274,6 +478,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         quickActionsUpdatedAtResponse: 0,
         isCreatingSession: false,
         _sessionJustCreated: true,
+        editingUserMessageId: null,
         ...COMPACTION_RESET_SLICE,
       }))
       useDealStore.getState().resetDealState(session.id, buyerContext)
@@ -290,7 +495,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await api.deleteSession(sessionId)
       const isActive = get().activeSessionId === sessionId
       set((state) => ({
-        sessions: state.sessions.filter((s) => s.id !== sessionId),
+        sessions: state.sessions.filter((session) => session.id !== sessionId),
         activeSessionId: isActive ? null : state.activeSessionId,
         messages: isActive ? [] : state.messages,
         vinAssistItems: isActive ? [] : state.vinAssistItems,
@@ -298,6 +503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         aiResponseCount: isActive ? 0 : state.aiResponseCount,
         quickActionsUpdatedAtResponse: isActive ? 0 : state.quickActionsUpdatedAtResponse,
         _pendingSend: isActive ? null : state._pendingSend,
+        editingUserMessageId: isActive ? null : state.editingUserMessageId,
         contextPressure: isActive ? null : state.contextPressure,
         isCompacting: isActive ? false : state.isCompacting,
         suppressContextWarningUntilUsageRefresh: isActive
@@ -349,7 +555,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...persisted,
           quotedCard,
         }
-        optimisticMessageId = userMessage.id
         set((state) => {
           let nextVinItems = [...state.vinAssistItems]
           for (const vin of detectedVins) {
@@ -424,146 +629,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
     }
 
-    try {
-      set({ suppressContextWarningUntilUsageRefresh: true, isCompacting: false })
-      // Track response count for staleness
-      const newResponseCount = get().aiResponseCount + 1
-      let messageFinalized = false
-
-      // Finalize the assistant message as soon as text streaming completes
-      // (the "done" SSE event), so the StreamingBubble is replaced by a
-      // permanent ChatBubble immediately — not seconds later on the first
-      // tool_result.
-      const handleTextDone = (finalText: string, usage?: MessageUsage, _sessionUsage?: unknown) => {
-        if (messageFinalized) return
-        messageFinalized = true
-        if (finalText.trim()) {
-          const msg: Message = {
-            id: Math.random().toString(36).substring(2),
-            sessionId: activeSessionId,
-            role: 'assistant',
-            content: finalText,
-            usage,
-            createdAt: new Date().toISOString(),
-          }
-          set((state) => ({
-            messages: [...state.messages, msg],
-            isSending: false,
-            streamingText: '',
-            isRetrying: false,
-            isThinking: false,
-            aiResponseCount: newResponseCount,
-          }))
-        } else {
-          set({
-            isSending: false,
-            streamingText: '',
-            isRetrying: false,
-            isThinking: false,
-            aiResponseCount: newResponseCount,
-          })
-        }
-      }
-
-      // Deal-driving tool results: apiClient defers callbacks until after the
-      // `done` event so the assistant message finalizes before the insights
-      // sidebar updates. Panel card events still stream after `done`.
-      const handleToolResult = (toolCall: ToolCall) => {
-        // Route tool call
-        if (toolCall.name === 'update_quick_actions') {
-          const actions = (toolCall.args.actions as QuickAction[]) ?? []
-          const validActions = actions
-            .filter((action) => action.label && action.prompt)
-            .slice(0, MAX_QUICK_ACTIONS)
-          set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
-        } else {
-          useDealStore.getState().applyToolCall(toolCall)
-        }
-      }
-
-      // Stream text chunks to the store for live display
-      const apiContent = buildMessageContent(content, quotedCard)
-      const assistantMessage = await api.sendMessage(
-        activeSessionId,
-        apiContent,
-        imageUri,
-        (text) =>
-          set({
-            streamingText: text,
-            isRetrying: false,
-            isThinking: false,
-          }),
-        handleToolResult,
-        handleTextDone,
-        () =>
-          set({
-            isRetrying: true,
-          }),
-        () => set({ isThinking: true }),
-        () => set({ isPanelAnalyzing: true }),
-        () => set({ isPanelAnalyzing: false }),
-        (phase) => {
-          set({ isCompacting: phase === 'started' })
-        },
-        _skipVinIntercept ? existingUserMessageId : undefined
-      )
-
-      // If no tool results arrived (rare), finalize from onload
-      if (!messageFinalized) {
-        set({ aiResponseCount: newResponseCount })
-        if (assistantMessage.content.trim()) {
-          set((state) => ({
-            messages: [...state.messages, assistantMessage],
-            isSending: false,
-            streamingText: '',
-            isPanelAnalyzing: false,
-          }))
-        } else {
-          set({
-            isSending: false,
-            streamingText: '',
-            isPanelAnalyzing: false,
-          })
-        }
-      }
-
-      // Refresh sessions list (fire-and-forget)
-      get()
-        .loadSessions()
-        .catch((error) => {
-          console.warn(
-            '[chatStore] Background session refresh failed (non-critical):',
-            error instanceof Error ? error.message : error
-          )
-        })
-      await get()
-        .loadMessages(activeSessionId, { silent: true })
-        .catch((error) => {
-          console.warn(
-            '[chatStore] Background message refresh failed (non-critical):',
-            error instanceof Error ? error.message : error
-          )
-        })
-      set({ suppressContextWarningUntilUsageRefresh: false, isCompacting: false })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to send message'
-      console.error('[chatStore] sendMessage failed:', message)
-      // Keep the optimistic user message but mark it as failed
-      set((state) => ({
-        messages: optimisticMessageId
-          ? state.messages.map((msg) =>
-              msg.id === optimisticMessageId ? { ...msg, status: 'failed' as const } : msg
-            )
-          : state.messages,
-        isSending: false,
-        streamingText: '',
-        isRetrying: false,
-        isThinking: false,
-        isPanelAnalyzing: false,
-        ...COMPACTION_RESET_SLICE,
-        sendError: message,
-      }))
-    }
+    const apiContent = buildMessageContent(content, quotedCard)
+    await runBuyerTurnStream({
+      get,
+      set,
+      activeSessionId,
+      failedMessageId: optimisticMessageId,
+      errorLogLabel: 'sendMessage',
+      invokeStream: (cbs) =>
+        api.sendMessage(
+          activeSessionId,
+          apiContent,
+          imageUri,
+          cbs.onChunk,
+          cbs.onToolResult,
+          cbs.onTextDone,
+          cbs.onRetry,
+          cbs.onStep,
+          cbs.onPanelStarted,
+          cbs.onPanelFinished,
+          cbs.onCompaction,
+          _skipVinIntercept ? existingUserMessageId : undefined,
+          cbs.onNonFatalError
+        ),
+    })
   },
 
   resumePendingSend: async () => {
@@ -578,8 +667,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const appendix: string[] = []
     for (const item of group) {
       if (item.status === 'confirmed' && item.decodedVehicle) {
-        const dv = item.decodedVehicle
-        const specs = [dv.year, dv.make, dv.model, dv.trim].filter(Boolean).join(' ')
+        const decodedVehicle = item.decodedVehicle
+        const specs = [
+          decodedVehicle.year,
+          decodedVehicle.make,
+          decodedVehicle.model,
+          decodedVehicle.trim,
+        ]
+          .filter(Boolean)
+          .join(' ')
         appendix.push(`[VIN ${item.vin} decoded: ${specs}]`)
       } else if (item.status === 'skipped') {
         appendix.push(`[VIN ${item.vin}: continued without decode/confirm]`)
@@ -848,12 +944,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   retrySend: async (messageId: string) => {
     const { messages, activeSessionId } = get()
-    const failedMessage = messages.find((m) => m.id === messageId && m.status === 'failed')
+    const failedMessage = messages.find(
+      (message) => message.id === messageId && message.status === 'failed'
+    )
     if (!failedMessage || !activeSessionId) return
 
     // Remove the failed message and re-send its content
     set((state) => ({
-      messages: state.messages.filter((m) => m.id !== messageId),
+      messages: state.messages.filter((message) => message.id !== messageId),
       sendError: null,
     }))
     await get().sendMessage(failedMessage.content, failedMessage.imageUri, failedMessage.quotedCard)
@@ -861,5 +959,132 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearSendError: () => {
     set({ sendError: null })
+  },
+
+  startEditUserMessage: (messageId) => {
+    if (get().isSending) return
+    if (get()._pendingSend) return
+    if (!isServerMessageId(messageId)) return
+    const userMessage = get().messages.find(
+      (message) => message.id === messageId && message.role === 'user'
+    )
+    if (!userMessage || userMessage.status === 'failed') return
+    set({ editingUserMessageId: messageId, sendError: null })
+  },
+
+  cancelEditUserMessage: () => {
+    set({ editingUserMessageId: null })
+  },
+
+  sendBranchFromEdit: async (content, imageUri, quotedCard) => {
+    const { activeSessionId, editingUserMessageId, messages } = get()
+    if (!activeSessionId || !editingUserMessageId) return
+
+    if (normalizeVinCandidates(content).length > 0) {
+      set({
+        sendError: 'Remove VINs from this edit or send a new message to use VIN assist.',
+      })
+      return
+    }
+
+    const anchorId = editingUserMessageId
+    const anchorIndex = messages.findIndex((message) => message.id === anchorId)
+    if (anchorIndex < 0) return
+
+    const keptIds = new Set(messages.slice(0, anchorIndex + 1).map((message) => message.id))
+    const apiContent = buildMessageContent(content, quotedCard)
+
+    // Optimistically mirror the backend's reset_session_commerce_state (ADR 0020):
+    // preserve buyerContext, clear deals/vehicles/panels and stale quick actions so
+    // the user does not see ghost UI between the prepare phase and the next stream emit.
+    const currentBuyerContext = useDealStore.getState().dealState?.buyerContext
+    useDealStore.getState().resetDealState(activeSessionId, currentBuyerContext)
+
+    set((state) => ({
+      messages: state.messages
+        .slice(0, anchorIndex + 1)
+        .map((message) =>
+          message.id === anchorId ? { ...message, content, imageUri, quotedCard } : message
+        ),
+      vinAssistItems: state.vinAssistItems.filter((item) => keptIds.has(item.sourceMessageId)),
+      quickActions: [],
+      quickActionsUpdatedAtResponse: 0,
+      isSending: true,
+      streamingText: '',
+      sendError: null,
+      isPanelAnalyzing: false,
+      editingUserMessageId: null,
+    }))
+
+    const success = await runBuyerTurnStream({
+      get,
+      set,
+      activeSessionId,
+      failedMessageId: anchorId,
+      errorLogLabel: 'sendBranchFromEdit',
+      invokeStream: (cbs) =>
+        api.branchFromUserMessage(
+          activeSessionId,
+          anchorId,
+          apiContent,
+          imageUri,
+          cbs.onChunk,
+          cbs.onToolResult,
+          cbs.onTextDone,
+          cbs.onRetry,
+          cbs.onStep,
+          cbs.onPanelStarted,
+          cbs.onPanelFinished,
+          cbs.onCompaction,
+          cbs.onNonFatalError
+        ),
+      onSuccess: async () => {
+        await useDealStore
+          .getState()
+          .loadDealState(activeSessionId, { strict: true })
+          .catch((error) => {
+            console.warn(
+              '[chatStore] Branch deal refresh failed (non-critical):',
+              error instanceof Error ? error.message : error
+            )
+          })
+      },
+    })
+    if (!success) {
+      let historyRefreshFailed = false
+      let dealRefreshFailed = false
+      await Promise.all([
+        get()
+          .loadMessages(activeSessionId, { silent: true })
+          .catch((error) => {
+            historyRefreshFailed = true
+            console.warn(
+              '[chatStore] Branch history refresh failed after send error:',
+              error instanceof Error ? error.message : error
+            )
+          }),
+        useDealStore
+          .getState()
+          .loadDealState(activeSessionId, { strict: true })
+          .catch((error) => {
+            dealRefreshFailed = true
+            console.warn(
+              '[chatStore] Branch deal refresh failed after send error:',
+              error instanceof Error ? error.message : error
+            )
+          }),
+      ])
+      if (historyRefreshFailed || dealRefreshFailed) {
+        const staleViewMessage =
+          historyRefreshFailed && dealRefreshFailed
+            ? 'We also could not refresh the chat or deal state, so this view may be out of date.'
+            : historyRefreshFailed
+              ? 'We also could not refresh the chat history, so this view may be out of date.'
+              : 'We also could not refresh the deal state, so this view may be out of date.'
+        set((state) => ({
+          sendError: state.sendError ? `${state.sendError} ${staleViewMessage}` : staleViewMessage,
+        }))
+      }
+    }
   },
 }))

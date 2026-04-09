@@ -1,6 +1,6 @@
 # UI Design Principles for Dealership AI
 
-**Last updated:** 2026-04-06
+**Last updated:** 2026-04-09
 
 This document explains core UX concepts that drive the frontend design. AI agents and engineers should reference it when building or refining interfaces to ensure consistent, trustworthy, and low-friction user experiences.
 
@@ -142,6 +142,8 @@ Micro-interactions make interfaces feel responsive and human instead of static a
 | **Cards** | Hover (desktop): subtle lift. Tap (mobile): opacity change. |
 | **Dashboard updates** | When numbers change from a chat response, they should feel alive — not just silently swap. |
 | **Empty states** | Fade in so empty content feels intentional, not unfinished. |
+| **Dialogs / modals** | On web, move focus into the modal portal when it opens, keep cancel/close reachable by keyboard, and do not leave focus trapped in `aria-hidden` background content. |
+| **Destructive chat edits** | Actions like "Edit from here" must explain that later replies will be removed before the user confirms. |
 
 ### Restraint
 
@@ -195,3 +197,4 @@ When building or refining UI:
 6. **Theme compliance** – No hardcoded hex values. Use Tamagui theme tokens (`$background`, `$color`, etc.), `useTheme()` for JS values, and `<Theme name="danger|warning|success">` wrappers for status surfaces. All colors defined in `lib/theme/tokens.ts`.
 7. **Touch targets** – All interactive elements must be at least 44×44px.
 8. **Chat status surfaces** – Context pressure warnings and `system`-role messages (e.g. context compaction notices) use theme tokens and subdued typography so they read as meta-information, not assistant advice.
+9. **Modal accessibility** – React Native Web modals must move focus into the portal on open and provide an explicit keyboard/tap path to cancel destructive actions.

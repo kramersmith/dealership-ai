@@ -498,7 +498,24 @@ export interface ApiService {
     onPanelFinished?: () => void,
     onCompaction?: (phase: 'started' | 'done' | 'error') => void,
     /** Stream updates this persisted user row instead of inserting (resume after VIN intercept). */
-    existingUserMessageId?: string
+    existingUserMessageId?: string,
+    onNonFatalError?: (message: string) => void
+  ): Promise<Message>
+  /** Branch timeline from a user message (truncate tail + optional commerce reset) then stream. */
+  branchFromUserMessage(
+    sessionId: string,
+    anchorUserMessageId: string,
+    content: string,
+    imageUri?: string,
+    onChunk?: (text: string) => void,
+    onToolResult?: (toolCall: ToolCall) => void,
+    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
+    onRetry?: (data: { attempt: number; reason: string }) => void,
+    onStep?: (data: { step: number }) => void,
+    onPanelStarted?: () => void,
+    onPanelFinished?: () => void,
+    onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    onNonFatalError?: (message: string) => void
   ): Promise<Message>
 
   // Deal state

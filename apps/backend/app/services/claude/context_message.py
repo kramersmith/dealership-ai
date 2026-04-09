@@ -6,6 +6,7 @@ from app.models.enums import BuyerContext, RedFlagSeverity
 from app.services.claude.prompt_deal_state import (
     build_prompt_deal_state,
     build_temporal_hint_line,
+    build_temporal_hint_line_from_user_text,
     current_utc_date_iso,
 )
 from app.services.claude.prompt_static import (
@@ -16,7 +17,11 @@ from app.services.claude.prompt_static import (
 
 
 def build_context_message(
-    deal_state_dict: dict | None, linked_messages: list[dict] | None = None
+    deal_state_dict: dict | None,
+    linked_messages: list[dict] | None = None,
+    *,
+    include_timeline_fork_reminder: bool = False,
+    user_turn_text: str | None = None,
 ) -> dict | None:
     """Build a synthetic context message with dynamic state for the current turn.
 
@@ -33,6 +38,13 @@ def build_context_message(
             "a different calendar year or month."
         )
     ]
+
+    if include_timeline_fork_reminder:
+        context_parts.append(
+            "Session branch: Structured deal and vehicle records were cleared before this turn. The chat "
+            "transcript may still mention earlier negotiation — use the current deal state below and tools "
+            "as the only source of truth for vehicles, numbers, and active deals."
+        )
 
     prompt_deal_state = build_prompt_deal_state(deal_state_dict)
 
@@ -102,6 +114,8 @@ def build_context_message(
             context_parts.append("\n".join(summary_lines))
 
         hint = build_temporal_hint_line(prompt_deal_state, today_iso)
+        if not hint and user_turn_text:
+            hint = build_temporal_hint_line_from_user_text(user_turn_text, today_iso)
         if hint:
             context_parts.append(hint)
 

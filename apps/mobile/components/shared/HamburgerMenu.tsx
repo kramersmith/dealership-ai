@@ -4,6 +4,8 @@ import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { Menu, X, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { palette } from '@/lib/theme/tokens'
+import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { useAuthStore } from '@/stores/authStore'
 
 interface MenuItem {
@@ -19,8 +21,8 @@ export function HamburgerMenu() {
   const rotation = useRef(new Animated.Value(0)).current
   const theme = useTheme()
   const router = useRouter()
-  const role = useAuthStore((s) => s.role)
-  const logout = useAuthStore((s) => s.logout)
+  const role = useAuthStore((state) => state.role)
+  const logout = useAuthStore((state) => state.logout)
 
   useEffect(() => {
     Animated.timing(rotation, {
@@ -88,7 +90,26 @@ export function HamburgerMenu() {
         transparent
         animationType="none"
         onRequestClose={() => setIsOpen(false)}
+        onShow={() =>
+          focusDomElementByIdsAfterModalShow(
+            'hamburger-menu-first-item',
+            'hamburger-menu-focus-root'
+          )
+        }
       >
+        {Platform.OS === 'web' ? (
+          <View
+            {...({ id: 'hamburger-menu-focus-root', tabIndex: -1 } as any)}
+            style={{
+              position: 'absolute',
+              width: 1,
+              height: 1,
+              opacity: 0,
+              overflow: 'hidden',
+              pointerEvents: 'none',
+            }}
+          />
+        ) : null}
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setIsOpen(false)}>
           {/* Rotated square behind dropdown — peeks out as arrow nub */}
           <View
@@ -105,9 +126,9 @@ export function HamburgerMenu() {
               borderColor: theme.borderColor?.val ?? 'transparent',
               zIndex: 1,
               ...(Platform.OS === 'web'
-                ? { boxShadow: `0 2px 8px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}` }
+                ? { boxShadow: `0 2px 8px ${theme.shadowColor?.val ?? palette.shadowOverlay}` }
                 : {
-                    shadowColor: theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)',
+                    shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
                     shadowOffset: { width: 0, height: 2 },
                     shadowOpacity: 1,
                     shadowRadius: 4,
@@ -130,7 +151,9 @@ export function HamburgerMenu() {
             zIndex={2}
             {...(Platform.OS === 'web'
               ? {
-                  style: { boxShadow: `0 4px 16px ${theme.shadowColor?.val ?? 'rgba(0,0,0,0.3)'}` },
+                  style: {
+                    boxShadow: `0 4px 16px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
+                  },
                 }
               : {
                   shadowColor: '$shadowColor',
@@ -141,9 +164,12 @@ export function HamburgerMenu() {
                 })}
           >
             {/* Menu items */}
-            {items.map((item) => (
+            {items.map((item, index) => (
               <TouchableOpacity
                 key={item.route}
+                {...(Platform.OS === 'web' && index === 0
+                  ? ({ id: 'hamburger-menu-first-item' } as any)
+                  : {})}
                 onPress={() => navigate(item.route)}
                 activeOpacity={0.6}
                 style={{ minHeight: 44 }}

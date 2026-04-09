@@ -3,6 +3,7 @@ import { ScrollView, Animated } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import type { Message, VinAssistItem } from '@/lib/types'
+import { isServerMessageId } from '@/stores/chatStore'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { ChatBubble } from './ChatBubble'
@@ -56,8 +57,8 @@ function TypingIndicator() {
       )
 
     const animations = [animate(dot1, 0), animate(dot2, 150), animate(dot3, 300)]
-    animations.forEach((a) => a.start())
-    return () => animations.forEach((a) => a.stop())
+    animations.forEach((animation) => animation.start())
+    return () => animations.forEach((animation) => animation.stop())
   }, [dot1, dot2, dot3])
 
   return (
@@ -121,6 +122,16 @@ interface ChatMessageListProps {
   bottomPadding?: number
   footer?: ReactNode
   scrollbarOpacity?: number
+  /** When set, user bubbles with server IDs show an edit affordance (branch from here). */
+  onStartEditUserMessage?: (messageId: string) => void
+  /** Message id whose text is open in the composer (scroll + highlight). */
+  editingUserMessageId?: string | null
+  /** Draft text for `editingUserMessageId` — shown live in that bubble. */
+  editingDraft?: string
+  /** Live-update draft while editing (inline bubble + composer share state). */
+  onEditingUserMessageDraftChange?: (text: string) => void
+  /** Web: Enter in the bubble submits the branch edit (same as send). */
+  onBranchEditSubmitFromBubble?: () => void
 }
 
 function withAlpha(color: string, alpha: number) {
@@ -184,9 +195,15 @@ export const ChatMessageList = memo(function ChatMessageList({
   bottomPadding = 8,
   footer,
   scrollbarOpacity = 1,
+  onStartEditUserMessage,
+  editingUserMessageId = null,
+  editingDraft = '',
+  onEditingUserMessageDraftChange,
+  onBranchEditSubmitFromBubble,
 }: ChatMessageListProps) {
   const justFinalizedId = useJustFinalizedId(messages, streamingText)
   const scrollRef = useRef<ScrollView>(null)
+  const messageLayoutY = useRef<Record<string, number>>({})
   const theme = useTheme()
 
   // Scroll to bottom when messages change
@@ -195,6 +212,22 @@ export const ChatMessageList = memo(function ChatMessageList({
       scrollRef.current?.scrollToEnd({ animated: true })
     }, 50)
   }, [messages.length])
+
+  useEffect(() => {
+    if (!editingUserMessageId) return
+    const scrollToEditTarget = () => {
+      const targetY = messageLayoutY.current[editingUserMessageId]
+      if (targetY === undefined) return
+      scrollRef.current?.scrollTo({ y: Math.max(0, targetY - 20), animated: true })
+    }
+    scrollToEditTarget()
+    const followUpScrollTimeoutId = setTimeout(scrollToEditTarget, 80)
+    const finalScrollTimeoutId = setTimeout(scrollToEditTarget, 240)
+    return () => {
+      clearTimeout(followUpScrollTimeoutId)
+      clearTimeout(finalScrollTimeoutId)
+    }
+  }, [editingUserMessageId])
 
   if (messages.length === 0 && !isSending) {
     return <EmptyState />
@@ -222,15 +255,51 @@ export const ChatMessageList = memo(function ChatMessageList({
         }
       }}
     >
-      {messages.map((msg) => {
-        const assistForMsg = vinAssistItems.filter((item) => item.sourceMessageId === msg.id)
+      {messages.map((message) => {
+        const vinAssistItemsForMessage = vinAssistItems.filter(
+          (item) => item.sourceMessageId === message.id
+        )
         return (
-          <YStack key={msg.id}>
-            <ChatBubble message={msg} skipAnimation={msg.id === justFinalizedId} />
-            {assistForMsg.length > 1 ? (
-              <MultiVinAssistCard items={assistForMsg} />
-            ) : assistForMsg.length === 1 ? (
-              <VinAssistCard item={assistForMsg[0]!} />
+          <YStack
+            key={message.id}
+            onLayout={(layoutEvent) => {
+              messageLayoutY.current[message.id] = layoutEvent.nativeEvent.layout.y
+            }}
+          >
+            <ChatBubble
+              message={message}
+              skipAnimation={message.id === justFinalizedId}
+              isEditTarget={message.role === 'user' && editingUserMessageId === message.id}
+              editedBodyText={
+                message.role === 'user' && editingUserMessageId === message.id
+                  ? editingDraft
+                  : undefined
+              }
+              onEditDraftChange={
+                message.role === 'user' && editingUserMessageId === message.id
+                  ? onEditingUserMessageDraftChange
+                  : undefined
+              }
+              onBranchEditSubmitFromBubble={
+                message.role === 'user' && editingUserMessageId === message.id
+                  ? onBranchEditSubmitFromBubble
+                  : undefined
+              }
+              onStartEdit={
+                onStartEditUserMessage &&
+                !isSending &&
+                editingUserMessageId !== message.id &&
+                message.role === 'user' &&
+                message.status !== 'failed' &&
+                isServerMessageId(message.id)
+                  ? () => onStartEditUserMessage(message.id)
+                  : undefined
+              }
+            />
+            {vinAssistItemsForMessage.length > 1 ? (
+              <MultiVinAssistCard items={vinAssistItemsForMessage} />
+            ) : vinAssistItemsForMessage.length === 1 ? (
+              <VinAssistCard item={vinAssistItemsForMessage[0]!} />
             ) : null}
           </YStack>
         )

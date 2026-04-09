@@ -115,3 +115,4 @@ assistant call until the client sends a "vin_decisions" side-channel
 - `apps/mobile/components/chat/MultiVinAssistCard.tsx`
 - `docs/backend-endpoints.md`
 - ADR-0016 (chat error resilience — still covers newly-inserted user rows)
+- ADR-0020 (timeline branch from a user message — separate from this resume path; do not overload `existing_user_message_id` for fork semantics)

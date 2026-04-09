@@ -1,15 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
-import { Modal, TouchableOpacity, Animated } from 'react-native'
+import { Modal, TouchableOpacity, Animated, Platform, View } from 'react-native'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import { AppButton } from '@/components/shared'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { api } from '@/lib/api'
 import type { VinAssistDecodedVehicle } from '@/lib/types'
 
 type InterceptPhase = 'prompt' | 'decoding' | 'decoded' | 'failed'
+
+const VIN_INTERCEPT_PRIMARY_DOM_ID = 'vin-intercept-initial-focus'
+const VIN_INTERCEPT_FOCUS_ROOT_DOM_ID = 'vin-intercept-focus-root'
 
 interface VinInterceptModalProps {
   visible: boolean
@@ -114,26 +118,53 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
     : null
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleSkip}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleSkip}
+      onShow={() =>
+        focusDomElementByIdsAfterModalShow(
+          VIN_INTERCEPT_PRIMARY_DOM_ID,
+          VIN_INTERCEPT_FOCUS_ROOT_DOM_ID
+        )
+      }
+    >
+      {Platform.OS === 'web' ? (
+        <View
+          {...({ id: VIN_INTERCEPT_FOCUS_ROOT_DOM_ID, tabIndex: -1 } as any)}
+          style={{
+            position: 'absolute',
+            width: 1,
+            height: 1,
+            opacity: 0,
+            overflow: 'hidden',
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
       <TouchableOpacity
         style={{
           flex: 1,
           backgroundColor: palette.overlay,
           justifyContent: 'center',
           alignItems: 'center',
+          paddingHorizontal: 16,
         }}
         activeOpacity={1}
         onPress={() => {
           if (phase === 'prompt' || phase === 'failed') handleSkip()
         }}
       >
-        <TouchableOpacity activeOpacity={1} onPress={() => {}}>
-          <Animated.View style={{ transform: [{ scale }], opacity: contentOpacity }}>
+        <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{ width: '100%' }}>
+          <Animated.View style={{ transform: [{ scale }], opacity: contentOpacity, width: '100%' }}>
             <YStack
               backgroundColor="$backgroundStrong"
               borderRadius="$4"
               padding="$5"
-              width={340}
+              width="100%"
+              maxWidth={340}
+              alignSelf="center"
               gap="$4"
               borderWidth={1}
               borderColor="$borderColor"
@@ -193,7 +224,13 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
               {/* Action buttons */}
               {phase === 'prompt' ? (
                 <YStack gap="$2">
-                  <AppButton minHeight={44} onPress={handleDecode}>
+                  <AppButton
+                    minHeight={44}
+                    onPress={handleDecode}
+                    {...(Platform.OS === 'web'
+                      ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
+                      : {})}
+                  >
                     Decode VIN
                   </AppButton>
                   <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
@@ -204,7 +241,13 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
 
               {phase === 'decoded' ? (
                 <YStack gap="$2">
-                  <AppButton minHeight={44} onPress={handleConfirm}>
+                  <AppButton
+                    minHeight={44}
+                    onPress={handleConfirm}
+                    {...(Platform.OS === 'web'
+                      ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
+                      : {})}
+                  >
                     Yes, use this vehicle
                   </AppButton>
                   <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
@@ -215,7 +258,13 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
 
               {phase === 'failed' ? (
                 <YStack gap="$2">
-                  <AppButton minHeight={44} onPress={handleDecode}>
+                  <AppButton
+                    minHeight={44}
+                    onPress={handleDecode}
+                    {...(Platform.OS === 'web'
+                      ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
+                      : {})}
+                  >
                     Retry Decode
                   </AppButton>
                   <AppButton minHeight={44} variant="outline" onPress={handleSkip}>

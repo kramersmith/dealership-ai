@@ -9,8 +9,8 @@ import {
   type TextInputContentSizeChangeEventData,
   type TextInputKeyPressEventData,
 } from 'react-native'
-import { XStack, useTheme } from 'tamagui'
-import { Camera, Send } from '@tamagui/lucide-icons'
+import { XStack, YStack, Text, useTheme } from 'tamagui'
+import { Camera, Send, X } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import { useVisibilityTransition } from '@/hooks/useAnimatedValue'
 import { VoiceButton } from './VoiceButton'
@@ -23,12 +23,29 @@ interface ChatInputProps {
   disabled?: boolean
   placeholder?: string
   visible?: boolean
+  /** When set with ``onControlledTextChange``, the field is controlled (branch edit). */
+  controlledText?: string | null
+  onControlledTextChange?: (text: string) => void
+  /** Shown above the row while editing an earlier message. */
+  editModeBanner?: { onCancel: () => void } | null
+  /** When non-null, focuses the composer (stable per message being edited). */
+  editingMessageId?: string | null
 }
 
-export function ChatInput({ onSend, disabled, placeholder, visible = true }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  disabled,
+  placeholder,
+  visible = true,
+  controlledText,
+  onControlledTextChange,
+  editModeBanner,
+  editingMessageId = null,
+}: ChatInputProps) {
   const [text, setText] = useState('')
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT)
   const [focused, setFocused] = useState(false)
+  const inputRef = useRef<TextInput>(null)
   const theme = useTheme()
   const focusAnim = useRef(new Animated.Value(0)).current
   const { opacity: visibilityOpacity, translateY: visibilityTranslateY } = useVisibilityTransition({
@@ -51,37 +68,66 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
     outputRange: [theme.borderColor?.val as string, theme.borderColorHover?.val as string],
   })
 
+  const isControlled =
+    controlledText !== undefined && controlledText !== null && onControlledTextChange !== undefined
+  const fieldValue = isControlled ? controlledText : text
+  const setFieldValue = isControlled ? onControlledTextChange : setText
+
+  useEffect(() => {
+    if (!editingMessageId) return
+    // Branch edit: user types in the highlighted bubble or here; do not steal focus
+    // from the bubble TextInput on mount.
+    if (isControlled) return
+    const focusTimeoutId = setTimeout(() => inputRef.current?.focus(), 50)
+    return () => clearTimeout(focusTimeoutId)
+  }, [editingMessageId, isControlled])
+
+  useEffect(() => {
+    if (!isControlled) return
+    setInputHeight(MIN_INPUT_HEIGHT)
+  }, [isControlled, controlledText])
+
   const handleSend = useCallback(() => {
-    const trimmed = text.trim()
+    const trimmed = fieldValue.trim()
     if (!trimmed) return
     onSend(trimmed)
-    setText('')
-    setInputHeight(MIN_INPUT_HEIGHT)
-  }, [text, onSend])
-
-  const handleChangeText = useCallback((t: string) => {
-    setText(t)
-    if (t.length === 0) {
+    if (!isControlled) {
+      setText('')
       setInputHeight(MIN_INPUT_HEIGHT)
     }
-  }, [])
+  }, [fieldValue, onSend, isControlled])
+
+  const handleChangeText = useCallback(
+    (nextText: string) => {
+      setFieldValue(nextText)
+      if (nextText.length === 0) {
+        setInputHeight(MIN_INPUT_HEIGHT)
+      }
+    },
+    [setFieldValue]
+  )
 
   const handleContentSizeChange = useCallback(
-    (e: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-      const h = e.nativeEvent.contentSize.height
-      if (!h || h < 1) return
-      const next = Math.min(MAX_INPUT_HEIGHT, Math.max(MIN_INPUT_HEIGHT, Math.ceil(h)))
-      setInputHeight((prev) => (prev === next ? prev : next))
+    (contentSizeEvent: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      const contentHeight = contentSizeEvent.nativeEvent.contentSize.height
+      if (!contentHeight || contentHeight < 1) return
+      const nextInputHeight = Math.min(
+        MAX_INPUT_HEIGHT,
+        Math.max(MIN_INPUT_HEIGHT, Math.ceil(contentHeight))
+      )
+      setInputHeight((previousHeight) =>
+        previousHeight === nextInputHeight ? previousHeight : nextInputHeight
+      )
     },
     []
   )
 
   const handleKeyPress = useCallback(
-    (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    (keyPressEvent: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
       if (Platform.OS !== 'web') return
-      const nativeEvent = e.nativeEvent as any
+      const nativeEvent = keyPressEvent.nativeEvent as any
       if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey) {
-        e.preventDefault()
+        keyPressEvent.preventDefault()
         handleSend()
       }
     },
@@ -90,7 +136,9 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
 
   const handlePhoto = () => {
     const alertFn =
-      Platform.OS === 'web' ? (t: string, m: string) => window.alert(`${t}: ${m}`) : Alert.alert
+      Platform.OS === 'web'
+        ? (title: string, message: string) => window.alert(`${title}: ${message}`)
+        : Alert.alert
     alertFn(
       'Photo Upload',
       'Camera integration coming soon. For now, describe the deal sheet in chat.'
@@ -99,16 +147,55 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
 
   const handleVoice = () => {
     const alertFn =
-      Platform.OS === 'web' ? (t: string, m: string) => window.alert(`${t}: ${m}`) : Alert.alert
+      Platform.OS === 'web'
+        ? (title: string, message: string) => window.alert(`${title}: ${message}`)
+        : Alert.alert
     alertFn('Voice Mode', 'Voice input coming soon. Type your message for now.')
   }
 
-  const hasText = text.trim().length > 0
+  const hasText = fieldValue.trim().length > 0
+  const showSendButton = hasText || !!editModeBanner
+  const sendDisabled = disabled || !hasText
 
   return (
     <Animated.View
       style={{ opacity: visibilityOpacity, transform: [{ translateY: visibilityTranslateY }] }}
     >
+      {editModeBanner ? (
+        <YStack
+          paddingHorizontal="$3"
+          paddingTop="$2"
+          paddingBottom="$1"
+          backgroundColor="$backgroundHover"
+          borderTopWidth={1}
+          borderTopColor="$borderColor"
+        >
+          <XStack alignItems="center" justifyContent="space-between" gap="$2">
+            <Text fontSize={12} lineHeight={18} color="$placeholderColor" flex={1}>
+              Edit in the highlighted message above or here, then send.
+            </Text>
+            <TouchableOpacity
+              onPress={editModeBanner.onCancel}
+              disabled={disabled}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              {...(Platform.OS === 'web'
+                ? ({ 'aria-label': 'Cancel editing message' } as any)
+                : { accessibilityLabel: 'Cancel editing message' })}
+            >
+              <XStack
+                width={44}
+                height={44}
+                borderRadius={100}
+                alignItems="center"
+                justifyContent="center"
+              >
+                <X size={20} color="$placeholderColor" />
+              </XStack>
+            </TouchableOpacity>
+          </XStack>
+        </YStack>
+      ) : null}
       <XStack
         paddingHorizontal="$3"
         paddingTop="$2"
@@ -146,6 +233,7 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
           }}
         >
           <TextInput
+            ref={inputRef}
             style={
               {
                 fontSize: 15,
@@ -164,7 +252,12 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
             }
             placeholder={placeholder ?? 'Message...'}
             placeholderTextColor={theme.placeholderColor?.val as string}
-            value={text}
+            accessibilityLabel={
+              editModeBanner
+                ? 'Edit the highlighted message above; send applies your text and continues from there'
+                : 'Message input'
+            }
+            value={fieldValue}
             onChangeText={handleChangeText}
             onContentSizeChange={handleContentSizeChange}
             onKeyPress={handleKeyPress}
@@ -176,8 +269,19 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
           />
         </Animated.View>
 
-        {hasText ? (
-          <TouchableOpacity onPress={handleSend} disabled={disabled} activeOpacity={0.6}>
+        {showSendButton ? (
+          <TouchableOpacity
+            onPress={handleSend}
+            disabled={sendDisabled}
+            activeOpacity={0.6}
+            {...(Platform.OS === 'web'
+              ? ({
+                  'aria-label': editModeBanner ? 'Apply this edit from here' : 'Send message',
+                } as any)
+              : {
+                  accessibilityLabel: editModeBanner ? 'Apply this edit from here' : 'Send message',
+                })}
+          >
             <XStack
               width={44}
               height={44}
@@ -185,9 +289,9 @@ export function ChatInput({ onSend, disabled, placeholder, visible = true }: Cha
               backgroundColor="$brand"
               alignItems="center"
               justifyContent="center"
-              opacity={disabled ? 0.5 : 1}
+              opacity={sendDisabled ? 0.45 : 1}
             >
-              <Send size={20} color="white" />
+              <Send size={20} color="$white" />
             </XStack>
           </TouchableOpacity>
         ) : (

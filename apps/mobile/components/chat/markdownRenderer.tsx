@@ -3,12 +3,12 @@ import { ScrollView, View, Text, type StyleSheet } from 'react-native'
 import Markdown, { MarkdownIt, type RenderRules } from 'react-native-markdown-display'
 import { YStack } from 'tamagui'
 import { CopyableBlock } from './CopyableBlock'
-import { extractTextFromNode } from './markdownUtils'
 import {
   buildColumnGrowthWeights,
   buildColumnWidths,
   splitMarkdownBlocks,
 } from './markdownTableUtils'
+import { extractTextFromNode } from './markdownUtils'
 
 const chatMarkdownIt = MarkdownIt({
   typographer: true,

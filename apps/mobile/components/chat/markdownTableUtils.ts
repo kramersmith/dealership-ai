@@ -1,3 +1,10 @@
+const TABLE_LABEL_MIN_WIDTH = 72
+const TABLE_LABEL_MAX_WIDTH = 104
+const TABLE_DATA_MIN_WIDTH = 92
+const TABLE_DATA_MAX_WIDTH = 152
+const TABLE_CELL_HORIZONTAL_PADDING = 20
+const APPROX_CHAR_WIDTH = 7
+
 export type MarkdownBlock =
   | {
       type: 'markdown'
@@ -9,15 +16,15 @@ export type MarkdownBlock =
       rows: string[][]
     }
 
-const TABLE_LABEL_MIN_WIDTH = 72
-const TABLE_LABEL_MAX_WIDTH = 104
-const TABLE_DATA_MIN_WIDTH = 92
-const TABLE_DATA_MAX_WIDTH = 152
-const TABLE_CELL_HORIZONTAL_PADDING = 20
-const APPROX_CHAR_WIDTH = 7
-
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
+}
+
+function getFenceMarker(line: string): '```' | '~~~' | null {
+  const trimmed = line.trimStart()
+  if (trimmed.startsWith('```')) return '```'
+  if (trimmed.startsWith('~~~')) return '~~~'
+  return null
 }
 
 export function isMarkdownTableSeparator(line: string) {
@@ -38,6 +45,7 @@ export function splitMarkdownBlocks(source: string): MarkdownBlock[] {
   const lines = source.split('\n')
   const blocks: MarkdownBlock[] = []
   const markdownBuffer: string[] = []
+  let activeFenceMarker: '```' | '~~~' | null = null
 
   const flushMarkdownBuffer = () => {
     const content = markdownBuffer.join('\n')
@@ -51,6 +59,23 @@ export function splitMarkdownBlocks(source: string): MarkdownBlock[] {
   while (index < lines.length) {
     const line = lines[index] ?? ''
     const separator = lines[index + 1] ?? ''
+    const fenceMarker = getFenceMarker(line)
+
+    if (activeFenceMarker) {
+      markdownBuffer.push(line)
+      if (fenceMarker === activeFenceMarker) {
+        activeFenceMarker = null
+      }
+      index += 1
+      continue
+    }
+
+    if (fenceMarker) {
+      markdownBuffer.push(line)
+      activeFenceMarker = fenceMarker
+      index += 1
+      continue
+    }
 
     if (isMarkdownTableRow(line) && isMarkdownTableSeparator(separator)) {
       const candidateLines = [line, separator]

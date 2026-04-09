@@ -6,6 +6,7 @@ import * as SplashScreen from 'expo-splash-screen'
 import { TamaguiProvider, Theme } from 'tamagui'
 import config from '../tamagui.config'
 import { useThemeStore } from '@/stores/themeStore'
+import { useWebAriaHiddenFocusWorkaround } from '@/hooks/useWebAriaHiddenFocusWorkaround'
 
 export { ErrorBoundary } from 'expo-router'
 
@@ -19,7 +20,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 if (__DEV__) require('@/lib/dev/mockPanelUpdates')
 
 export default function RootLayout() {
-  const mode = useThemeStore((s) => s.mode)
+  const mode = useThemeStore((state) => state.mode)
+  useWebAriaHiddenFocusWorkaround()
 
   const [loaded, error] = useFonts({
     Inter: require('@tamagui/font-inter/otf/Inter-Regular.otf'),

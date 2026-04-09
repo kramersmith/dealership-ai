@@ -9,24 +9,40 @@ class FakeXMLHttpRequest {
   status = 200
   responseText = ''
   timeout = 0
+  method = ''
+  url = ''
+  requestBody: string | undefined = undefined
   onprogress: ((event?: unknown) => void) | null = null
   onload: ((event?: unknown) => void) | null = null
   onerror: ((event?: unknown) => void) | null = null
   ontimeout: ((event?: unknown) => void) | null = null
   requestHeaders: Record<string, string> = {}
 
-  open(_method: string, _url: string) {}
+  open(method: string, url: string) {
+    this.method = method
+    this.url = url
+  }
 
   setRequestHeader(name: string, value: string) {
     this.requestHeaders[name] = value
   }
 
-  send(_body?: string) {
+  send(body?: string) {
+    this.requestBody = body
     FakeXMLHttpRequest.instances.push(this)
+  }
+
+  abort() {
+    this.onerror?.()
   }
 
   pushEvent(eventType: string, data: unknown) {
     this.responseText += `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`
+    this.onprogress?.()
+  }
+
+  pushRaw(rawChunk: string) {
+    this.responseText += rawChunk
     this.onprogress?.()
   }
 
@@ -71,11 +87,11 @@ describe('ApiClient.sendMessage', () => {
       onTextDone
     )
 
-    const xhr = FakeXMLHttpRequest.instances.at(-1)
-    xhr?.pushEvent('tool_result', { tool: 'set_vehicle', data: { vehicle_id: 'v1' } })
-    xhr?.pushEvent('text', { chunk: 'Updated.' })
-    xhr?.pushEvent('done', { text: 'Updated.' })
-    xhr?.complete()
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('tool_result', { tool: 'set_vehicle', data: { vehicle_id: 'v1' } })
+    streamRequest?.pushEvent('text', { chunk: 'Updated.' })
+    streamRequest?.pushEvent('done', { text: 'Updated.' })
+    streamRequest?.complete()
 
     await sendPromise
     expect(order).toEqual(['done', 'tool'])
@@ -101,8 +117,8 @@ describe('ApiClient.sendMessage', () => {
       onPanelFinished
     )
 
-    const xhr = FakeXMLHttpRequest.instances.at(-1)
-    expect(xhr).toBeDefined()
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
 
     const card = {
       kind: 'notes',
@@ -112,12 +128,12 @@ describe('ApiClient.sendMessage', () => {
       priority: 'high',
     }
 
-    xhr?.pushEvent('text', { chunk: 'Hello there' })
-    xhr?.pushEvent('done', { text: 'Hello there' })
-    xhr?.pushEvent('panel_started', {})
-    xhr?.pushEvent('panel_card', { index: 0, card })
-    xhr?.pushEvent('panel_done', { cards: [card] })
-    xhr?.complete()
+    streamRequest?.pushEvent('text', { chunk: 'Hello there' })
+    streamRequest?.pushEvent('done', { text: 'Hello there' })
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushEvent('panel_card', { index: 0, card })
+    streamRequest?.pushEvent('panel_done', { cards: [card] })
+    streamRequest?.complete()
 
     await expect(sendPromise).resolves.toMatchObject({
       sessionId: 'session-1',
@@ -143,6 +159,46 @@ describe('ApiClient.sendMessage', () => {
     )
   })
 
+  it('calls onPanelStarted when the first panel event is panel_card (no panel_started)', async () => {
+    const apiClient = new ApiClient()
+    const onToolResult = vi.fn()
+    const onTextDone = vi.fn()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+
+    const sendPromise = apiClient.sendMessage(
+      'session-panel-card-first',
+      'Hello',
+      undefined,
+      undefined,
+      onToolResult,
+      onTextDone,
+      undefined,
+      undefined,
+      onPanelStarted,
+      onPanelFinished
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    const card = {
+      kind: 'notes',
+      template: 'notes',
+      title: 'What Changed',
+      content: { summary: 'Numbers moved.' },
+      priority: 'high',
+    }
+
+    streamRequest?.pushEvent('text', { chunk: 'Hello' })
+    streamRequest?.pushEvent('done', { text: 'Hello' })
+    streamRequest?.pushEvent('panel_card', { index: 0, card })
+    streamRequest?.pushEvent('panel_done', { cards: [card] })
+    streamRequest?.complete()
+
+    await sendPromise
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
+  })
+
   it('finishes panel cleanup when the stream closes without a panel terminal event', async () => {
     const apiClient = new ApiClient()
     const onPanelStarted = vi.fn()
@@ -161,9 +217,9 @@ describe('ApiClient.sendMessage', () => {
       onPanelFinished
     )
 
-    const xhr = FakeXMLHttpRequest.instances.at(-1)
-    xhr?.pushEvent('panel_started', {})
-    xhr?.complete()
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.complete()
 
     await expect(sendPromise).resolves.toMatchObject({
       sessionId: 'session-2',
@@ -191,10 +247,10 @@ describe('ApiClient.sendMessage', () => {
       onPanelFinished
     )
 
-    const xhr = FakeXMLHttpRequest.instances.at(-1)
-    xhr?.pushEvent('panel_started', {})
-    xhr?.pushEvent('panel_error', { message: 'panel failed' })
-    xhr?.complete()
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushEvent('panel_error', { message: 'panel failed' })
+    streamRequest?.complete()
 
     await expect(sendPromise).resolves.toMatchObject({
       sessionId: 'session-3',
@@ -216,17 +272,139 @@ describe('ApiClient.sendMessage', () => {
       onTextDone
     )
 
-    const xhr = FakeXMLHttpRequest.instances.at(-1)
-    xhr?.pushEvent('text', { chunk: 'Here is the comparison.' })
-    xhr?.pushEvent('done', {
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('text', { chunk: 'Here is the comparison.' })
+    streamRequest?.pushEvent('done', {
       text: 'Here is the comparison.',
     })
-    xhr?.complete()
+    streamRequest?.complete()
 
     await expect(sendPromise).resolves.toMatchObject({
       content: 'Here is the comparison.',
     })
     expect(onTextDone).toHaveBeenCalledWith('Here is the comparison.', undefined, undefined)
+  })
+
+  it('branchFromUserMessage posts to the branch endpoint and reuses the SSE parser', async () => {
+    const apiClient = new ApiClient()
+    const onTextDone = vi.fn()
+
+    const sendPromise = apiClient.branchFromUserMessage(
+      'session-branch',
+      'message-anchor',
+      'Edited question',
+      undefined,
+      undefined,
+      undefined,
+      onTextDone
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest?.method).toBe('POST')
+    expect(streamRequest?.url).toContain('/chat/session-branch/messages/message-anchor/branch')
+    expect(streamRequest?.requestBody).toBe(
+      JSON.stringify({ content: 'Edited question', image_url: null })
+    )
+
+    streamRequest?.pushEvent('text', { chunk: 'Branched reply' })
+    streamRequest?.pushEvent('done', { text: 'Branched reply' })
+    streamRequest?.complete()
+
+    await expect(sendPromise).resolves.toMatchObject({
+      sessionId: 'session-branch',
+      content: 'Branched reply',
+    })
+    expect(onTextDone).toHaveBeenCalledWith('Branched reply', undefined, undefined)
+  })
+
+  it('preserves backend detail text for non-2xx stream responses', async () => {
+    const apiClient = new ApiClient()
+
+    const sendPromise = apiClient.sendMessage('session-error', 'Hello')
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
+
+    streamRequest!.responseText = JSON.stringify({ detail: 'Branch anchor must be a user message' })
+    streamRequest?.complete(422)
+
+    await expect(sendPromise).rejects.toThrow('Branch anchor must be a user message')
+  })
+
+  it('does not expose raw server error bodies for 5xx stream responses', async () => {
+    const apiClient = new ApiClient()
+
+    const sendPromise = apiClient.sendMessage('session-error', 'Hello')
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
+
+    streamRequest!.responseText = 'Traceback: database password leaked in upstream error'
+    streamRequest?.complete(500)
+
+    await expect(sendPromise).rejects.toThrow('Chat API 500')
+  })
+
+  it('does not expose raw plain-text bodies for 4xx stream responses', async () => {
+    const apiClient = new ApiClient()
+
+    const sendPromise = apiClient.sendMessage('session-error', 'Hello')
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
+
+    streamRequest!.responseText = 'Traceback: branch anchor leaked in a proxy error page'
+    streamRequest?.complete(422)
+
+    await expect(sendPromise).rejects.toThrow('Chat API 422')
+  })
+
+  it('rejects malformed SSE payloads before the done event with a protocol error', async () => {
+    const apiClient = new ApiClient()
+
+    const sendPromise = apiClient.sendMessage('session-bad-sse', 'Hello')
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
+
+    streamRequest?.pushRaw('event: text\ndata: {"chunk": "Hello"\n\n')
+
+    await expect(sendPromise).rejects.toThrow('Received an invalid response from the chat service')
+  })
+
+  it('ignores malformed post-done SSE payloads and still finishes panel cleanup', async () => {
+    const apiClient = new ApiClient()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+
+    const sendPromise = apiClient.sendMessage(
+      'session-post-done-malformed',
+      'Hello',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onPanelStarted,
+      onPanelFinished
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
+
+    streamRequest?.pushEvent('text', { chunk: 'Hello there' })
+    streamRequest?.pushEvent('done', { text: 'Hello there' })
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushRaw('event: panel_card\ndata: {"card":\n\n')
+    streamRequest?.complete()
+
+    await expect(sendPromise).resolves.toMatchObject({
+      sessionId: 'session-post-done-malformed',
+      content: 'Hello there',
+    })
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -275,6 +453,116 @@ describe('ApiClient.getMessages', () => {
   })
 })
 
+describe('ApiClient.persistUserMessage', () => {
+  afterEach(() => {
+    setAuthToken(null)
+    vi.unstubAllGlobals()
+  })
+
+  it('POSTs to /chat/{sessionId}/user-message and maps the persisted row to camelCase', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'persisted-123',
+        session_id: 'session-vin',
+        role: 'user',
+        content: 'Compare VINs 1HGBH41JXMN109186 and 2HGFC2F59KH123456',
+        image_url: null,
+        tool_calls: null,
+        usage: null,
+        created_at: '2026-01-02T00:00:00Z',
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const persisted = await apiClient.persistUserMessage(
+      'session-vin',
+      'Compare VINs 1HGBH41JXMN109186 and 2HGFC2F59KH123456'
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(calledUrl).toContain('/chat/session-vin/user-message')
+    expect(calledInit.method).toBe('POST')
+    expect(calledInit.body).toBe(
+      JSON.stringify({
+        content: 'Compare VINs 1HGBH41JXMN109186 and 2HGFC2F59KH123456',
+        image_url: null,
+      })
+    )
+
+    expect(persisted.id).toBe('persisted-123')
+    expect(persisted.sessionId).toBe('session-vin')
+    expect(persisted.role).toBe('user')
+    expect(persisted.content).toBe('Compare VINs 1HGBH41JXMN109186 and 2HGFC2F59KH123456')
+  })
+
+  it('forwards imageUri as image_url when provided', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'p2',
+        session_id: 's',
+        role: 'user',
+        content: 'see attached',
+        image_url: 'https://img/example.png',
+        tool_calls: null,
+        usage: null,
+        created_at: '2026-01-02T00:00:00Z',
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiClient.persistUserMessage('s', 'see attached', 'https://img/example.png')
+
+    const [, calledInit] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(calledInit.body).toBe(
+      JSON.stringify({ content: 'see attached', image_url: 'https://img/example.png' })
+    )
+  })
+
+  it('preserves structured JSON detail for fetch 4xx responses', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        text: async () =>
+          JSON.stringify({ detail: 'Use the branch endpoint to edit earlier history' }),
+      })
+    )
+
+    await expect(apiClient.persistUserMessage('session-x', 'hello')).rejects.toThrow(
+      'Use the branch endpoint to edit earlier history'
+    )
+  })
+
+  it('does not expose raw plain-text bodies for fetch 4xx responses', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        text: async () => 'Traceback: raw validation page from an intermediary',
+      })
+    )
+
+    await expect(apiClient.persistUserMessage('session-x', 'hello')).rejects.toThrow('API 422')
+  })
+})
+
 describe('ApiClient.sendMessage compaction SSE', () => {
   const originalXmlHttpRequest = globalThis.XMLHttpRequest
 
@@ -290,7 +578,7 @@ describe('ApiClient.sendMessage compaction SSE', () => {
   it('invokes onCompaction started then done for compaction events', async () => {
     const apiClient = new ApiClient()
     const phases: string[] = []
-    const onCompaction = vi.fn((p: 'started' | 'done' | 'error') => phases.push(p))
+    const onCompaction = vi.fn((phase: 'started' | 'done' | 'error') => phases.push(phase))
 
     const sendPromise = apiClient.sendMessage(
       'session-c',
@@ -306,12 +594,12 @@ describe('ApiClient.sendMessage compaction SSE', () => {
       onCompaction
     )
 
-    const xhr = FakeXMLHttpRequest.instances.at(-1)
-    xhr?.pushEvent('compaction_started', { reason: 'input_budget' })
-    xhr?.pushEvent('compaction_done', { first_kept_message_id: 'x' })
-    xhr?.pushEvent('text', { chunk: 'Hello.' })
-    xhr?.pushEvent('done', { text: 'Hello.' })
-    xhr?.complete()
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('compaction_started', { reason: 'input_budget' })
+    streamRequest?.pushEvent('compaction_done', { first_kept_message_id: 'x' })
+    streamRequest?.pushEvent('text', { chunk: 'Hello.' })
+    streamRequest?.pushEvent('done', { text: 'Hello.' })
+    streamRequest?.complete()
 
     await sendPromise
     expect(onCompaction).toHaveBeenCalledTimes(2)

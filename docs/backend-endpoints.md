@@ -1,6 +1,6 @@
 # Backend API Endpoints
 
-Last updated: 2026-04-08
+Last updated: 2026-04-09
 
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
@@ -440,11 +440,11 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 |---|---|---|---|
 | `content` | string | Yes | User's message text (for this turn; may include VIN appendix on resume) |
 | `image_url` | string | No | URL of an image to include (e.g., deal sheet photo) |
-| `existing_user_message_id` | string | No | If set, **updates** that existing user row’s `content` / `image_url` instead of inserting a new user message. Must belong to this session. Used after `POST .../user-message` when resuming the stream (VIN intercept complete). |
+| `existing_user_message_id` | string | No | If set, **updates** that existing user row’s `content` / `image_url` instead of inserting a new user message. Must belong to this session and must be the latest message row in the session. Used after `POST .../user-message` when resuming the stream (VIN intercept complete). Editing earlier history must use `POST .../messages/{message_id}/branch`. |
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. Core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for unrecoverable API failures. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`.
+The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. Core chat events are `text`, `tool_result`, and `done`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. After `done`, panel generation continues asynchronously via `panel_started`, `panel_card`, `panel_done`, and `panel_error`. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
 
 **`compaction_started` event** — Compaction began (heuristic input estimate crossed auto threshold):
 ```
@@ -512,7 +512,7 @@ event: panel_error
 data: {"message": "...", "attempt": 2}
 ```
 
-**`error` event** — Unrecoverable API failure (stream terminates after this event):
+**`error` event** — Safe user-visible failure. Before `done`, the stream terminates after this event. After `done`, it indicates a late persistence/update failure and the already-delivered reply should remain visible:
 ```
 event: error
 data: {"message": "AI response failed. Please try again."}
@@ -525,6 +525,7 @@ data: {"message": "AI response failed. Please try again."}
 - The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
 - Panel generation runs after `done`; incremental cards are streamed via `panel_card`, and panel-phase usage is reported on `panel_done`
 - Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals
+- The backend may emit a safe `error` event after `done` if a later persistence step fails; clients should keep the delivered reply and show the warning
 - If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
 - Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
 - Tool call results are applied to the session's deal state
@@ -537,6 +538,55 @@ data: {"message": "AI response failed. Please try again."}
 |---|---|
 | `404` | Session not found |
 | `404` | `existing_user_message_id` not found or not a user message for this session |
+| `409` | `existing_user_message_id` is not the latest message in the session; use the branch endpoint |
+
+---
+
+### POST /api/chat/{session_id}/messages/{message_id}/branch
+
+**Branch** the session from an existing **user** message: deletes any messages after that anchor when present; **always** clears `compaction_state` and `usage`, resets deals/vehicles and session-level deal JSON on `DealState` (preserves `buyer_context`); updates the anchor row’s `content` / `image_url`; then runs the same SSE chat + panel stream as `POST .../message`.
+
+**Auth required:** Yes
+
+**Path parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `session_id` | string | Session UUID |
+| `message_id` | string | Anchor message UUID — must be `role=user` in this session |
+
+**Request body:**
+
+```json
+{
+  "content": "Revised question…",
+  "image_url": null
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `content` | string | Yes | New text for the anchor user message |
+| `image_url` | string | No | Optional image URL |
+
+**Response:** `200 OK` — `text/event-stream` (same SSE event families as `POST .../message`)
+
+**Side effects (every request):**
+
+- Rows after the anchor in `(created_at, id)` order are deleted when any exist (including `system` compaction notices).
+- `compaction_state` and `usage` on the session are cleared; deals and vehicles for the session are removed and session-level deal fields on `DealState` are cleared (`buyer_context` kept), even when there is no tail to delete — so structured state matches a Cursor-style resubmit from this user turn.
+- The model context includes a short branch reminder: structured records were cleared; the transcript may still mention earlier discussion; use current deal state and tools as authoritative.
+
+**Checkpoint note:** This clears structured state to empty; it does **not** reconstruct deal rows as they were at a prior point in time (no per-message snapshots or tool replay).
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `404` | Session not found, or anchor message not in session |
+| `422` | Anchor is not a user message |
+
+See [ADR 0020](adr/0020-chat-branch-from-user-message.md).
 
 ---
 

@@ -195,14 +195,22 @@ function AnimatedCard({
       return
     }
 
-    pendingRef.current = { card, signature }
     if (isGrowthActive) {
+      pendingRef.current = { card, signature }
       const pending = pendingRef.current
       if (pending) {
         pendingRef.current = null
         runGrowthTransition(pending.card, pending.signature)
       }
+      return
     }
+
+    // Signature changed but growth is not active for this slot yet — still sync
+    // so phase and warning cards never show mismatched-era copy.
+    setVisibleCard(card)
+    visibleCardRef.current = card
+    displayedSignatureRef.current = signature
+    pendingRef.current = null
   }, [card, isGrowthActive, runGrowthTransition, signature])
 
   return (
@@ -242,28 +250,28 @@ export const InsightsPanel = memo(function InsightsPanel({
 }: {
   dealStateOverride?: DealState | null
 }) {
-  const storeDealState = useDealStore((s) => s.dealState)
+  const storeDealState = useDealStore((state) => state.dealState)
   const dealState = dealStateOverride ?? storeDealState
   const shoppingVehicles = useMemo(
     () => (dealState?.vehicles ?? []).filter((vehicle) => SHOPPING_ROLES.has(vehicle.role)),
     [dealState]
   )
   const cards = useMemo(() => {
-    const raw = (dealState?.aiPanelCards ?? []).filter(
+    const visibleCards = (dealState?.aiPanelCards ?? []).filter(
       (card) => card.kind !== 'comparison' && card.kind !== 'trade_off'
     )
-    const phaseCards = raw.filter((c) => c.kind === 'phase')
-    const rest = raw.filter((c) => c.kind !== 'phase')
-    return [...phaseCards, ...rest]
+    const phaseCards = visibleCards.filter((card) => card.kind === 'phase')
+    const nonPhaseCards = visibleCards.filter((card) => card.kind !== 'phase')
+    return [...phaseCards, ...nonPhaseCards]
   }, [dealState])
   const panelVehicleFingerprints = useMemo(() => {
-    const set = new Set<string>()
+    const fingerprints = new Set<string>()
     for (const card of cards) {
       if (card.kind !== 'vehicle') continue
-      const fp = panelCardVehicleFingerprint(card.content as Record<string, unknown>)
-      if (fp) set.add(fp)
+      const fingerprint = panelCardVehicleFingerprint(card.content as Record<string, unknown>)
+      if (fingerprint) fingerprints.add(fingerprint)
     }
-    return set
+    return fingerprints
   }, [cards])
   const parkedVehicles = useMemo(() => {
     // Every shopping vehicle except the active deal's truck, minus any already shown
@@ -275,20 +283,20 @@ export const InsightsPanel = memo(function InsightsPanel({
     if (!activeId) {
       return [] as Vehicle[]
     }
-    const activeDeal = dealState?.deals?.find((d) => d.id === activeId)
+    const activeDeal = dealState?.deals?.find((deal) => deal.id === activeId)
     if (!activeDeal) {
       return [] as Vehicle[]
     }
     const focusedVehicleId = activeDeal.vehicleId
-    return shoppingVehicles.filter((v) => {
-      if (v.id === focusedVehicleId) return false
-      const fp = shoppingVehiclePanelFingerprint(v)
-      if (panelVehicleFingerprints.has(fp)) return false
+    return shoppingVehicles.filter((vehicle) => {
+      if (vehicle.id === focusedVehicleId) return false
+      const fingerprint = shoppingVehiclePanelFingerprint(vehicle)
+      if (panelVehicleFingerprints.has(fingerprint)) return false
       return true
     })
   }, [shoppingVehicles, dealState?.activeDealId, dealState?.deals, panelVehicleFingerprints])
-  const isSending = useChatStore((s) => s.isSending)
-  const isPanelAnalyzing = useChatStore((s) => s.isPanelAnalyzing)
+  const isSending = useChatStore((state) => state.isSending)
+  const isPanelAnalyzing = useChatStore((state) => state.isPanelAnalyzing)
 
   const idCounterRef = useRef(0)
   const idByIdentityRef = useRef<Map<string, string>>(new Map())
@@ -298,7 +306,7 @@ export const InsightsPanel = memo(function InsightsPanel({
 
   const showThinking = isSending || isPanelAnalyzing
   const negotiationContext = dealState?.negotiationContext ?? null
-  const hasPhaseCard = useMemo(() => cards.some((c) => c.kind === 'phase'), [cards])
+  const hasPhaseCard = useMemo(() => cards.some((card) => card.kind === 'phase'), [cards])
   const hasSituationBar =
     Boolean(negotiationContext?.situation && negotiationContext?.stance) && !hasPhaseCard
   const renderCards = useMemo<RenderCard[]>(() => {
@@ -309,15 +317,15 @@ export const InsightsPanel = memo(function InsightsPanel({
       identityCounts.set(base, count)
       const identity = buildIdentityKey(card.kind, count)
 
-      let id = idByIdentityRef.current.get(identity)
-      if (!id) {
+      let renderCardId = idByIdentityRef.current.get(identity)
+      if (!renderCardId) {
         idCounterRef.current += 1
-        id = `insight-${idCounterRef.current}`
-        idByIdentityRef.current.set(identity, id)
+        renderCardId = `insight-${idCounterRef.current}`
+        idByIdentityRef.current.set(identity, renderCardId)
       }
 
       return {
-        id,
+        id: renderCardId,
         identity,
         signature: stableCardSignature(card),
         card,

@@ -1,6 +1,6 @@
 # Operational Guidelines
 
-**Last updated:** 2026-04-06
+**Last updated:** 2026-04-09
 
 ---
 
@@ -81,6 +81,11 @@ The login screen shows quick sign-in buttons for these accounts in dev mode (`__
 ## 4. Logging
 
 See `docs/logging-guidelines.md` for log level reference, PII rules, and configuration.
+
+Operational policy for chat/API errors:
+- User-visible errors may preserve explicit structured 4xx detail returned by our own backend when that detail is safe and actionable.
+- User-visible errors must never expose raw 5xx bodies, proxy HTML, traceback text, or upstream service payloads. Return a generic safe message instead.
+- Browser-side diagnostic logging follows the same PII rules as backend logging, including VIN masking.
 
 ## 5. Claude API Cost Control
 

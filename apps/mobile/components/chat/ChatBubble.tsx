@@ -1,7 +1,14 @@
-import { memo } from 'react'
-import { Animated, Platform } from 'react-native'
+import { memo, useEffect, useRef } from 'react'
+import {
+  Animated,
+  Platform,
+  TextInput,
+  TouchableOpacity,
+  type NativeSyntheticEvent,
+  type TextInputKeyPressEventData,
+} from 'react-native'
 import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
-import { RefreshCw } from '@tamagui/lucide-icons'
+import { RefreshCw, Undo2 } from '@tamagui/lucide-icons'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
 import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
@@ -15,6 +22,16 @@ import { QuotedCardPreview } from './QuotedCardPreview'
 interface ChatBubbleProps {
   message: Message
   skipAnimation?: boolean
+  /** Edit-from-here (branch) — only passed for eligible user messages. */
+  onStartEdit?: () => void
+  /** Composer is editing this user message — show a light ring on the bubble. */
+  isEditTarget?: boolean
+  /** Live text from the composer while this user message is being edited. */
+  editedBodyText?: string
+  /** While editing, updates shared draft (inline bubble field). */
+  onEditDraftChange?: (text: string) => void
+  /** Web: Enter without Shift sends branch edit (same as composer send). */
+  onBranchEditSubmitFromBubble?: () => void
 }
 
 function formatUsageCount(value: number) {
@@ -28,8 +45,16 @@ function formatUsageCount(value: number) {
 export const ChatBubble = memo(function ChatBubble({
   message,
   skipAnimation = false,
+  onStartEdit,
+  isEditTarget = false,
+  editedBodyText,
+  onEditDraftChange,
+  onBranchEditSubmitFromBubble,
 }: ChatBubbleProps) {
+  const bubbleInputRef = useRef<TextInput>(null)
   const isUser = message.role === 'user'
+  const userVisibleBody =
+    isUser && typeof editedBodyText === 'string' ? editedBodyText : message.content
   const isSystem = message.role === 'system'
   const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
   const theme = useTheme()
@@ -40,6 +65,28 @@ export const ChatBubble = memo(function ChatBubble({
     !isUser && message.usage
       ? `${message.usage.requests} req · ${formatUsageCount(message.usage.inputTokens)} in · ${formatUsageCount(message.usage.outputTokens)} out`
       : null
+
+  useEffect(() => {
+    if (!isUser || !isEditTarget || !onEditDraftChange) return
+    const focusBubble = () => bubbleInputRef.current?.focus()
+    const earlyFocusTimeoutId = setTimeout(focusBubble, 50)
+    const lateFocusTimeoutId = setTimeout(focusBubble, 160)
+    return () => {
+      clearTimeout(earlyFocusTimeoutId)
+      clearTimeout(lateFocusTimeoutId)
+    }
+  }, [isUser, isEditTarget, onEditDraftChange, message.id])
+
+  const handleBubbleEditKeyPress = (
+    keyPressEvent: NativeSyntheticEvent<TextInputKeyPressEventData>
+  ) => {
+    if (Platform.OS !== 'web' || !onBranchEditSubmitFromBubble) return
+    const nativeEvent = keyPressEvent.nativeEvent as { key?: string; shiftKey?: boolean }
+    if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey) {
+      keyPressEvent.preventDefault()
+      onBranchEditSubmitFromBubble()
+    }
+  }
 
   // User bubbles use white-on-brand; assistant bubbles use theme-derived colors
   const markdownStyles = buildMarkdownStyles(
@@ -93,90 +140,191 @@ export const ChatBubble = memo(function ChatBubble({
         justifyContent={isUser ? 'flex-end' : 'flex-start'}
         paddingHorizontal="$4"
         paddingVertical={isUser ? '$1' : '$0.5'}
+        alignItems={isUser ? 'flex-end' : 'flex-start'}
+        gap="$1"
       >
         <YStack
           style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
-          backgroundColor={
-            isUser ? '$brand' : useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'
-          }
-          borderRadius={useInlineAssistantLayout ? 0 : '$4'}
-          borderBottomRightRadius={isUser ? '$1' : '$4'}
-          borderBottomLeftRadius={isUser ? '$4' : useInlineAssistantLayout ? 0 : '$1'}
-          paddingHorizontal={useInlineAssistantLayout ? '$0' : '$4'}
-          paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
-          borderWidth={0}
-          borderColor="transparent"
+          flexShrink={1}
+          alignItems={isUser ? 'flex-end' : 'stretch'}
+          width={isUser ? undefined : '100%'}
         >
-          {/* Hidden sender label — invisible but included when copy-pasting */}
-          {Platform.OS === 'web' && (
-            <Text
-              style={
-                {
-                  position: 'absolute',
-                  width: 1,
-                  height: 1,
-                  margin: -1,
-                  padding: 0,
-                  overflow: 'hidden',
-                  clip: 'rect(0, 0, 0, 0)',
-                  whiteSpace: 'nowrap',
-                  borderWidth: 0,
-                  opacity: 0,
-                  pointerEvents: 'none',
-                  fontSize: 1,
-                  lineHeight: 1,
-                } as any
-              }
-              aria-hidden
+          <YStack
+            {...(!isUser ? ({ width: '100%' } as const) : {})}
+            backgroundColor={
+              isUser ? '$brand' : useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'
+            }
+            borderRadius={useInlineAssistantLayout ? 0 : '$4'}
+            borderBottomRightRadius={isUser ? '$1' : '$4'}
+            borderBottomLeftRadius={isUser ? '$4' : useInlineAssistantLayout ? 0 : '$1'}
+            paddingHorizontal={useInlineAssistantLayout ? '$0' : '$4'}
+            paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
+            borderWidth={isUser && isEditTarget ? 2 : 0}
+            borderColor="transparent"
+            style={
+              isUser && isEditTarget ? ({ borderColor: palette.whiteTint85 } as const) : undefined
+            }
+          >
+            {/* Hidden sender label — invisible but included when copy-pasting (web) */}
+            {Platform.OS === 'web' && (
+              <Text
+                style={
+                  {
+                    position: 'absolute',
+                    width: 1,
+                    height: 1,
+                    margin: -1,
+                    padding: 0,
+                    overflow: 'hidden',
+                    clip: 'rect(0, 0, 0, 0)',
+                    whiteSpace: 'nowrap',
+                    borderWidth: 0,
+                    opacity: 0,
+                    pointerEvents: 'none',
+                    fontSize: 1,
+                    lineHeight: 1,
+                  } as any
+                }
+                aria-hidden
+              >
+                {isUser ? 'You' : APP_NAME}
+                {' — '}
+                {new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+                {'\n'}
+              </Text>
+            )}
+            {message.imageUri && (
+              <YStack
+                width="100%"
+                height={150}
+                borderRadius="$2"
+                backgroundColor={isUser ? '$brandPressed' : '$backgroundHover'}
+                marginBottom="$2"
+                alignItems="center"
+                justifyContent="center"
+              >
+                <Text fontSize={12} color={isUser ? '$brandLight' : '$placeholderColor'}>
+                  [Photo attached]
+                </Text>
+              </YStack>
+            )}
+            {isUser && message.quotedCard && <QuotedCardPreview card={message.quotedCard} />}
+            {isUser ? (
+              isEditTarget && onEditDraftChange ? (
+                <TextInput
+                  ref={bubbleInputRef}
+                  value={editedBodyText ?? ''}
+                  onChangeText={onEditDraftChange}
+                  onKeyPress={handleBubbleEditKeyPress}
+                  multiline
+                  scrollEnabled
+                  textAlignVertical="top"
+                  accessibilityLabel="Edit message text"
+                  style={
+                    {
+                      fontSize: 15,
+                      lineHeight: 22,
+                      color: palette.white,
+                      padding: 0,
+                      margin: 0,
+                      minHeight: 22,
+                      maxHeight: 280,
+                      width: '100%',
+                      outlineWidth: 0,
+                    } as any
+                  }
+                  placeholderTextColor={palette.whiteTint55}
+                />
+              ) : (
+                <Text fontSize={15} lineHeight={22} color="$white">
+                  {userVisibleBody}
+                </Text>
+              )
+            ) : (
+              <YStack>
+                <ChatMarkdown style={markdownStyles}>{message.content}</ChatMarkdown>
+              </YStack>
+            )}
+            {!isUser && (
+              <Text fontSize={10} color="$placeholderColor" marginTop="$1" textAlign="left">
+                {new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+                {usageLabel ? ` · ${usageLabel}` : ''}
+              </Text>
+            )}
+            {isUser && message.status === 'failed' && (
+              <FailedMessageFooter messageId={message.id} />
+            )}
+          </YStack>
+          {isUser && onStartEdit ? (
+            <XStack
+              marginTop="$1"
+              alignItems="center"
+              justifyContent="flex-end"
+              flexWrap="wrap"
+              gap="$1.5"
+              width="100%"
             >
-              {isUser ? 'You' : APP_NAME}
-              {' — '}
+              <Text fontSize={10} lineHeight={16} color="$placeholderColor">
+                {new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+              <TouchableOpacity
+                onPress={onStartEdit}
+                activeOpacity={0.55}
+                accessibilityRole="button"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                {...(Platform.OS === 'web'
+                  ? ({
+                      'aria-label':
+                        'Revert to this message and continue the conversation from here',
+                    } as any)
+                  : {
+                      accessibilityLabel:
+                        'Revert to this message and continue the conversation from here',
+                    })}
+              >
+                <XStack
+                  minHeight={44}
+                  minWidth={44}
+                  paddingHorizontal="$3"
+                  gap="$1.5"
+                  borderRadius="$999"
+                  backgroundColor="$backgroundHover"
+                  borderWidth={1}
+                  borderColor="$borderColor"
+                  alignItems="center"
+                  justifyContent="center"
+                  {...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : {})}
+                >
+                  <Undo2 size={17} color="$brand" />
+                  <Text fontSize={12} fontWeight="600" color="$color">
+                    Edit from here
+                  </Text>
+                </XStack>
+              </TouchableOpacity>
+            </XStack>
+          ) : isUser ? (
+            <Text
+              fontSize={10}
+              color="$placeholderColor"
+              marginTop="$1"
+              textAlign="right"
+              width="100%"
+            >
               {new Date(message.createdAt).toLocaleTimeString([], {
                 hour: 'numeric',
                 minute: '2-digit',
               })}
-              {'\n'}
             </Text>
-          )}
-          {message.imageUri && (
-            <YStack
-              width="100%"
-              height={150}
-              borderRadius="$2"
-              backgroundColor={isUser ? '$brandPressed' : '$backgroundHover'}
-              marginBottom="$2"
-              alignItems="center"
-              justifyContent="center"
-            >
-              <Text fontSize={12} color={isUser ? '$brandLight' : '$placeholderColor'}>
-                [Photo attached]
-              </Text>
-            </YStack>
-          )}
-          {isUser && message.quotedCard && <QuotedCardPreview card={message.quotedCard} />}
-          {isUser ? (
-            <Text fontSize={15} lineHeight={22} color="$white">
-              {message.content}
-            </Text>
-          ) : (
-            <YStack>
-              <ChatMarkdown style={markdownStyles}>{message.content}</ChatMarkdown>
-            </YStack>
-          )}
-          <Text
-            fontSize={10}
-            color={isUser ? '$white' : '$placeholderColor'}
-            opacity={isUser ? 0.6 : 1}
-            marginTop="$1"
-            textAlign={isUser ? 'right' : 'left'}
-          >
-            {new Date(message.createdAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-            {usageLabel ? ` · ${usageLabel}` : ''}
-          </Text>
-          {isUser && message.status === 'failed' && <FailedMessageFooter messageId={message.id} />}
+          ) : null}
         </YStack>
       </XStack>
     </Animated.View>
@@ -184,7 +332,7 @@ export const ChatBubble = memo(function ChatBubble({
 })
 
 function FailedMessageFooter({ messageId }: { messageId: string }) {
-  const retrySend = useChatStore((s) => s.retrySend)
+  const retrySend = useChatStore((state) => state.retrySend)
 
   return (
     <YStack marginTop="$3" paddingTop="$3" gap="$3" width="100%" alignItems="stretch">
