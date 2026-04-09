@@ -1,6 +1,6 @@
 # Development Guide
 
-**Last updated:** 2026-04-06
+**Last updated:** 2026-04-09
 
 ---
 
@@ -15,6 +15,7 @@
 - [7. Testing](#7-testing)
 - [8. Linting & Formatting](#8-linting--formatting)
 - [9. Docker Development](#9-docker-development)
+  - [Backend logs for debugging](#backend-logs-for-debugging)
 
 ---
 
@@ -80,7 +81,7 @@ make dev-frontend
 | `DATABASE_URL` | `sqlite:///./dealership.db` | Database connection string |
 | `SECRET_KEY` | `dev-secret` | JWT signing key (change in production) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | JWT token expiry (8 hours) |
-| `CORS_ORIGINS` | `["http://localhost:8081"]` | Allowed CORS origins |
+| `CORS_ORIGINS` | `["http://localhost:8081","http://localhost:19006"]` | Allowed CORS origins |
 | `ANTHROPIC_API_KEY` | `` | Claude API key (required for chat) |
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat |
 | `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for quick actions, titles, deal assessment |
@@ -103,6 +104,11 @@ make dev-frontend
 | `CLAUDE_API_TIMEOUT` | `120` | Anthropic API timeout in seconds |
 | `CLAUDE_SDK_MAX_RETRIES` | `3` | Anthropic SDK retry count for transport-level retryable failures |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `LOG_THIRD_PARTY_LEVEL` | `WARNING` | Caps Anthropic/httpcore/httpx verbosity (`DEBUG` only when debugging SDK transport) |
+| `LOG_CHAT_HARNESS_FULL` | *(unset)* | Overrides full vs lite `chat_turn_summary`; unset means full outside production and lite in production |
+| `LOG_CHAT_HARNESS_VERBOSITY` | `normal` | Set to `verbose` for extra DEBUG harness lines (requires `LOG_LEVEL=DEBUG`) |
+| `LOG_CHAT_HARNESS_PREVIEW_MAX_CHARS` | `240` | Max length for lite `chat_turn_summary` previews |
+| `LOG_LOCAL_NDJSON_PATH` | *(empty)* | Duplicate NDJSON logs to a local file for Docker and agent workflows |
 | `NHTSA_VPIC_BASE_URL` | `https://vpic.nhtsa.dot.gov/api/vehicles` | NHTSA vPIC API base URL |
 | `VINAUDIT_API_KEY` | `` | VinAudit API key (required for history/valuation) |
 | `VINAUDIT_HISTORY_URL` | `https://marketvalue.vinaudit.com/getvehiclehistoryreport.php` | VinAudit history report URL |
@@ -149,6 +155,7 @@ All commands run from the repo root via Make.
 - `make docker-up` — Build & start containers
 - `make docker-down` — Stop containers
 - `make docker-logs` — Follow logs
+- `make backend-log-slice` — Bounded NDJSON excerpt from backend container logs (requires `jq`); see [Backend logs for debugging](#backend-logs-for-debugging)
 - `make docker-clean` — Full cleanup (removes volumes)
 
 ### Cleanup
@@ -232,6 +239,35 @@ make docker-down
 
 # Full cleanup (removes database volume)
 make docker-clean
+```
+
+### Backend logs for debugging
+
+Logs are **JSON Lines** (one object per line). See `docs/logging-guidelines.md` for the field schema and PII rules.
+
+**Primary artifact for agents (avoid terminal captures):** Raw `docker compose logs` prefixes each line with the service name, which **breaks one-line JSON**. Do not ask coding agents to read logs from the terminal for analysis.
+
+1. **Live file (recommended for Docker Compose):** With the default stack, the backend sets **`LOG_LOCAL_NDJSON_PATH=logs/backend.ndjson`** so the process writes the **same** NDJSON records to **`apps/backend/logs/backend.ndjson`** on your machine (plain JSON per line, no prefix). Point agents at that path after reproducing a bug.
+
+2. **Bounded slice:** Use `make backend-log-slice` when you need rows for a specific **`request_id`** or smaller excerpt.
+
+**Coding agents and large logs:** Do not paste unbounded `docker compose logs` output into a chat. Prefer **`apps/backend/logs/backend.ndjson`** or a **small, filtered slice**:
+
+```bash
+# After reproducing under docker compose — copy X-Request-ID from the browser Network tab
+make backend-log-slice REQUEST_ID="<paste-id>" OUT=logs/agent-last-query.ndjson
+
+# Optional filters: LEVEL=ERROR LIMIT=500 SERVICE=backend
+```
+
+The script updates a stable symlink **`logs/agent-latest.ndjson`** to the file you pass as **`OUT`** (absolute path), so you can always `tail -f logs/agent-latest.ndjson` or `@`-reference that path after a slice.
+
+The `logs/` directory is gitignored. Attach or `@`-reference the slice file or `logs/agent-latest.ndjson` instead of an entire log history.
+
+Pretty-print one line locally ([`logging-guidelines.md`](logging-guidelines.md) describes fields). Example — last `chat_turn_summary` for a request id (after slicing):
+
+```bash
+grep chat_turn_summary logs/agent-last-query.ndjson | tail -1
 ```
 
 Docker Compose runs:

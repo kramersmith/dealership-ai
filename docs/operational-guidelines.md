@@ -46,6 +46,11 @@
 | `CORS_ORIGINS` | No | localhost origins | Explicit HTTPS in production |
 | `ENV` | No | `development` | Controls seed users and dev features |
 | `LOG_LEVEL` | No | `INFO` | See logging-guidelines.md |
+| `LOG_THIRD_PARTY_LEVEL` | No | `WARNING` | Keeps Anthropic/httpcore/httpx quiet unless set to `DEBUG` for SDK debugging |
+| `LOG_CHAT_HARNESS_FULL` | No | *(unset)* | Override full vs lite `chat_turn_summary`; see `docs/logging-harness.md` |
+| `LOG_CHAT_HARNESS_VERBOSITY` | No | `normal` | Set `verbose` for extra DEBUG harness lines |
+| `LOG_CHAT_HARNESS_PREVIEW_MAX_CHARS` | No | `240` | Lite summary preview cap |
+| `LOG_LOCAL_NDJSON_PATH` | No | *(empty)* | Append duplicate NDJSON log lines to this path (clean file for dev agents; unset in hosted prod unless you want a sidecar file) |
 
 ## 3. Security
 
@@ -80,7 +85,11 @@ The login screen shows quick sign-in buttons for these accounts in dev mode (`__
 
 ## 4. Logging
 
-See `docs/logging-guidelines.md` for log level reference, PII rules, and configuration.
+See `docs/logging-guidelines.md` and `docs/logging-harness.md` for log level reference, PII rules, buyer-turn harness summaries (full vs lite), and configuration.
+
+**Production:** Configure your host or provider (for example CloudWatch Logs, Google Cloud Logging, Datadog, Fly/Railway log drains) to capture **container stdout/stderr**. The backend emits **JSON Lines** (one object per line) so you can filter by fields such as `level`, `request_id`, and `name` in the provider’s query UI. No application-side log shipper is required for the basic setup—only ingestion of the existing stream.
+
+For local development and bounded excerpts for debugging or AI assistants, use `make backend-log-slice` (see `docs/development.md`).
 
 Operational policy for chat/API errors:
 - User-visible errors may preserve explicit structured 4xx detail returned by our own backend when that detail is safe and actionable.

@@ -5,15 +5,23 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import all models so Base.metadata knows about them
-import app.models as _models  # noqa: F401
 from app.core.config import settings
-from app.db.base import Base
-from app.db.seed import seed_users
-from app.db.session import AsyncSessionLocal, sync_engine
-from app.routes import api_router
+from app.core.logging_setup import configure_logging
+from app.core.request_context import RequestContextMiddleware
 
-logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
+configure_logging(
+    settings.LOG_LEVEL,
+    third_party_level_name=settings.LOG_THIRD_PARTY_LEVEL,
+    local_ndjson_path=settings.LOG_LOCAL_NDJSON_PATH.strip() or None,
+)
+
+# Import all models so Base.metadata knows about them
+import app.models as _models  # noqa: E402,F401
+from app.db.base import Base  # noqa: E402
+from app.db.seed import seed_users  # noqa: E402
+from app.db.session import AsyncSessionLocal, sync_engine  # noqa: E402
+from app.routes import api_router  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +70,10 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
     )
+
+    application.add_middleware(RequestContextMiddleware)
 
     # Routes
     application.include_router(api_router, prefix=settings.API_PREFIX)

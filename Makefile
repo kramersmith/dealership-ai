@@ -11,7 +11,7 @@ PYTHON := $(shell test -f .venv/bin/python && echo "$(CURDIR)/.venv/bin/python" 
 	test-backend test-backend-specific test-backend-watch \
 	check-backend install-all test-all check-all check-static \
 	clean-frontend clean-backend clean \
-	docker-up docker-down docker-logs docker-clean
+	docker-up docker-down docker-logs docker-clean backend-log-slice
 
 # ================================ Help ================================
 help:
@@ -46,6 +46,7 @@ help:
 	@echo "  docker-down            Stop containers"
 	@echo "  docker-logs            Follow logs"
 	@echo "  docker-clean           Full cleanup (removes volumes)"
+	@echo "  backend-log-slice      Bounded NDJSON from Docker backend logs (jq); optional REQUEST_ID=/LEVEL=/LIMIT=/OUT=; updates logs/agent-latest.ndjson when OUT set"
 	@echo ""
 	@echo "Combined:"
 	@echo "  install-all            Install frontend + backend"
@@ -149,3 +150,8 @@ docker-logs:
 docker-clean:
 	docker compose down -v
 	docker system prune -a
+
+# Bounded log excerpt for debugging / coding agents (requires docker compose + jq).
+# Example: make backend-log-slice REQUEST_ID=abc OUT=logs/agent-last-query.ndjson
+backend-log-slice:
+	SERVICE="$(SERVICE)" REQUEST_ID="$(REQUEST_ID)" LEVEL="$(LEVEL)" LIMIT="$(LIMIT)" OUT="$(OUT)" bash scripts/backend-log-slice.sh

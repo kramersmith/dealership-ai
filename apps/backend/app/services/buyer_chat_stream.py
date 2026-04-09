@@ -19,6 +19,10 @@ from app.models.deal_state import DealState
 from app.models.enums import MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
+from app.services.chat_harness_log import (
+    log_chat_harness_verbose_event,
+    log_chat_turn_summary,
+)
 from app.services.claude import (
     CHAT_TOOLS,
     ChatLoopResult,
@@ -105,6 +109,20 @@ async def stream_buyer_chat_turn(
     )
     for chunk in compaction_result.sse_chunks:
         yield chunk
+
+    log_chat_harness_verbose_event(
+        "compaction",
+        {
+            "session_id": session_id,
+            "persisted": bool(
+                compaction_result.updated_state is not None
+                or compaction_result.system_notice_content
+            ),
+            "has_updated_state": compaction_result.updated_state is not None,
+            "system_notice_chars": len(compaction_result.system_notice_content or ""),
+            "compaction_sse_chunks": len(compaction_result.sse_chunks),
+        },
+    )
 
     if compaction_result.updated_state is not None:
         session.compaction_state = compaction_result.updated_state
@@ -219,8 +237,18 @@ async def stream_buyer_chat_turn(
         len(result.tool_calls),
         session_id,
     )
+    log_chat_harness_verbose_event(
+        "step_loop",
+        lambda: {
+            "session_id": session_id,
+            "text_length": len(result.full_text),
+            "tool_call_rows": len(result.tool_calls),
+            "tool_calls": result.tool_calls,
+        },
+    )
 
     updated_state_dict = None
+    final_panel_cards: list[dict] | None = None
     if deal_state:
         try:
             await db.refresh(deal_state)
@@ -309,6 +337,7 @@ async def stream_buyer_chat_turn(
 
             if panel_completed:
                 deal_state.ai_panel_cards = latest_cards
+                final_panel_cards = latest_cards
                 panel_tool_call = {
                     "name": "update_insights_panel",
                     "args": {"cards": latest_cards},
@@ -318,6 +347,14 @@ async def stream_buyer_chat_turn(
                     "Persisted %d AI panel cards, session_id=%s",
                     len(latest_cards),
                     session_id,
+                )
+                log_chat_harness_verbose_event(
+                    "panel",
+                    {
+                        "session_id": session_id,
+                        "card_count": len(latest_cards),
+                        "kinds": [card.get("kind") for card in latest_cards],
+                    },
                 )
         except Exception:
             logger.exception("AI panel generation failed: session_id=%s", session_id)
@@ -367,3 +404,16 @@ async def stream_buyer_chat_turn(
         len(result.full_text),
         len(result.tool_calls),
     )
+    # Harness logging is observability only — never let a serialization,
+    # redaction, or handler-flush error break an otherwise-successful chat
+    # turn. The turn has already been persisted and streamed by this point.
+    try:
+        log_chat_turn_summary(
+            session_id=session_id,
+            user_text=content,
+            assistant_text=result.full_text,
+            tool_calls=result.tool_calls,
+            final_panel_cards=final_panel_cards,
+        )
+    except Exception:
+        logger.exception("chat_turn_summary emission failed: session_id=%s", session_id)

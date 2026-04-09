@@ -9,6 +9,7 @@
 - [Database Schema (SQLite dev / PostgreSQL prod)](#database-schema-sqlite-dev--postgresql-prod)
 - [FastAPI Routes](#fastapi-routes)
 - [Core Architecture: Step Loop → AI Panel Cards](#core-architecture-step-loop--ai-panel-cards)
+- [Operational Observability](#operational-observability)
 - [Key Decisions](#key-decisions)
 - [Implementation Order](#implementation-order)
 - [Verification](#verification)
@@ -82,7 +83,7 @@ dealership-ai/
 │   └── backend/                 # FastAPI backend
 │       ├── app/
 │       │   ├── main.py          # FastAPI app with lifespan handler
-│       │   ├── core/            # Config, security (JWT + bcrypt), deps
+│       │   ├── core/            # Config, security (JWT + bcrypt), deps, structured logging, request context
 │       │   ├── db/              # Session, base, seed users
 │       │   ├── models/          # SQLAlchemy ORM + enums (StrEnum)
 │       │   ├── schemas/         # Pydantic request/response
@@ -97,6 +98,7 @@ dealership-ai/
 │       │       ├── prompt_cache_signature.py  # SHA-256 fingerprinting for prompt cache break detection
 │       │       ├── turn_context.py  # TurnContext dataclass — unified execution context for step loop + tool execution
 │       │       ├── buyer_chat_stream.py  # Shared buyer-turn SSE pipeline for /message and /branch
+│       │       ├── chat_harness_log.py  # chat_turn_summary payload builder + verbose harness logging
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── session_branch.py  # Branch prepare/reset semantics for edit-from-here
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
@@ -106,6 +108,8 @@ dealership-ai/
 │       └── tests/               # Including test_seed.py, test_sessions.py
 │
 ├── docs/                        # All documentation
+├── logs/                        # Gitignored bounded log slices for local debugging / coding agents
+├── scripts/backend-log-slice.sh # NDJSON slice helper for Docker backend logs
 └── .claude/skills/              # Claude Code skills (pre-commit, update-docs)
 ```
 
@@ -257,6 +261,16 @@ POST   /simulations/{id}/complete     # End + score
 15. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
 16. Frontend `apiClient.ts` uses a shared `streamBuyerChatSse()` parser for both normal sends and branch sends. It preserves structured backend 4xx details, hides raw 5xx/proxy bodies behind generic messages, treats `error` events before `done` as fatal, and treats `error` events after `done` as non-fatal warnings so the delivered reply stays on screen. Tool result callbacks are still deferred until after `done`, and malformed post-`done` SSE payloads are ignored so panel cleanup can finish safely.
 17. On normal-send failure, optimistic user rows are marked failed or rolled back as appropriate. On branch failure, the frontend treats the server as authoritative, refreshes history/deal state, and keeps the branch truncation semantics aligned with the committed prepare step.
+
+---
+
+## Operational Observability
+
+- Backend startup configures structured JSON logging through `app/core/logging_setup.py`, so each stderr record is a single NDJSON object with stable fields such as `timestamp`, `level`, `name`, `message`, `request_id`, `http_method`, and `http_path`.
+- `RequestContextMiddleware` (`app/core/request_context.py`) honors a safe inbound `X-Request-ID` or generates a replacement, binds it to contextvars for the full request, echoes it on the response, and exposes it to browser clients via CORS.
+- When `LOG_LOCAL_NDJSON_PATH` is set, the backend duplicates those same records to a clean local file (no `docker compose logs` prefix). Docker Compose sets this to `apps/backend/logs/backend.ndjson` by default for local debugging.
+- Successful buyer turns emit a single `chat_turn_summary` INFO log after persistence. The payload shape is `full` outside production by default and `lite` in production by default, with explicit override via `LOG_CHAT_HARNESS_FULL`.
+- `scripts/backend-log-slice.sh` provides bounded, request-id-filtered excerpts from Docker backend logs and maintains `logs/agent-latest.ndjson` as a stable symlink for humans and coding agents.
 
 **New session flow (buyer):**
 1. Buyer lands on the chats list (`/(app)/chats`), the buyer home screen. If no sessions exist, ContextPicker shows as an empty state with three situation cards: "Researching", "Have a deal to review", "At the dealership".

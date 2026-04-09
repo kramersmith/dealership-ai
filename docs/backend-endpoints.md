@@ -5,6 +5,8 @@ Last updated: 2026-04-09
 Base URL: `/api`
 Authentication: Bearer token in `Authorization` header (unless noted otherwise)
 
+All responses may include a validated `X-Request-ID` header. Browser clients can read it because CORS exposes the header, and local debugging tools use it to filter structured backend logs.
+
 ## Table of Contents
 
 1. [Auth](#auth)

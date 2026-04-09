@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import pytest_asyncio
 from app.core.deps import get_db
@@ -13,6 +15,8 @@ from app.models.vehicle import Vehicle
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ── Sync engine + session (DDL, pure model tests, route test setup) ──
 TEST_DATABASE_URL = "sqlite:///./test.db"

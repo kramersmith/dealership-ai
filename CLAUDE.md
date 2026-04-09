@@ -134,8 +134,10 @@ Key patterns:
 ### Environment
 
 Both apps use `.env` files (copy from `.env.example`). Key variables:
-- Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_FAST_MODEL`, `CLAUDE_CONTEXT_INPUT_BUDGET`, `CLAUDE_COMPACTION_*` (buyer context compaction; see ADR 0017), `CLAUDE_STREAM_IDLE_TIMEOUT`, `CLAUDE_STREAM_MAX_RETRIES`, `CLAUDE_API_TIMEOUT`, `CLAUDE_SDK_MAX_RETRIES`, `CLAUDE_MAX_TOKENS_RETRIES`, `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR`, `CLAUDE_MAX_TOKENS_CAP`, `CORS_ORIGINS`, `VINAUDIT_API_KEY`, `NHTSA_VPIC_BASE_URL`, `VINAUDIT_HISTORY_URL`, `VINAUDIT_VALUATION_URL`
+- Backend: `DATABASE_URL`, `SECRET_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_FAST_MODEL`, `CLAUDE_CONTEXT_INPUT_BUDGET`, `CLAUDE_COMPACTION_*` (buyer context compaction; see ADR 0017), `CLAUDE_STREAM_IDLE_TIMEOUT`, `CLAUDE_STREAM_MAX_RETRIES`, `CLAUDE_API_TIMEOUT`, `CLAUDE_SDK_MAX_RETRIES`, `CLAUDE_MAX_TOKENS_RETRIES`, `CLAUDE_MAX_TOKENS_ESCALATION_FACTOR`, `CLAUDE_MAX_TOKENS_CAP`, `CORS_ORIGINS`, `VINAUDIT_API_KEY`, `NHTSA_VPIC_BASE_URL`, `VINAUDIT_HISTORY_URL`, `VINAUDIT_VALUATION_URL`, `LOG_LOCAL_NDJSON_PATH` (optional clean NDJSON file; see `docs/development.md`)
 - Frontend: Connects to real FastAPI backend
+
+**Backend logs for coding agents:** Do **not** use raw IDE terminal / `docker compose logs` output (compose prefixes break NDJSON). Prefer **`apps/backend/logs/backend.ndjson`** when using Docker Compose (enabled by default via `LOG_LOCAL_NDJSON_PATH`) or **`make backend-log-slice … OUT=logs/…`** — then read that file or `logs/agent-latest.ndjson`. See `docs/logging-harness.md` and `docs/development.md`. Follow **`.claude/skills/backend-log-harness/SKILL.md`** when debugging logs, `chat_turn_summary`, or insights panel payloads.
 
 ## Commit Conventions
 

@@ -172,6 +172,14 @@ graph TB
 
 - Allowed origins configured via `CORS_ORIGINS` environment variable.
 - Defaults: `http://localhost:8081`, `http://localhost:19006`.
+- Responses expose `X-Request-ID` so browser clients can correlate a request with backend logs.
+
+### Observability and Request Correlation
+
+- Backend logging is structured JSON Lines (NDJSON) on stderr, with stable fields including `timestamp`, `level`, `name`, `message`, `request_id`, `http_method`, and `http_path`.
+- `RequestContextMiddleware` accepts a safe inbound `X-Request-ID` or generates a fresh one when the provided value is blank or unsafe, then echoes the validated value on the response.
+- Buyer chat turns append a `chat_turn_summary` INFO log after persistence. The payload is `full` by default outside production and `lite` by default in production, controlled by `LOG_CHAT_HARNESS_FULL` and `LOG_CHAT_HARNESS_PREVIEW_MAX_CHARS`.
+- For local debugging, `LOG_LOCAL_NDJSON_PATH` duplicates the same NDJSON records to a clean file, and `make backend-log-slice` produces bounded excerpts filtered by `request_id`.
 
 ### Environment Secrets
 
@@ -248,6 +256,8 @@ data: {"cards": [{"type": "briefing", "title": "Hold Firm", "content": {"body": 
 ```
 
 The `done` event marks chat text completion only. Panel generation continues in the same SSE stream and is represented by `panel_*` events. An `error` emitted before `done` is fatal for that turn. An `error` emitted after `done` is a non-fatal warning: the user-visible reply was already delivered, but a later save or post-stream update failed. The final persisted assistant usage summary includes both chat-phase and panel-phase usage.
+
+All HTTP responses may include an `X-Request-ID` header for correlation; chat and panel debugging workflows rely on that value to filter structured backend logs.
 
 For detailed endpoint schemas (request/response bodies, status codes), see the Pydantic schemas in `apps/backend/app/schemas/`.
 

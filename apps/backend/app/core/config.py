@@ -1,6 +1,14 @@
 from pathlib import Path
+from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.log_redact import DEFAULT_PREVIEW_MAX_CHARS
+
+ChatHarnessVerbosity = Literal["normal", "verbose"]
+_HARNESS_VERBOSITY_NORMAL: ChatHarnessVerbosity = "normal"
+_HARNESS_VERBOSITY_VERBOSE: ChatHarnessVerbosity = "verbose"
 
 # Backend root = directory that contains the `app/` package (…/apps/backend).
 # Avoid cwd-relative ".env" so Docker / uvicorn always load the same file as compose `env_file`.
@@ -11,6 +19,16 @@ _ENV_FILE = _BACKEND_ROOT / ".env"
 class Settings(BaseSettings):
     ENV: str = "development"
     LOG_LEVEL: str = "INFO"
+    # Cap anthropic/httpcore/httpx noise; set DEBUG only when debugging transport/SDK.
+    LOG_THIRD_PARTY_LEVEL: str = "WARNING"
+    # Chat harness (see docs/logging-harness.md, docs/adr/0021-chat-harness-logging.md).
+    # When unset, full payloads run for non-production ENV; production uses lite unless true.
+    LOG_CHAT_HARNESS_FULL: bool | None = None
+    LOG_CHAT_HARNESS_VERBOSITY: ChatHarnessVerbosity = _HARNESS_VERBOSITY_NORMAL
+    LOG_CHAT_HARNESS_PREVIEW_MAX_CHARS: int = DEFAULT_PREVIEW_MAX_CHARS
+    # Duplicate NDJSON log records to this path (plain JSON lines; no Docker prefix).
+    # Relative paths resolve against the process cwd (typically apps/backend).
+    LOG_LOCAL_NDJSON_PATH: str = ""
     API_PREFIX: str = "/api"
     DATABASE_URL: str = "sqlite:///./dealership.db"
     SECRET_KEY: str = "dev-secret"  # SECURITY: must override via env var in production
@@ -60,6 +78,41 @@ class Settings(BaseSettings):
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
     )
+
+    @field_validator("LOG_CHAT_HARNESS_VERBOSITY", mode="before")
+    @classmethod
+    def _normalize_harness_verbosity(cls, value: object) -> object:
+        # Treat unset/empty env var as the default; any other value is validated
+        # against the Literal below and raises on typos so misconfig is visible.
+        if value is None or value == "":
+            return _HARNESS_VERBOSITY_NORMAL
+        if isinstance(value, str):
+            normalized = value.lower().strip()
+            return normalized or _HARNESS_VERBOSITY_NORMAL
+        return value
+
+    @field_validator("LOG_CHAT_HARNESS_PREVIEW_MAX_CHARS", mode="before")
+    @classmethod
+    def _normalize_preview_max_chars(cls, value: object) -> int:
+        if value in (None, ""):
+            return DEFAULT_PREVIEW_MAX_CHARS
+        if not isinstance(value, (str, int, float)):
+            return DEFAULT_PREVIEW_MAX_CHARS
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_PREVIEW_MAX_CHARS
+        if parsed < 1:
+            return DEFAULT_PREVIEW_MAX_CHARS
+        return parsed
+
+    def chat_harness_includes_full_payload(self) -> bool:
+        if self.LOG_CHAT_HARNESS_FULL is not None:
+            return self.LOG_CHAT_HARNESS_FULL
+        return (self.ENV or "").lower() != "production"
+
+    def chat_harness_is_verbose(self) -> bool:
+        return self.LOG_CHAT_HARNESS_VERBOSITY == _HARNESS_VERBOSITY_VERBOSE
 
 
 settings = Settings()

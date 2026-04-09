@@ -30,3 +30,4 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0018](0018-multi-vehicle-panel-and-chat-tables.md) | Multi-vehicle panel presentation and chat-rendered comparison tables | Accepted | 2026-04 |
 | [0019](0019-pre-persisted-user-messages-for-vin-intercept.md) | Pre-persisted user messages for gated pre-stream flows (VIN intercept) | Accepted | 2026-04 |
 | [0020](0020-chat-branch-from-user-message.md) | Branch chat timeline from a user message | Accepted | 2026-04 |
+| [0021](0021-chat-harness-logging.md) | Chat harness logging (full vs lite `chat_turn_summary`) | Accepted | 2026-04 |

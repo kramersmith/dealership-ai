@@ -28,6 +28,8 @@ services:
       - SECRET_KEY=change-me
       - CORS_ORIGINS=["http://localhost:8081","http://localhost:19006"]
       - LOG_LEVEL=DEBUG
+      # Clean NDJSON on the host at apps/backend/logs/backend.ndjson (no compose prefix)
+      - LOG_LOCAL_NDJSON_PATH=logs/backend.ndjson
     command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
     depends_on:
       - db
