@@ -66,6 +66,8 @@ class ChatLoopResult:
         self.usage_summary: dict[str, int] = empty_usage_summary()
         self.prompt_cache_breaks: int = 0
         self.prompt_cache_chat_last: dict[str, str] | None = None
+        self.interrupted: bool = False
+        self.interrupted_reason: str | None = None
 
 
 # Maximum steps (LLM call → tool execution cycles) per turn
@@ -83,6 +85,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     emit_done_event: bool = True,
     linked_messages: list[dict] | None = None,
     prompt_cache_prior_chat: dict[str, str] | None = None,
+    is_cancelled=None,
 ) -> AsyncGenerator[str, None]:
     """Step loop: call Claude with tools, execute tool calls, repeat until text response.
 
@@ -121,6 +124,11 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
     prev_step_tool_names: frozenset[str] = frozenset()
 
     for step in range(max_steps):
+        if is_cancelled and is_cancelled():
+            result.interrupted = True
+            result.interrupted_reason = "user_stop"
+            logger.info("Chat loop interrupted before step %d", step)
+            return
         turn_context = turn_context.for_step(step)
         # Notify frontend that a new step is starting (after tool execution)
         # so it can show a thinking indicator during multi-step loops.
@@ -214,6 +222,7 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                     messages=messages,
                     tools=cached_tools,
                     tool_choice=tool_choice_param,
+                    is_cancelled=is_cancelled,
                 ):
                     if event_type == "retry":
                         retry_payload = dict(event_data)
@@ -316,6 +325,18 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                         0, {"type": "text", "text": step_text}
                     )
 
+            except claude_streaming.StreamInterruptedError:
+                if (
+                    step_text
+                    and result.full_text
+                    and not result.full_text.endswith(("\n", " "))
+                ):
+                    result.full_text += "\n\n"
+                result.full_text += step_text
+                result.interrupted = True
+                result.interrupted_reason = "user_stop"
+                logger.info("Chat loop interrupted during step %d", step)
+                return
             except anthropic.APIStatusError as exc:
                 if is_anthropic_low_credit_error(exc):
                     org = exc.response.headers.get("anthropic-organization-id")
@@ -484,6 +505,13 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
         if turn_context.deal_state:
             execution_plan = build_execution_plan(tool_use_blocks)
             for batch in execution_plan:
+                if is_cancelled and is_cancelled():
+                    result.interrupted = True
+                    result.interrupted_reason = "user_stop"
+                    logger.info(
+                        "Chat loop interrupted before tool batch at step %d", step
+                    )
+                    return
                 async for tool_block, outcome in execute_tool_batch(
                     batch,
                     turn_context,
@@ -529,6 +557,15 @@ async def stream_chat_loop(  # noqa: C901 — step loop has inherent complexity
                             "content": json.dumps({"status": "ok"}),
                         }
                     )
+                    if is_cancelled and is_cancelled():
+                        result.interrupted = True
+                        result.interrupted_reason = "user_stop"
+                        logger.info(
+                            "Chat loop interrupted after tool [%s] at step %d",
+                            tool_name,
+                            step,
+                        )
+                        return
         else:
             for tool_block in tool_use_blocks:
                 tool_name = tool_block["name"]

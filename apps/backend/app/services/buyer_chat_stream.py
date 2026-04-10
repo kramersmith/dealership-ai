@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.deal_state import DealState
-from app.models.enums import MessageRole
+from app.models.enums import MessageCompletionStatus, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.services.chat_harness_log import (
@@ -33,8 +33,12 @@ from app.services.claude import (
 )
 from app.services.compaction import project_for_model, run_auto_compaction_if_needed
 from app.services.deal_state import deal_state_to_dict
-from app.services.panel import stream_ai_panel_cards_with_usage
+from app.services.panel import (
+    PanelGenerationInterrupted,
+    stream_ai_panel_cards_with_usage,
+)
 from app.services.post_chat_processing import update_session_metadata
+from app.services.turn_cancellation import TurnCancellationState
 from app.services.turn_context import TurnContext
 from app.services.usage_tracking import (
     SessionUsageSummary,
@@ -59,6 +63,21 @@ def _error_sse(message: str) -> str:
     return f"event: error\ndata: {json.dumps({'message': message})}\n\n"
 
 
+def _interrupted_sse(
+    *,
+    text: str,
+    reason: str,
+    assistant_message_id: str | None = None,
+    usage_summary: dict[str, int] | None = None,
+) -> str:
+    payload: dict[str, Any] = {"text": text, "reason": reason}
+    if assistant_message_id:
+        payload["assistant_message_id"] = assistant_message_id
+    if usage_summary is not None:
+        payload["usage"] = _message_usage_payload(usage_summary)
+    return f"event: interrupted\ndata: {json.dumps(payload)}\n\n"
+
+
 async def stream_buyer_chat_turn(
     *,
     db: AsyncSession,
@@ -73,6 +92,7 @@ async def stream_buyer_chat_turn(
     linked_messages: list[dict] | None,
     system_prompt: list[dict[str, Any]],
     include_timeline_fork_reminder: bool = False,
+    turn_state: TurnCancellationState,
 ) -> AsyncIterator[str]:
     """Run compaction, user row upsert, chat loop, panel, and final commit; yield SSE chunks."""
     result = ChatLoopResult()
@@ -107,6 +127,13 @@ async def stream_buyer_chat_turn(
         context_message,
         linked_messages,
     )
+    if turn_state.is_cancelled():
+        logger.info("Turn interrupted before chat loop: session_id=%s", session_id)
+        yield _interrupted_sse(
+            text="",
+            reason=turn_state.cancel_reason or "user_stop",
+        )
+        return
     for chunk in compaction_result.sse_chunks:
         yield chunk
 
@@ -184,6 +211,22 @@ async def stream_buyer_chat_turn(
         yield _error_sse("We could not save your message. Please try again.")
         return
 
+    async def _persist_interrupted_assistant(text: str, reason: str) -> Message:
+        interrupted_assistant = Message(
+            session_id=session_id,
+            role=MessageRole.ASSISTANT,
+            content=text,
+            tool_calls=result.tool_calls if result.tool_calls else None,
+            usage=_message_usage_payload(result.usage_summary),
+            completion_status=MessageCompletionStatus.INTERRUPTED.value,
+            interrupted_at=datetime.now(timezone.utc),
+            interrupted_reason=reason,
+        )
+        db.add(interrupted_assistant)
+        await db.commit()
+        await db.refresh(interrupted_assistant)
+        return interrupted_assistant
+
     prefix, tail = project_for_model(history_local, session.compaction_state)
     messages = build_messages(
         tail,
@@ -216,6 +259,7 @@ async def stream_buyer_chat_turn(
             emit_done_event=False,
             linked_messages=linked_messages,
             prompt_cache_prior_chat=session_usage.prompt_cache_chat_last,
+            is_cancelled=turn_state.is_cancelled,
         ):
             yield sse_event
     except Exception:
@@ -229,6 +273,50 @@ async def stream_buyer_chat_turn(
     if result.failed:
         logger.error("Step loop failed: session_id=%s", session_id)
         await _remove_orphan_user_message("failed step loop")
+        return
+
+    if result.interrupted:
+        reason = result.interrupted_reason or turn_state.cancel_reason or "user_stop"
+        try:
+            interrupted_assistant = await _persist_interrupted_assistant(
+                result.full_text,
+                reason,
+            )
+        except Exception:
+            logger.exception(
+                "Interrupted assistant persist failed: session_id=%s", session_id
+            )
+            await db.rollback()
+            await _remove_orphan_user_message("interrupted assistant persist failure")
+            yield _error_sse(
+                "We could not save the interrupted response. Please try again."
+            )
+            return
+
+        if result.usage_summary.get("requests", 0) > 0:
+            session_usage.add_request(
+                build_request_usage(
+                    model=settings.CLAUDE_MODEL,
+                    usage_summary=result.usage_summary,
+                )
+            )
+
+        session.usage = session_usage.to_dict()
+        session.updated_at = datetime.now(timezone.utc)
+        try:
+            await db.commit()
+        except Exception:
+            logger.exception(
+                "Interrupted final db.commit failed: session_id=%s", session_id
+            )
+            await db.rollback()
+
+        yield _interrupted_sse(
+            text=result.full_text,
+            reason=reason,
+            assistant_message_id=interrupted_assistant.id,
+            usage_summary=result.usage_summary,
+        )
         return
 
     logger.debug(
@@ -280,6 +368,7 @@ async def stream_buyer_chat_turn(
         return
 
     yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary)})}\n\n"
+    turn_state.done_emitted = True
 
     all_messages = [
         {"role": message.role, "content": message.content}
@@ -292,6 +381,7 @@ async def stream_buyer_chat_turn(
         panel_started = False
         panel_finished = False
         panel_completed = False
+        turn_state.phase = "panel"
         try:
             panel_usage_summary: dict[str, int] | None = None
             latest_cards: list[dict] = []
@@ -306,9 +396,18 @@ async def stream_buyer_chat_turn(
                 all_messages,
                 session_id=session_id,
                 panel_prompt_cache=panel_prompt_cache,
+                is_cancelled=turn_state.is_cancelled,
             ):
+                if turn_state.is_cancelled() and panel_started:
+                    panel_finished = True
+                    yield (
+                        "event: panel_interrupted\n"
+                        f"data: {json.dumps({'reason': turn_state.cancel_reason or 'user_stop'})}\n\n"
+                    )
+                    break
                 if panel_event.type == "panel_started":
                     panel_started = True
+                    turn_state.panel_started = True
                     yield f"event: panel_started\ndata: {json.dumps(panel_event.data)}\n\n"
                 elif panel_event.type == "panel_done":
                     panel_finished = True
@@ -354,6 +453,13 @@ async def stream_buyer_chat_turn(
                         "card_count": len(latest_cards),
                         "kinds": [card.get("kind") for card in latest_cards],
                     },
+                )
+        except PanelGenerationInterrupted:
+            logger.info("Panel generation interrupted: session_id=%s", session_id)
+            if panel_started and not panel_finished:
+                yield (
+                    "event: panel_interrupted\n"
+                    f"data: {json.dumps({'reason': turn_state.cancel_reason or 'user_stop'})}\n\n"
                 )
         except Exception:
             logger.exception("AI panel generation failed: session_id=%s", session_id)
@@ -416,3 +522,5 @@ async def stream_buyer_chat_turn(
         )
     except Exception:
         logger.exception("chat_turn_summary emission failed: session_id=%s", session_id)
+    finally:
+        turn_state.phase = "done"

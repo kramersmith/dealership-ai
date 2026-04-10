@@ -1,13 +1,16 @@
+import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
 from app.core.deps import get_current_user, get_db
+from app.core.config import settings
 from app.models.deal_state import DealState
-from app.models.enums import MessageRole
+from app.models.enums import MessageCompletionStatus, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
@@ -17,17 +20,26 @@ from app.schemas.chat import (
     ContextPressureResponse,
     MessageResponse,
     MessagesListResponse,
+    PanelRefreshResponse,
     PersistUserMessageRequest,
+    StopTurnRequest,
+    StopTurnResponse,
 )
 from app.services.buyer_chat_stream import stream_buyer_chat_turn
 from app.services.claude import build_context_message, build_system_prompt
 from app.services.compaction import compute_session_context_pressure
 from app.services.deal_state import deal_state_to_dict
+from app.services.panel import generate_ai_panel_cards_with_usage
 from app.services.session_branch import (
     BranchAnchorNotFoundError,
     BranchAnchorNotUserError,
     prepare_session_branch_from_user_message,
 )
+from app.services.turn_cancellation import (
+    TurnAlreadyActiveError,
+    turn_cancellation_registry,
+)
+from app.services.usage_tracking import SessionUsageSummary, build_request_usage
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +108,20 @@ async def _stream_buyer_turn_response(
     body_image_url: str | None,
     resumed_user_row: Message | None,
     include_timeline_fork_reminder: bool,
+    user_id: str,
 ) -> StreamingResponse:
     """Build shared chat-turn context and return an SSE StreamingResponse."""
+    try:
+        turn_state = await turn_cancellation_registry.start_turn(
+            session_id=session_id,
+            user_id=user_id,
+        )
+    except TurnAlreadyActiveError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="A turn is already active for this session",
+        ) from error
+
     history = await _load_session_history(session_id, db)
     deal_state, deal_state_dict, linked_messages = await _load_deal_and_linked_context(
         session, db
@@ -105,21 +129,29 @@ async def _stream_buyer_turn_response(
     system_prompt = build_system_prompt()
 
     async def generate():
-        async for chunk in stream_buyer_chat_turn(
-            db=db,
-            session=session,
-            session_id=session_id,
-            content=body_content,
-            image_url=body_image_url,
-            resumed_user_row=resumed_user_row,
-            history=history,
-            deal_state=deal_state,
-            deal_state_dict=deal_state_dict,
-            linked_messages=linked_messages,
-            system_prompt=system_prompt,
-            include_timeline_fork_reminder=include_timeline_fork_reminder,
-        ):
-            yield chunk
+        try:
+            yield (
+                "event: turn_started\n"
+                f"data: {json.dumps({'turn_id': turn_state.turn_id})}\n\n"
+            )
+            async for chunk in stream_buyer_chat_turn(
+                db=db,
+                session=session,
+                session_id=session_id,
+                content=body_content,
+                image_url=body_image_url,
+                resumed_user_row=resumed_user_row,
+                history=history,
+                deal_state=deal_state,
+                deal_state_dict=deal_state_dict,
+                linked_messages=linked_messages,
+                system_prompt=system_prompt,
+                include_timeline_fork_reminder=include_timeline_fork_reminder,
+                turn_state=turn_state,
+            ):
+                yield chunk
+        finally:
+            await turn_cancellation_registry.end_turn(turn_state)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -134,6 +166,9 @@ def _message_response_from_model(message: Message) -> MessageResponse:
         tool_calls=message.tool_calls,
         panel_cards=message.panel_cards,
         usage=message.usage,
+        completion_status=MessageCompletionStatus(message.completion_status),
+        interrupted_at=message.interrupted_at,
+        interrupted_reason=message.interrupted_reason,
         created_at=message.created_at,
     )
 
@@ -182,6 +217,7 @@ async def send_message(
         body_image_url=body.image_url,
         resumed_user_row=resumed_user_row,
         include_timeline_fork_reminder=False,
+        user_id=user.id,
     )
 
 
@@ -239,7 +275,97 @@ async def branch_from_user_message(
         body_image_url=body.image_url,
         resumed_user_row=resumed_user_row,
         include_timeline_fork_reminder=True,
+        user_id=user.id,
     )
+
+
+@router.post("/{session_id}/stop", response_model=StopTurnResponse)
+async def stop_turn(
+    session_id: str,
+    body: StopTurnRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _load_session_or_404(session_id, user, db)
+    result = await turn_cancellation_registry.cancel_turn(
+        session_id=session_id,
+        user_id=user.id,
+        turn_id=body.turn_id,
+        reason=body.reason,
+    )
+    if result.outcome == "turn_mismatch":
+        raise HTTPException(
+            status_code=409,
+            detail="The provided turn_id does not match the active turn",
+        )
+    return StopTurnResponse(
+        status=result.outcome,
+        turn_id=result.turn_id,
+        cancelled=result.cancelled,
+    )
+
+
+@router.post("/{session_id}/panel-refresh", response_model=PanelRefreshResponse)
+async def refresh_insights_panel(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await _load_session_or_404(session_id, user, db)
+    deal_state = await db.scalar(
+        select(DealState).where(DealState.session_id == session_id)
+    )
+    if deal_state is None:
+        raise HTTPException(status_code=404, detail="Deal state not found")
+
+    latest_assistant = await db.scalar(
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.role == MessageRole.ASSISTANT.value,
+        )
+        .order_by(desc(Message.created_at), desc(Message.id))
+        .limit(1)
+    )
+    if latest_assistant is None:
+        raise HTTPException(
+            status_code=409, detail="No assistant message available to refresh"
+        )
+
+    history_rows = (
+        (
+            await db.execute(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.created_at, Message.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    model_history = [{"role": row.role, "content": row.content} for row in history_rows]
+
+    cards, _usage = await generate_ai_panel_cards_with_usage(
+        await deal_state_to_dict(deal_state, db),
+        latest_assistant.content,
+        model_history,
+        session_id=session_id,
+    )
+    deal_state.ai_panel_cards = cards
+    latest_assistant.panel_cards = cards
+    session_usage = SessionUsageSummary.from_dict(session.usage)
+    if _usage.get("requests", 0) > 0:
+        session_usage.add_request(
+            build_request_usage(
+                model=settings.CLAUDE_MODEL,
+                usage_summary=_usage,
+            )
+        )
+    session.usage = session_usage.to_dict()
+    session.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return PanelRefreshResponse(cards=cards, assistant_message_id=latest_assistant.id)
 
 
 @router.post("/{session_id}/user-message", response_model=MessageResponse)

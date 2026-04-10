@@ -10,7 +10,7 @@ import {
   type TextInputKeyPressEventData,
 } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
-import { Camera, Send, X } from '@tamagui/lucide-icons'
+import { Camera, Send, Square, X } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import { useVisibilityTransition } from '@/hooks/useAnimatedValue'
 import { VoiceButton } from './VoiceButton'
@@ -20,7 +20,10 @@ const MAX_INPUT_HEIGHT = 118
 
 interface ChatInputProps {
   onSend: (content: string, imageUri?: string) => void
+  onStop?: () => void
   disabled?: boolean
+  isGenerating?: boolean
+  isStopRequested?: boolean
   placeholder?: string
   visible?: boolean
   /** When set with ``onControlledTextChange``, the field is controlled (branch edit). */
@@ -34,7 +37,10 @@ interface ChatInputProps {
 
 export function ChatInput({
   onSend,
+  onStop,
   disabled,
+  isGenerating = false,
+  isStopRequested = false,
   placeholder,
   visible = true,
   controlledText,
@@ -154,6 +160,7 @@ export function ChatInput({
   }
 
   const hasText = fieldValue.trim().length > 0
+  const showStopButton = isGenerating && !!onStop
   const showSendButton = hasText || !!editModeBanner
   const sendDisabled = disabled || !hasText
 
@@ -269,7 +276,36 @@ export function ChatInput({
           />
         </Animated.View>
 
-        {showSendButton ? (
+        {showStopButton ? (
+          <TouchableOpacity
+            onPress={onStop}
+            disabled={isStopRequested}
+            activeOpacity={0.6}
+            {...(Platform.OS === 'web'
+              ? ({ 'aria-label': 'Stop generation' } as any)
+              : {
+                  accessibilityLabel: 'Stop generation',
+                })}
+          >
+            <XStack
+              width={44}
+              height={44}
+              borderRadius={100}
+              backgroundColor="$backgroundHover"
+              borderWidth={1}
+              borderColor="$borderColor"
+              alignItems="center"
+              justifyContent="center"
+              opacity={isStopRequested ? 0.45 : undefined}
+            >
+              <Square
+                size={16}
+                color="rgb(176, 179, 184)"
+                fill="rgb(176, 179, 184)"
+              />
+            </XStack>
+          </TouchableOpacity>
+        ) : showSendButton ? (
           <TouchableOpacity
             onPress={handleSend}
             disabled={sendDisabled}

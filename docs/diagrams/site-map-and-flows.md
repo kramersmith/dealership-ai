@@ -1,6 +1,6 @@
 # Site Map and User Flows
 
-**Last updated:** 2026-04-09
+**Last updated:** 2026-04-10
 
 ---
 
@@ -102,6 +102,7 @@ flowchart TD
     CHAT --> |Send message| AI[Send Message to AI]
     AI --> |AI responds via SSE| STREAM[Stream Response]
     STREAM --> |text events| BUBBLES[Chat Bubbles Update]
+    STREAM --> |Stop button| INTERRUPT[Interrupted\nPartial text kept]
     STREAM --> |tool_result events| DASHBOARD[Dashboard Updates]
     DASHBOARD --> PHASE[Deal Phase]
     DASHBOARD --> NUMBERS[Deal Numbers]

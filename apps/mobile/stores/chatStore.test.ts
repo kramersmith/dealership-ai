@@ -20,6 +20,9 @@ const baseState = {
   isRetrying: false,
   isThinking: false,
   isPanelAnalyzing: false,
+  activeTurnId: null,
+  isStopRequested: false,
+  panelInterruptionNotice: null,
   insightsPanelCommitGeneration: 0,
   vinAssistItems: [] as VinAssistItem[],
   _sessionJustCreated: false,
@@ -79,6 +82,7 @@ describe('useChatStore.sendMessage', () => {
   const originalGetMessages = api.getMessages
   const originalGetDealState = api.getDealState
   const originalPersistUserMessage = api.persistUserMessage
+  const originalStopGeneration = api.stopGeneration
 
   beforeEach(() => {
     useChatStore.setState(baseState)
@@ -92,6 +96,7 @@ describe('useChatStore.sendMessage', () => {
     api.getMessages = originalGetMessages
     api.getDealState = originalGetDealState
     api.persistUserMessage = originalPersistUserMessage
+    api.stopGeneration = originalStopGeneration
     useDealStore.setState({ dealState: null, isLoading: false, dismissedFlagIds: new Set() })
   })
 
@@ -570,6 +575,9 @@ describe('useChatStore.sendMessage', () => {
         _onPanelStarted,
         _onPanelFinished,
         _onCompaction,
+        _onTurnStarted,
+        _onInterrupted,
+        _onPanelInterrupted,
         existingUserMessageId
       ) => {
         sentContent = content
@@ -614,6 +622,69 @@ describe('useChatStore.sendMessage', () => {
     await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
 
     expect(useChatStore.getState().suppressContextWarningUntilUsageRefresh).toBe(false)
+  })
+
+  it('stopGeneration finalizes partial assistant text as interrupted', async () => {
+    let triggerInterrupt: (() => void) | undefined
+    api.sendMessage = vi.fn(
+      async (
+        _sessionId,
+        _content,
+        _imageUri,
+        onChunk,
+        _onToolResult,
+        _onTextDone,
+        _onRetry,
+        _onStep,
+        _onPanelStarted,
+        _onPanelFinished,
+        _onCompaction,
+        onTurnStarted,
+        onInterrupted
+      ) => {
+        onTurnStarted?.({ turnId: 'turn-stop-1' })
+        onChunk?.('Partial reply')
+        await new Promise<void>((resolve) => {
+          triggerInterrupt = () => {
+            onInterrupted?.({
+              text: 'Partial reply',
+              reason: 'user_stop',
+              assistantMessageId: 'assistant-stop-1',
+            })
+            resolve()
+          }
+        })
+        return {
+          id: 'assistant-stop-1',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'Partial reply',
+          completionStatus: 'interrupted',
+          interruptedReason: 'user_stop',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+    api.stopGeneration = vi.fn(async () => ({
+      status: 'cancelled',
+      turnId: 'turn-stop-1',
+      cancelled: true,
+    })) as typeof api.stopGeneration
+
+    const sendPromise = useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await useChatStore.getState().stopGeneration()
+    triggerInterrupt?.()
+    await sendPromise
+
+    const state = useChatStore.getState()
+    const lastAssistant = [...state.messages]
+      .reverse()
+      .find((message) => message.role === 'assistant')
+    expect(lastAssistant?.completionStatus).toBe('interrupted')
+    expect(lastAssistant?.content).toBe('Partial reply')
+    expect(state.isSending).toBe(false)
+    expect(state.activeTurnId).toBeNull()
   })
 
   it('clears user sending status once the assistant turn starts processing', async () => {

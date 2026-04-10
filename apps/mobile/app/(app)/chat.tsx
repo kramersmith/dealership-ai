@@ -296,9 +296,12 @@ export default function ChatScreen() {
     isSending,
     isLoading,
     streamingText,
+    isStopRequested,
+    isPanelAnalyzing,
     pendingQueueItems,
     canBranchEdit,
     send,
+    stopGeneration,
     handleQuickAction,
   } = useChat(activeSessionId)
   const editingUserMessageId = useChatStore((state) => state.editingUserMessageId)
@@ -412,6 +415,9 @@ export default function ChatScreen() {
         quickActions: [],
         aiResponseCount: 0,
         quickActionsUpdatedAtResponse: 0,
+        activeTurnId: null,
+        isStopRequested: false,
+        panelInterruptionNotice: null,
         _sessionJustCreated: false,
         contextPressure: null,
         isCompacting: false,
@@ -575,6 +581,9 @@ export default function ChatScreen() {
       quickActions: [],
       aiResponseCount: 0,
       quickActionsUpdatedAtResponse: 0,
+      activeTurnId: null,
+      isStopRequested: false,
+      panelInterruptionNotice: null,
       _sessionJustCreated: false,
       contextPressure: null,
       isCompacting: false,
@@ -960,6 +969,9 @@ export default function ChatScreen() {
         <ChatInput
           onSend={handleDirectSend}
           disabled={false}
+          isGenerating={isSending || isPanelAnalyzing}
+          isStopRequested={isStopRequested}
+          onStop={() => void stopGeneration()}
           placeholder={
             showContextPicker
               ? 'Or just tell me what\u2019s going on'

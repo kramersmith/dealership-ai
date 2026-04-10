@@ -17,6 +17,15 @@ class MessageRole(StrEnum):
     SYSTEM = "system"
 
 
+class MessageCompletionStatus(StrEnum):
+    # The assistant turn reached normal terminal completion (`done` SSE).
+    COMPLETE = "complete"
+    # User intentionally stopped generation before normal completion (`interrupted` SSE).
+    INTERRUPTED = "interrupted"
+    # The turn ended unsuccessfully due to a non-user failure path (`error` semantics).
+    FAILED = "failed"
+
+
 class DealPhase(StrEnum):
     RESEARCH = "research"
     INITIAL_CONTACT = "initial_contact"

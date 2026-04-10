@@ -11,6 +11,10 @@ export function useChat(sessionId: string | null) {
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const clearQueue = useChatStore((s) => s.clearQueue)
+  const stopGeneration = useChatStore((s) => s.stopGeneration)
+  const isStopRequested = useChatStore((s) => s.isStopRequested)
+  const isPanelAnalyzing = useChatStore((s) => s.isPanelAnalyzing)
+  const panelInterruptionNotice = useChatStore((s) => s.panelInterruptionNotice)
   const recoverQueueStall = useChatStore((s) => s.recoverQueueStall)
   const removeQueuedMessage = useChatStore((s) => s.removeQueuedMessage)
   const queueBySession = useChatStore((s) => s.queueBySession)
@@ -73,6 +77,9 @@ export function useChat(sessionId: string | null) {
     isSending,
     isLoading,
     streamingText,
+    isStopRequested,
+    isPanelAnalyzing,
+    panelInterruptionNotice,
     queuedCount,
     firstQueuedPreview,
     pendingQueueItems,
@@ -80,6 +87,7 @@ export function useChat(sessionId: string | null) {
     isQueueDispatching,
     canBranchEdit,
     send,
+    stopGeneration,
     handleQuickAction,
     clearQueue,
     recoverQueueStall,

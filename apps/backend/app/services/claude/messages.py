@@ -4,6 +4,28 @@ from app.core.config import settings
 from app.services.claude.prompt_static import SYSTEM_PROMPT_STATIC
 
 
+def _cacheable_text(value: object) -> bool:
+    return isinstance(value, str) and value != ""
+
+
+def _cacheable_block(block: object) -> bool:
+    if not isinstance(block, dict):
+        return False
+    if block.get("type") != "text":
+        return True
+    return _cacheable_text(block.get("text"))
+
+
+def _set_cache_control_on_last_cacheable_block(blocks: list[dict]) -> list[dict]:
+    for idx in range(len(blocks) - 1, -1, -1):
+        block = blocks[idx]
+        if not _cacheable_block(block):
+            continue
+        blocks[idx] = {**block, "cache_control": {"type": "ephemeral"}}
+        break
+    return blocks
+
+
 def replace_context_message(
     messages: list[dict],
     context_message: dict | None,
@@ -52,12 +74,12 @@ def move_message_cache_breakpoint(messages: list[dict]) -> None:
     # Add breakpoint to the last content block of the last message
     last_msg = messages[-1]
     content = last_msg.get("content")
-    if isinstance(content, str):
+    if _cacheable_text(content):
         last_msg["content"] = [
             {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
         ]
     elif isinstance(content, list) and content:
-        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
+        last_msg["content"] = _set_cache_control_on_last_cacheable_block(content)
 
 
 def build_system_prompt() -> list[dict]:
@@ -107,7 +129,7 @@ def build_messages(
         entry: dict = {"role": msg["role"], "content": msg["content"]}
         # Cache breakpoint on the last history message
         if i == len(history_slice) - 1:
-            if isinstance(entry["content"], str):
+            if _cacheable_text(entry["content"]):
                 entry["content"] = [
                     {
                         "type": "text",
@@ -116,11 +138,9 @@ def build_messages(
                     }
                 ]
             elif isinstance(entry["content"], list):
-                last_block = {
-                    **entry["content"][-1],
-                    "cache_control": {"type": "ephemeral"},
-                }
-                entry["content"] = [*entry["content"][:-1], last_block]
+                entry["content"] = _set_cache_control_on_last_cacheable_block(
+                    entry["content"]
+                )
         messages.append(entry)
 
     # New user message (uncached — changes every turn/request)

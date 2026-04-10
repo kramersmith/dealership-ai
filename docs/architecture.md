@@ -121,7 +121,7 @@ dealership-ai/
 
 **chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, usage JSON, compaction_state JSON nullable, timestamps). `usage` stores the cumulative per-session Claude ledger: request counts, token totals, cache token totals, per-model totals, and computed USD cost. `compaction_state` holds rolling summary + verbatim-tail pointer for long-chat projection (ADR 0017). Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
 
-**messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, created_at)
+**messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, completion_status [MessageCompletionStatus enum: complete/interrupted/failed], interrupted_at nullable, interrupted_reason nullable, created_at)
 
 **vehicles** — (id, session_id, role [VehicleRole enum: primary/candidate/trade_in], year, make, model, trim, cab_style, bed_length, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing committed pick (`primary`), known-but-uncommitted shopping candidate (`candidate`, e.g. inserted by VIN intercept), and trade-in. Deal routing treats `primary` and `candidate` as the unified "shopping" set. Candidate vehicles do NOT steal `active_deal_id` focus on creation (ADR 0018). Canonical identity fields remain user-stated or user-confirmed; VIN decode records stay in `vehicle_decodes` until explicit confirmation promotes them into the main row. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
 
@@ -165,6 +165,7 @@ All domain values use Python `StrEnum` for type safety:
 | `UserRole` | `buyer`, `dealer` |
 | `SessionType` | `buyer_chat`, `dealer_sim` |
 | `MessageRole` | `user`, `assistant`, `system` |
+| `MessageCompletionStatus` | `complete`, `interrupted`, `failed` |
 | `DealPhase` | `research`, `initial_contact`, `test_drive`, `negotiation`, `financing`, `closing` |
 | `ScoreStatus` | `red`, `yellow`, `green` |
 | `BuyerContext` | `researching`, `reviewing_deal`, `at_dealership` |
@@ -198,8 +199,10 @@ These are used with the quick sign-in buttons on the login screen (visible only 
 
 ```
 POST   /chat/{session_id}/user-message # Pre-persist user message (no stream) — used by VIN intercept gated flows (ADR 0019)
-POST   /chat/{session_id}/message    # Send message → SSE stream (text/tool_result/retry/step/error/done + compaction_* + panel_started/panel_done/panel_error); accepts optional existing_user_message_id to resume on the latest pre-persisted row
+POST   /chat/{session_id}/message    # Send message → SSE stream (turn_started/text/tool_result/retry/step/error + terminal done|interrupted + compaction_* + panel_started/panel_done/panel_interrupted/panel_error); accepts optional existing_user_message_id to resume on the latest pre-persisted row
 POST   /chat/{session_id}/messages/{message_id}/branch # Edit-from-here: delete messages after anchor when any; always reset commerce/usage/compaction; then same SSE stream (ADR 0020)
+POST   /chat/{session_id}/stop       # Cancel active turn (optional turn_id guard)
+POST   /chat/{session_id}/panel-refresh # Regenerate panel cards for latest assistant turn without a new chat turn
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
 GET    /chat/{session_id}/messages    # { messages, context_pressure } — history + estimated context use (see ADR 0017)
 

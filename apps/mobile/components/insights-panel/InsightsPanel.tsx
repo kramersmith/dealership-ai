@@ -1,9 +1,10 @@
-import { useRef, useEffect, useCallback, useMemo, memo } from 'react'
-import { Animated, Easing } from 'react-native'
-import { YStack, XStack, Text } from 'tamagui'
+import { useRef, useEffect, useCallback, useMemo, memo, useState } from 'react'
+import { Animated, Easing, Platform } from 'react-native'
+import { YStack, XStack, Text, Button } from 'tamagui'
 import { BarChart3, Sparkles } from '@tamagui/lucide-icons'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { api } from '@/lib/api'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import type { AiPanelCard, DealState, QuotedCard, Vehicle } from '@/lib/types'
 import { useDealStore } from '@/stores/dealStore'
@@ -212,6 +213,7 @@ export const InsightsPanel = memo(function InsightsPanel({
 }: {
   dealStateOverride?: DealState | null
 }) {
+  const [isRefreshingAfterInterruption, setIsRefreshingAfterInterruption] = useState(false)
   const storeDealState = useDealStore((state) => state.dealState)
   const dealState = dealStateOverride ?? storeDealState
   const shoppingVehicles = useMemo(
@@ -253,6 +255,7 @@ export const InsightsPanel = memo(function InsightsPanel({
   }, [shoppingVehicles, dealState?.activeDealId, dealState?.deals, panelVehicleFingerprints])
   const isSending = useChatStore((state) => state.isSending)
   const isPanelAnalyzing = useChatStore((state) => state.isPanelAnalyzing)
+  const panelInterruptionNotice = useChatStore((state) => state.panelInterruptionNotice)
   const insightsPanelCommitGeneration = useChatStore((state) => state.insightsPanelCommitGeneration)
   const prefersReducedMotion = usePrefersReducedMotion()
 
@@ -326,6 +329,40 @@ export const InsightsPanel = memo(function InsightsPanel({
       .getState()
       .sendMessage(text, undefined, quotedCard, false, undefined, 'card_reply')
   }, [])
+  const dismissPanelInterruptionNotice = useCallback(
+    () => useChatStore.setState({ panelInterruptionNotice: null }),
+    []
+  )
+  const refreshPanelAfterInterruption = useCallback(async () => {
+    const activeSessionId = useChatStore.getState().activeSessionId
+    if (!activeSessionId) return
+    setIsRefreshingAfterInterruption(true)
+    try {
+      const refreshed = await api.refreshInsightsPanel(activeSessionId)
+      useDealStore.getState().applyToolCall({
+        name: 'update_insights_panel',
+        args: {
+          cards: refreshed.cards,
+          assistantMessageId: refreshed.assistantMessageId,
+        },
+      })
+      useChatStore.setState((state) => ({
+        panelInterruptionNotice: null,
+        messages: state.messages.map((message) =>
+          message.id === refreshed.assistantMessageId
+            ? { ...message, panelCards: refreshed.cards }
+            : message
+        ),
+      }))
+    } catch (error) {
+      console.warn(
+        '[InsightsPanel] refreshInsightsPanel failed:',
+        error instanceof Error ? error.message : error
+      )
+    } finally {
+      setIsRefreshingAfterInterruption(false)
+    }
+  }, [])
 
   if (cards.length === 0 && !hasSituationBar) {
     return (
@@ -340,6 +377,59 @@ export const InsightsPanel = memo(function InsightsPanel({
     <YStack flex={1} paddingHorizontal="$4" paddingTop="$4" gap="$3">
       <PanelHeader thinking={showThinking} />
       <PanelUpdatingBanner visible={showThinking} prefersReducedMotion={prefersReducedMotion} />
+      {panelInterruptionNotice ? (
+        <XStack
+          alignItems="center"
+          gap="$2"
+          paddingVertical="$2"
+          paddingHorizontal="$3"
+          borderRadius={10}
+          borderWidth={1}
+          borderColor="$borderColor"
+          backgroundColor="$backgroundHover"
+        >
+          <Text fontSize={12} color="$placeholderColor" flex={1}>
+            Insights update stopped.
+          </Text>
+          <Button
+            size="$3"
+            minHeight={44}
+            paddingHorizontal="$3"
+            borderRadius="$3"
+            onPress={refreshPanelAfterInterruption}
+            disabled={isRefreshingAfterInterruption}
+            pressStyle={{ opacity: 0.85 }}
+            {...(Platform.OS === 'web'
+              ? ({
+                  'aria-label': isRefreshingAfterInterruption
+                    ? 'Refreshing insights'
+                    : 'Refresh insights after interruption',
+                } as any)
+              : {
+                  accessibilityLabel: isRefreshingAfterInterruption
+                    ? 'Refreshing insights'
+                    : 'Refresh insights after interruption',
+                })}
+          >
+            <Button.Text fontSize={11}>
+              {isRefreshingAfterInterruption ? 'Refreshing...' : 'Refresh insights'}
+            </Button.Text>
+          </Button>
+          <Button
+            size="$3"
+            minHeight={44}
+            paddingHorizontal="$3"
+            borderRadius="$3"
+            onPress={dismissPanelInterruptionNotice}
+            pressStyle={{ opacity: 0.85 }}
+            {...(Platform.OS === 'web'
+              ? ({ 'aria-label': 'Dismiss interruption notice' } as any)
+              : { accessibilityLabel: 'Dismiss interruption notice' })}
+          >
+            <Button.Text fontSize={11}>Dismiss</Button.Text>
+          </Button>
+        </XStack>
+      ) : null}
       {hasSituationBar ? <SituationBar context={negotiationContext!} /> : null}
       <Animated.View
         style={{

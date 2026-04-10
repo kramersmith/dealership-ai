@@ -13,6 +13,7 @@ import type {
 } from '@/lib/types'
 import { MAX_QUICK_ACTIONS } from '@/lib/constants'
 import { api } from '@/lib/api'
+import { CLIENT_ABORT_ERROR } from '@/lib/apiClient'
 import { useDealStore } from './dealStore'
 
 /** Default values for compaction-related state, shared across all session-reset paths. */
@@ -20,6 +21,13 @@ const COMPACTION_RESET_SLICE = {
   contextPressure: null as ContextPressure | null,
   isCompacting: false,
   suppressContextWarningUntilUsageRefresh: false,
+} as const
+
+/** Default values for turn-cancellation state, shared across all turn-end / session-reset paths. */
+const TURN_STATE_RESET_SLICE = {
+  activeTurnId: null as string | null,
+  isStopRequested: false,
+  panelInterruptionNotice: null as { reason: string; at: string } | null,
 } as const
 
 /** Build the message content sent to the backend, optionally prefixing with quoted card context. */
@@ -114,13 +122,21 @@ export function isServerMessageId(id: string): boolean {
 /** Invokes one of the buyer-chat SSE endpoints with a single shared callback bundle. */
 type BuyerTurnStreamInvoker = (callbacks: {
   onChunk: (text: string) => void
+  onTurnStarted: (data: { turnId: string }) => void
   onToolResult: (toolCall: ToolCall) => void
   onTextDone: (finalText: string, usage?: MessageUsage) => void
+  onInterrupted: (data: {
+    text: string
+    reason: string
+    assistantMessageId?: string
+    usage?: MessageUsage
+  }) => void
   onNonFatalError: (message: string) => void
   onRetry: () => void
   onStep: () => void
   onPanelStarted: () => void
   onPanelFinished: () => void
+  onPanelInterrupted: (data: { reason: string }) => void
   onCompaction: (phase: 'started' | 'done' | 'error') => void
 }) => Promise<Message>
 
@@ -220,6 +236,65 @@ async function runBuyerTurnStream(params: {
       onTextDone?.()
     }
 
+    const handleInterrupted = (payload: {
+      text: string
+      reason: string
+      assistantMessageId?: string
+      usage?: MessageUsage
+    }) => {
+      if (messageFinalized) return
+      messageFinalized = true
+      const interruptedText = payload.text ?? ''
+      if (interruptedText.trim()) {
+        const msg: Message = {
+          id: payload.assistantMessageId ?? Math.random().toString(36).substring(2),
+          sessionId: activeSessionId,
+          role: 'assistant',
+          content: interruptedText,
+          usage: payload.usage,
+          completionStatus: 'interrupted',
+          interruptedAt: new Date().toISOString(),
+          interruptedReason: payload.reason,
+          createdAt: new Date().toISOString(),
+        }
+        set((state) => ({
+          messages: [
+            ...state.messages.map((message) =>
+              failedMessageId && message.id === failedMessageId
+                ? { ...message, status: undefined }
+                : message
+            ),
+            msg,
+          ],
+          isSending: false,
+          streamingText: '',
+          isRetrying: false,
+          isThinking: false,
+          isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
+          aiResponseCount: newResponseCount,
+        }))
+      } else {
+        set((state) => ({
+          messages: state.messages.map((message) =>
+            failedMessageId && message.id === failedMessageId
+              ? { ...message, status: undefined }
+              : message
+          ),
+          isSending: false,
+          streamingText: '',
+          isRetrying: false,
+          isThinking: false,
+          isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
+          aiResponseCount: newResponseCount,
+        }))
+      }
+      onTextDone?.()
+    }
+
     // Deal-driving tool results: apiClient defers callbacks until after the
     // `done` event so the assistant message finalizes before the insights
     // sidebar updates. Panel phase arrives after `done` as atomic `panel_done`.
@@ -284,8 +359,10 @@ async function runBuyerTurnStream(params: {
         clearInFlightUserStatus()
         set({ streamingText: text, isRetrying: false, isThinking: false })
       },
+      onTurnStarted: (data) => set({ activeTurnId: data.turnId }),
       onToolResult: handleToolResult,
       onTextDone: handleTextDone,
+      onInterrupted: handleInterrupted,
       onNonFatalError: (message) => set({ sendError: message }),
       onRetry: () => {
         clearInFlightUserStatus()
@@ -297,9 +374,25 @@ async function runBuyerTurnStream(params: {
       },
       onPanelStarted: () => {
         clearInFlightUserStatus()
+        set({ panelInterruptionNotice: null })
         set({ isPanelAnalyzing: true })
       },
-      onPanelFinished: () => set({ isPanelAnalyzing: false }),
+      onPanelFinished: () =>
+        set({
+          isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
+        }),
+      onPanelInterrupted: (data) =>
+        set({
+          isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
+          panelInterruptionNotice: {
+            reason: data.reason,
+            at: new Date().toISOString(),
+          },
+        }),
       onCompaction: (phase) => {
         clearInFlightUserStatus()
         set({ isCompacting: phase === 'started' })
@@ -322,6 +415,8 @@ async function runBuyerTurnStream(params: {
           isSending: false,
           streamingText: '',
           isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
         }))
       } else {
         set((state) => ({
@@ -333,6 +428,8 @@ async function runBuyerTurnStream(params: {
           isSending: false,
           streamingText: '',
           isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
         }))
       }
     }
@@ -357,9 +454,25 @@ async function runBuyerTurnStream(params: {
     if (onSuccess) {
       await onSuccess()
     }
-    set({ suppressContextWarningUntilUsageRefresh: false, isCompacting: false })
+    set({
+      suppressContextWarningUntilUsageRefresh: false,
+      isCompacting: false,
+      activeTurnId: null,
+      isStopRequested: false,
+    })
     return true
   } catch (err) {
+    if (err instanceof Error && err.message === CLIENT_ABORT_ERROR) {
+      set({
+        isSending: false,
+        isRetrying: false,
+        isThinking: false,
+        isPanelAnalyzing: false,
+        activeTurnId: null,
+        isStopRequested: false,
+      })
+      return true
+    }
     const message = err instanceof Error ? err.message : 'Failed to send message'
     console.error(`[chatStore] ${errorLogLabel} failed:`, message)
     set((state) => ({
@@ -373,6 +486,8 @@ async function runBuyerTurnStream(params: {
       isRetrying: false,
       isThinking: false,
       isPanelAnalyzing: false,
+      activeTurnId: null,
+      isStopRequested: false,
       ...COMPACTION_RESET_SLICE,
       sendError: message,
     }))
@@ -485,6 +600,12 @@ interface ChatState {
   isThinking: boolean
   /** True while the backend is generating or streaming insights panel cards. */
   isPanelAnalyzing: boolean
+  /** Active backend turn ID from turn_started SSE (used for safe stop + stale guards). */
+  activeTurnId: string | null
+  /** True while a user-initiated stop request is in flight. */
+  isStopRequested: boolean
+  /** Non-blocking notice when panel generation was interrupted after text done. */
+  panelInterruptionNotice: { reason: string; at: string } | null
   /** Incremented on each atomic insights panel commit (batch animation + stale guard). */
   insightsPanelCommitGeneration: number
   vinAssistItems: VinAssistItem[]
@@ -557,6 +678,7 @@ interface ChatState {
   /** Submit a VIN from the insights panel — skips the "Decode?" prompt and auto-decodes. */
   submitVinFromPanel: (vin: string) => Promise<void>
   retrySend: (messageId: string) => Promise<void>
+  stopGeneration: () => Promise<void>
   clearSendError: () => void
   startEditUserMessage: (messageId: string) => void
   cancelEditUserMessage: () => void
@@ -578,6 +700,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isRetrying: false,
   isThinking: false,
   isPanelAnalyzing: false,
+  ...TURN_STATE_RESET_SLICE,
   insightsPanelCommitGeneration: 0,
   vinAssistItems: [],
   _sessionJustCreated: false,
@@ -652,6 +775,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       quickActionsUpdatedAtResponse: 0,
       insightsPanelCommitGeneration: 0,
       isLoading: true,
+      ...TURN_STATE_RESET_SLICE,
       _sessionJustCreated: false,
       _pendingSend: null,
       editingUserMessageId: null,
@@ -693,6 +817,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         aiResponseCount: 0,
         quickActionsUpdatedAtResponse: 0,
         insightsPanelCommitGeneration: 0,
+        ...TURN_STATE_RESET_SLICE,
         isCreatingSession: false,
         _sessionJustCreated: true,
         editingUserMessageId: null,
@@ -727,6 +852,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         quickActionsUpdatedAtResponse: isActive ? 0 : state.quickActionsUpdatedAtResponse,
         insightsPanelCommitGeneration: isActive ? 0 : state.insightsPanelCommitGeneration,
         _pendingSend: isActive ? null : state._pendingSend,
+        activeTurnId: isActive ? null : state.activeTurnId,
+        isStopRequested: isActive ? false : state.isStopRequested,
+        panelInterruptionNotice: isActive ? null : state.panelInterruptionNotice,
         editingUserMessageId: isActive ? null : state.editingUserMessageId,
         activeQueueItemId: isActive ? null : state.activeQueueItemId,
         isQueueDispatching: isActive ? false : state.isQueueDispatching,
@@ -828,6 +956,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingText: '',
             sendError: null,
             isPanelAnalyzing: false,
+            ...TURN_STATE_RESET_SLICE,
             _pendingSend: { content, imageUri, quotedCard, sourceMessageId: userMessage.id },
           }
         })
@@ -864,6 +993,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           streamingText: '',
           sendError: null,
           isPanelAnalyzing: false,
+          ...TURN_STATE_RESET_SLICE,
         }))
       } else {
         const userMessage: Message = {
@@ -883,6 +1013,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           streamingText: '',
           sendError: null,
           isPanelAnalyzing: false,
+          ...TURN_STATE_RESET_SLICE,
         }))
       }
     } else {
@@ -894,6 +1025,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingText: '',
         sendError: null,
         isPanelAnalyzing: false,
+        ...TURN_STATE_RESET_SLICE,
         vinAssistItems: existingUserMessageId
           ? state.vinAssistItems.filter((item) => item.sourceMessageId !== existingUserMessageId)
           : state.vinAssistItems,
@@ -921,6 +1053,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           cbs.onPanelStarted,
           cbs.onPanelFinished,
           cbs.onCompaction,
+          cbs.onTurnStarted,
+          cbs.onInterrupted,
+          cbs.onPanelInterrupted,
           skipVinIntercept ? existingUserMessageId : undefined,
           cbs.onNonFatalError
         ),
@@ -1521,6 +1656,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
     )
   },
 
+  stopGeneration: async () => {
+    const state = get()
+    const activeSessionId = state.activeSessionId
+    if (!activeSessionId) return
+    if ((!state.isSending && !state.isPanelAnalyzing) || state.isStopRequested) return
+
+    set({ isStopRequested: true, sendError: null })
+    try {
+      const response = await api.stopGeneration(activeSessionId, state.activeTurnId ?? undefined)
+      if (response.status === 'not_found') {
+        set({ isStopRequested: false, activeTurnId: null })
+      }
+    } catch (err) {
+      console.error(
+        '[chatStore] stopGeneration failed:',
+        err instanceof Error ? err.message : String(err)
+      )
+      // Fallback to local stream abort if backend stop call failed.
+      const aborted = api.cancelActiveStream(activeSessionId)
+      if (aborted) {
+        const partialText = get().streamingText.trim()
+        set((current) => ({
+          messages: partialText
+            ? [
+                ...current.messages,
+                {
+                  id: Math.random().toString(36).substring(2),
+                  sessionId: activeSessionId,
+                  role: 'assistant' as const,
+                  content: partialText,
+                  completionStatus: 'interrupted',
+                  interruptedAt: new Date().toISOString(),
+                  interruptedReason: 'user_stop',
+                  createdAt: new Date().toISOString(),
+                },
+              ]
+            : current.messages,
+          isSending: false,
+          streamingText: '',
+          isRetrying: false,
+          isThinking: false,
+          isPanelAnalyzing: false,
+          activeTurnId: null,
+          isStopRequested: false,
+          panelInterruptionNotice: current.isPanelAnalyzing
+            ? { reason: 'user_stop', at: new Date().toISOString() }
+            : current.panelInterruptionNotice,
+        }))
+        get()._recheckQueueDispatch()
+        return
+      }
+      set({ isStopRequested: false, sendError: 'Failed to stop generation. Please try again.' })
+    }
+  },
+
   clearSendError: () => {
     set({ sendError: null })
   },
@@ -1602,6 +1792,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingText: '',
       sendError: null,
       isPanelAnalyzing: false,
+      ...TURN_STATE_RESET_SLICE,
       editingUserMessageId: null,
     }))
 
@@ -1625,6 +1816,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           cbs.onPanelStarted,
           cbs.onPanelFinished,
           cbs.onCompaction,
+          cbs.onTurnStarted,
+          cbs.onInterrupted,
+          cbs.onPanelInterrupted,
           cbs.onNonFatalError
         ),
       onSuccess: async () => {

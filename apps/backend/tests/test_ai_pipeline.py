@@ -44,6 +44,7 @@ from app.services.claude import (
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import generate_ai_panel_cards, stream_ai_panel_cards_with_usage
 from app.services.panel_cards import normalize_panel_card as normalize_panel_card_impl
+from app.services.turn_cancellation import TurnCancellationState
 from app.services.turn_context import TurnContext
 from httpx import ASGITransport, AsyncClient
 from inline_snapshot import snapshot
@@ -2127,6 +2128,7 @@ async def test_send_message_sse_done_before_panel_updates(
     # done fires immediately after the step loop so the frontend can
     # unblock input; panel lifecycle events arrive after done.
     assert [event_name for event_name, _ in events] == [
+        "turn_started",
         "text",
         "tool_result",
         "done",
@@ -2358,7 +2360,7 @@ async def test_send_message_runs_compaction_before_chat_when_over_budget(
             events = await _collect_response_events(response)
 
     names = [n for n, _ in events]
-    assert names[:2] == ["compaction_started", "compaction_done"]
+    assert names[:3] == ["turn_started", "compaction_started", "compaction_done"]
     assert "text" in names
     started = next(d for n, d in events if n == "compaction_started")
     assert started["reason"] == "input_budget"
@@ -2512,7 +2514,9 @@ async def test_send_message_stops_after_stream_failure(
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
-    assert events == [("error", {"message": "AI response failed. Please try again."})]
+    event_names = [n for n, _ in events]
+    assert event_names[0] == "turn_started"
+    assert ("error", {"message": "AI response failed. Please try again."}) in events
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(
@@ -2612,6 +2616,9 @@ async def test_stream_buyer_chat_turn_emits_error_and_removes_orphan_user_when_a
             "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
         ),
     ):
+        turn_state = TurnCancellationState(
+            turn_id="test-turn", session_id=session.id, user_id=async_buyer_user.id
+        )
         events = await _collect_generator_events(
             stream_buyer_chat_turn(
                 db=adb,
@@ -2625,6 +2632,7 @@ async def test_stream_buyer_chat_turn_emits_error_and_removes_orphan_user_when_a
                 deal_state_dict=deal_state_dict,
                 linked_messages=None,
                 system_prompt=[],
+                turn_state=turn_state,
             )
         )
 
@@ -2686,6 +2694,7 @@ async def test_send_message_emits_panel_error_when_panel_stream_crashes_after_st
             events = await _collect_response_events(response)
 
     assert [event_name for event_name, _ in events] == [
+        "turn_started",
         "text",
         "done",
         "panel_started",

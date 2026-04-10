@@ -521,10 +521,11 @@ Role is selected at registration via "Buying" / "Selling" buttons (mapping to `b
 
 ### Streaming
 
-Chat responses are streamed via Server-Sent Events (SSE) with optional compaction, core chat, and panel lifecycle events:
+Chat responses are streamed via Server-Sent Events (SSE) with turn lifecycle, optional compaction, core chat, and panel lifecycle events:
 
 | Event | Data | Description |
 |---|---|---|
+| `turn_started` | `{"turn_id": "uuid"}` | Turn ID for targeted cancellation via `POST /stop` |
 | `compaction_started` | `{"reason", "estimated_input_tokens", "input_budget"}` | Auto-compaction began for this turn |
 | `compaction_done` | `{"first_kept_message_id"}` | Rolling summary updated; tail pointer moved |
 | `compaction_error` | `{"message": "...", "detail": "..."}` (detail optional) | Summarization failed; chat continues without compacting |
@@ -534,8 +535,10 @@ Chat responses are streamed via Server-Sent Events (SSE) with optional compactio
 | `step` | `{"step": 2}` | Multi-step turn progress |
 | `error` | `{"message": "..."}` | Unrecoverable API failure with safe user-visible message |
 | `done` | `{"text": "...", "usage": {...}}` | Chat text completion event with chat-phase usage |
+| `interrupted` | `{"text": "...", "reason": "user_stop"}` | User cancelled the turn; partial text preserved (replaces `done`) |
 | `panel_started` | `{"attempt": 1, "max_tokens": 2048}` | Panel generation phase started |
 | `panel_done` | `{"cards": [...], "usage": {...}, "assistant_message_id": "uuid"}` | Panel generation completed — atomic canonical cards + panel-phase usage + server id of the bound assistant message row (no incremental `panel_card` SSE) |
+| `panel_interrupted` | `{"reason": "user_stop"}` | User cancelled during panel phase; client shows refresh prompt |
 | `panel_error` | `{"message": "...", "attempt": 2}` | Panel generation failed after retries |
 
 ### Step Loop Architecture
@@ -578,6 +581,10 @@ Per-turn context (deal state, linked sessions, temporal grounding) is merged int
 ### Prompt Cache Monitoring
 
 SHA-256 fingerprints of cache-relevant request components (system prompt, tools, model, betas) are compared across turns to detect prompt cache breaks. Break counts and last-known fingerprints are persisted on the session usage ledger. Break logs are INFO-level and contain only hashes and component labels — never raw prompt text or tool JSON.
+
+### Turn Cancellation (Stop Generation)
+
+Users can cancel an in-progress AI response via `POST /api/chat/{session_id}/stop`. An in-memory `TurnCancellationRegistry` tracks active turns keyed by session ID. The step loop and panel phase check the cancellation flag cooperatively between iterations. Cancelled turns emit `interrupted` (with partial text) instead of `done`, and `panel_interrupted` instead of `panel_done` if cancellation happens during the panel phase. The assistant message is persisted with `completion_status = "interrupted"`, `interrupted_at`, and `interrupted_reason`. Only one turn can be active per session; attempting to start a second raises `TurnAlreadyActiveError` (HTTP 409). `POST /api/chat/{session_id}/panel-refresh` allows regenerating the insights panel without a new chat turn after an interruption. See ADR 0023.
 
 ### Error Handling
 

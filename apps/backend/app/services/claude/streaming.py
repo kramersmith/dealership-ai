@@ -13,6 +13,10 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class StreamInterruptedError(RuntimeError):
+    """Raised when a user stop request interrupts Claude streaming."""
+
+
 async def stream_step_with_retry(  # noqa: C901
     client: anthropic.AsyncAnthropic,
     *,
@@ -24,6 +28,7 @@ async def stream_step_with_retry(  # noqa: C901
     tool_choice: dict | None = None,
     idle_timeout: int = settings.CLAUDE_STREAM_IDLE_TIMEOUT,
     max_retries: int = settings.CLAUDE_STREAM_MAX_RETRIES,
+    is_cancelled=None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """Stream a single step with idle-timeout watchdog and retry.
 
@@ -39,6 +44,8 @@ async def stream_step_with_retry(  # noqa: C901
     last_error: Exception | None = None
 
     for attempt in range(1 + max_retries):
+        if is_cancelled and is_cancelled():
+            raise StreamInterruptedError("Chat stream interrupted before request")
         try:
             stream_kwargs: dict[str, Any] = {
                 "model": model,
@@ -56,6 +63,8 @@ async def stream_step_with_retry(  # noqa: C901
             ) as stream:
                 stream_iter = stream.__aiter__()
                 while True:
+                    if is_cancelled and is_cancelled():
+                        raise StreamInterruptedError("Chat stream interrupted")
                     try:
                         event = await asyncio.wait_for(
                             stream_iter.__anext__(), timeout=idle_timeout
@@ -119,6 +128,8 @@ async def stream_step_with_retry(  # noqa: C901
     # All stream retries exhausted — fall back to non-streaming
     logger.warning("Stream retries exhausted, falling back to non-streaming API call")
     try:
+        if is_cancelled and is_cancelled():
+            raise StreamInterruptedError("Chat stream interrupted before fallback")
         create_kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,

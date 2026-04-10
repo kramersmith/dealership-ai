@@ -1,8 +1,9 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
-from app.models.enums import ContextPressureLevel, MessageRole
+from app.models.enums import ContextPressureLevel, MessageCompletionStatus, MessageRole
 
 
 class PersistUserMessageRequest(BaseModel):
@@ -26,6 +27,29 @@ class BranchMessageRequest(BaseModel):
     image_url: str | None = None
 
 
+class StopTurnRequest(BaseModel):
+    turn_id: str | None = None
+    reason: str = "user_stop"
+
+    @field_validator("reason")
+    @classmethod
+    def reason_max_length(cls, v: str) -> str:
+        if len(v) > 200:
+            return v[:200]
+        return v
+
+
+class StopTurnResponse(BaseModel):
+    status: Literal["cancelled", "already_cancelled", "not_found", "turn_mismatch"]
+    turn_id: str | None = None
+    cancelled: bool
+
+
+class PanelRefreshResponse(BaseModel):
+    cards: list[dict]
+    assistant_message_id: str
+
+
 class MessageResponse(BaseModel):
     id: str
     session_id: str
@@ -35,6 +59,9 @@ class MessageResponse(BaseModel):
     tool_calls: list[dict] | None
     panel_cards: list[dict] | None = None
     usage: dict[str, int] | None
+    completion_status: MessageCompletionStatus = MessageCompletionStatus.COMPLETE
+    interrupted_at: datetime | None = None
+    interrupted_reason: str | None = None
     created_at: datetime
 
     class Config:

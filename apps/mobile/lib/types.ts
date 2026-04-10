@@ -387,6 +387,9 @@ export interface Message {
   /** Canonical insights panel snapshot for this assistant turn (from API / panel_done). */
   panelCards?: AiPanelCard[]
   usage?: MessageUsage
+  completionStatus?: 'complete' | 'interrupted' | 'failed'
+  interruptedAt?: string | null
+  interruptedReason?: string | null
   quotedCard?: QuotedCard
   createdAt: string
   status?: 'queued' | 'sending' | 'failed'
@@ -492,6 +495,14 @@ export interface ApiService {
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
     onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    onTurnStarted?: (data: { turnId: string }) => void,
+    onInterrupted?: (data: {
+      text: string
+      reason: string
+      assistantMessageId?: string
+      usage?: MessageUsage
+    }) => void,
+    onPanelInterrupted?: (data: { reason: string }) => void,
     /** Stream updates this persisted user row instead of inserting (resume after VIN intercept). */
     existingUserMessageId?: string,
     onNonFatalError?: (message: string) => void
@@ -510,8 +521,24 @@ export interface ApiService {
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
     onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    onTurnStarted?: (data: { turnId: string }) => void,
+    onInterrupted?: (data: {
+      text: string
+      reason: string
+      assistantMessageId?: string
+      usage?: MessageUsage
+    }) => void,
+    onPanelInterrupted?: (data: { reason: string }) => void,
     onNonFatalError?: (message: string) => void
   ): Promise<Message>
+  stopGeneration(
+    sessionId: string,
+    turnId?: string
+  ): Promise<{ status: string; turnId?: string; cancelled: boolean }>
+  refreshInsightsPanel(
+    sessionId: string
+  ): Promise<{ cards: AiPanelCard[]; assistantMessageId: string }>
+  cancelActiveStream(sessionId: string): boolean
 
   // Deal state
   getDealState(sessionId: string): Promise<DealState>

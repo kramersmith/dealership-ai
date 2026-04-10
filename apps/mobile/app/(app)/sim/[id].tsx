@@ -10,7 +10,16 @@ import { ChatMessageList, ChatInput } from '@/components/chat'
 export default function SimulationChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
-  const { messages, isSending, streamingText, setActiveSession, sendMessage } = useChatStore()
+  const {
+    messages,
+    isSending,
+    isPanelAnalyzing,
+    isStopRequested,
+    streamingText,
+    setActiveSession,
+    sendMessage,
+    stopGeneration,
+  } = useChatStore()
 
   useEffect(() => {
     if (id) {
@@ -64,7 +73,13 @@ export default function SimulationChatScreen() {
             </YStack>
 
             {/* Input */}
-            <ChatInput onSend={(content) => sendMessage(content)} disabled={isSending} />
+            <ChatInput
+              onSend={(content) => sendMessage(content)}
+              disabled={false}
+              isGenerating={isSending || isPanelAnalyzing}
+              isStopRequested={isStopRequested}
+              onStop={() => void stopGeneration()}
+            />
           </YStack>
         </KeyboardAvoidingView>
       </ThemedSafeArea>

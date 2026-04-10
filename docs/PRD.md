@@ -183,6 +183,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 - **Context pressure** — the chat screen can surface when estimated context use is approaching limits (from `context_pressure` on the messages API), nudging the user without blocking chat.
 - **Message queue** — users can send multiple messages while the AI is still processing. Messages are queued client-side and dispatched sequentially (FIFO). Preview cards above the composer show pending items; the input and quick actions remain always enabled. See ADR 0022.
 - **Edit from here** — buyers can revise an earlier user message via an explicit branch action. The app confirms that later replies will be removed, then restarts the conversation from that user turn. Blocked while the message queue has pending items.
+- **Stop generation** — buyers can cancel an in-progress AI response by tapping a stop button in the chat input. Partial text is preserved and the message is marked as interrupted. If the insights panel was still generating, a notice with a "Refresh" button lets the buyer regenerate it on demand.
 - **Late failure handling** — if the assistant reply was already delivered but a later save/update step fails, the UI keeps the delivered reply visible and shows a warning instead of discarding the turn.
 - Voice input via device speech-to-text
 - Context-aware system prompt preambles adapt AI tone and advice style based on buyer context (researching, reviewing a deal, at the dealership)

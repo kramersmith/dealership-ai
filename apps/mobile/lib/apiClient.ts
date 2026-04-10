@@ -16,8 +16,10 @@ import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
 
 const API_BASE = 'http://localhost:8001/api'
+export const CLIENT_ABORT_ERROR = '__CHAT_STREAM_ABORTED__'
 
 let authToken: string | null = null
+const activeStreamRequests = new Map<string, XMLHttpRequest>()
 
 export function setAuthToken(token: string | null) {
   authToken = token
@@ -374,6 +376,9 @@ function mapMessage(raw: any): import('./types').Message {
     })),
     panelCards: raw.panel_cards?.map((c: any) => mapAiPanelCard(c)),
     usage: raw.usage,
+    completionStatus: raw.completion_status ?? 'complete',
+    interruptedAt: raw.interrupted_at ?? null,
+    interruptedReason: raw.interrupted_reason ?? null,
     createdAt: raw.created_at,
   }
 }
@@ -428,13 +433,21 @@ function toSnakeCase(
 
 type StreamBuyerChatCallbacks = {
   onChunk?: (text: string) => void
+  onTurnStarted?: (data: { turnId: string }) => void
   onToolResult?: (toolCall: ToolCall) => void
   onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void
+  onInterrupted?: (data: {
+    text: string
+    reason: string
+    assistantMessageId?: string
+    usage?: MessageUsage
+  }) => void
   onNonFatalError?: (message: string) => void
   onRetry?: (data: { attempt: number; reason: string }) => void
   onStep?: (data: { step: number }) => void
   onPanelStarted?: () => void
   onPanelFinished?: () => void
+  onPanelInterrupted?: (data: { reason: string }) => void
   onCompaction?: (phase: 'started' | 'done' | 'error') => void
 }
 
@@ -447,13 +460,16 @@ function streamBuyerChatSse(
 ): Promise<Message> {
   const {
     onChunk,
+    onTurnStarted,
     onToolResult,
     onTextDone,
+    onInterrupted,
     onNonFatalError,
     onRetry,
     onStep,
     onPanelStarted,
     onPanelFinished,
+    onPanelInterrupted,
     onCompaction,
   } = callbacks
 
@@ -464,6 +480,7 @@ function streamBuyerChatSse(
     if (authToken) streamRequest.setRequestHeader('Authorization', `Bearer ${authToken}`)
 
     streamRequest.timeout = 150000
+    activeStreamRequests.set(sessionId, streamRequest)
 
     let fullText = ''
     let messageUsage: MessageUsage | undefined
@@ -476,6 +493,12 @@ function streamBuyerChatSse(
     let protocolError: string | null = null
     let sawDoneEvent = false
     let panelStreamActive = false
+    let interruptedPayload: {
+      text: string
+      reason: string
+      assistantMessageId?: string
+      usage?: MessageUsage
+    } | null = null
 
     const flushPendingDealToolResults = () => {
       if (pendingDealToolResults.length === 0) return
@@ -511,7 +534,12 @@ function streamBuyerChatSse(
 
       try {
         const data = JSON.parse(dataStr)
-        if (eventType === 'text' && data.chunk) {
+        if (interruptedPayload && eventType !== 'error') {
+          return
+        }
+        if (eventType === 'turn_started' && typeof data.turn_id === 'string') {
+          onTurnStarted?.({ turnId: data.turn_id })
+        } else if (eventType === 'text' && data.chunk) {
           fullText += data.chunk
           onChunk?.(fullText)
         } else if (eventType === 'done') {
@@ -548,6 +576,25 @@ function streamBuyerChatSse(
           finishPanelStream()
         } else if (eventType === 'panel_error') {
           console.warn('[apiClient] panel stream error')
+          finishPanelStream()
+        } else if (eventType === 'panel_interrupted') {
+          console.info('[apiClient] panel stream interrupted')
+          finishPanelStream()
+          onPanelInterrupted?.({
+            reason: typeof data.reason === 'string' ? data.reason : 'user_stop',
+          })
+        } else if (eventType === 'interrupted') {
+          fullText = typeof data.text === 'string' ? data.text : fullText
+          messageUsage = data.usage ?? messageUsage
+          interruptedPayload = {
+            text: fullText,
+            reason: typeof data.reason === 'string' ? data.reason : 'user_stop',
+            assistantMessageId:
+              typeof data.assistant_message_id === 'string' ? data.assistant_message_id : undefined,
+            usage: data.usage,
+          }
+          onInterrupted?.(interruptedPayload)
+          flushPendingDealToolResults()
           finishPanelStream()
         } else if (eventType === 'error') {
           const errorMessage =
@@ -628,6 +675,9 @@ function streamBuyerChatSse(
     }
 
     streamRequest.onload = () => {
+      if (activeStreamRequests.get(sessionId) === streamRequest) {
+        activeStreamRequests.delete(sessionId)
+      }
       if (streamRequest.status >= 200 && streamRequest.status < 300) {
         const newData = streamRequest.responseText.slice(processed)
         processed = streamRequest.responseText.length
@@ -641,6 +691,20 @@ function streamBuyerChatSse(
         if (sseError) {
           finishPanelStream()
           reject(new Error(sseError))
+          return
+        }
+        if (interruptedPayload) {
+          resolve({
+            id: interruptedPayload.assistantMessageId ?? Math.random().toString(36).substring(2),
+            sessionId,
+            role: 'assistant',
+            content: interruptedPayload.text,
+            usage: interruptedPayload.usage ?? messageUsage,
+            completionStatus: 'interrupted',
+            interruptedAt: new Date().toISOString(),
+            interruptedReason: interruptedPayload.reason,
+            createdAt: new Date().toISOString(),
+          })
           return
         }
         // If the stream ended without a `done` event, still apply buffered deal tools
@@ -669,10 +733,31 @@ function streamBuyerChatSse(
     }
 
     streamRequest.onerror = () => {
+      if (activeStreamRequests.get(sessionId) === streamRequest) {
+        activeStreamRequests.delete(sessionId)
+      }
       finishPanelStream()
+      if ((streamRequest as any).__abortedByClient) {
+        reject(new Error(CLIENT_ABORT_ERROR))
+        return
+      }
       reject(new Error(protocolError ?? 'Network error'))
     }
+    streamRequest.onabort = () => {
+      if (activeStreamRequests.get(sessionId) === streamRequest) {
+        activeStreamRequests.delete(sessionId)
+      }
+      finishPanelStream()
+      if (protocolError) {
+        reject(new Error(protocolError))
+        return
+      }
+      reject(new Error(CLIENT_ABORT_ERROR))
+    }
     streamRequest.ontimeout = () => {
+      if (activeStreamRequests.get(sessionId) === streamRequest) {
+        activeStreamRequests.delete(sessionId)
+      }
       finishPanelStream()
       reject(new Error('Request timed out'))
     }
@@ -791,6 +876,14 @@ class ApiClient implements ApiService {
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
     onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    onTurnStarted?: (data: { turnId: string }) => void,
+    onInterrupted?: (data: {
+      text: string
+      reason: string
+      assistantMessageId?: string
+      usage?: MessageUsage
+    }) => void,
+    onPanelInterrupted?: (data: { reason: string }) => void,
     existingUserMessageId?: string,
     onNonFatalError?: (message: string) => void
   ): Promise<Message> {
@@ -803,13 +896,16 @@ class ApiClient implements ApiService {
     }
     return streamBuyerChatSse(`chat/${sessionId}/message`, payload, sessionId, {
       onChunk,
+      onTurnStarted,
       onToolResult,
       onTextDone,
+      onInterrupted,
       onRetry,
       onStep,
       onPanelStarted,
       onPanelFinished,
       onCompaction,
+      onPanelInterrupted,
       onNonFatalError,
     })
   }
@@ -827,6 +923,14 @@ class ApiClient implements ApiService {
     onPanelStarted?: () => void,
     onPanelFinished?: () => void,
     onCompaction?: (phase: 'started' | 'done' | 'error') => void,
+    onTurnStarted?: (data: { turnId: string }) => void,
+    onInterrupted?: (data: {
+      text: string
+      reason: string
+      assistantMessageId?: string
+      usage?: MessageUsage
+    }) => void,
+    onPanelInterrupted?: (data: { reason: string }) => void,
     onNonFatalError?: (message: string) => void
   ): Promise<Message> {
     return streamBuyerChatSse(
@@ -835,16 +939,57 @@ class ApiClient implements ApiService {
       sessionId,
       {
         onChunk,
+        onTurnStarted,
         onToolResult,
         onTextDone,
+        onInterrupted,
         onRetry,
         onStep,
         onPanelStarted,
         onPanelFinished,
         onCompaction,
+        onPanelInterrupted,
         onNonFatalError,
       }
     )
+  }
+
+  async stopGeneration(sessionId: string, turnId?: string) {
+    const response = await request<{ status: string; turn_id?: string; cancelled: boolean }>(
+      `/chat/${sessionId}/stop`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          turn_id: turnId ?? null,
+          reason: 'user_stop',
+        }),
+      }
+    )
+    return {
+      status: response.status,
+      turnId: response.turn_id,
+      cancelled: response.cancelled,
+    }
+  }
+
+  async refreshInsightsPanel(sessionId: string) {
+    const response = await request<{ cards: any[]; assistant_message_id: string }>(
+      `/chat/${sessionId}/panel-refresh`,
+      { method: 'POST' }
+    )
+    return {
+      cards: (response.cards ?? []).map((card) => mapAiPanelCard(card)),
+      assistantMessageId: response.assistant_message_id,
+    }
+  }
+
+  cancelActiveStream(sessionId: string): boolean {
+    const streamRequest = activeStreamRequests.get(sessionId)
+    if (!streamRequest) return false
+    ;(streamRequest as any).__abortedByClient = true
+    streamRequest.abort()
+    activeStreamRequests.delete(sessionId)
+    return true
   }
 
   // ─── Deal State ───

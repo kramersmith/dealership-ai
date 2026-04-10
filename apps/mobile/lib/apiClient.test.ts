@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiClient, setAuthToken } from '@/lib/apiClient'
+import { ApiClient, CLIENT_ABORT_ERROR, setAuthToken } from '@/lib/apiClient'
 
 class FakeXMLHttpRequest {
   static instances: FakeXMLHttpRequest[] = []
@@ -14,6 +14,7 @@ class FakeXMLHttpRequest {
   onprogress: ((event?: unknown) => void) | null = null
   onload: ((event?: unknown) => void) | null = null
   onerror: ((event?: unknown) => void) | null = null
+  onabort: ((event?: unknown) => void) | null = null
   ontimeout: ((event?: unknown) => void) | null = null
   requestHeaders: Record<string, string> = {}
 
@@ -32,7 +33,7 @@ class FakeXMLHttpRequest {
   }
 
   abort() {
-    this.onerror?.()
+    this.onabort?.()
   }
 
   pushEvent(eventType: string, data: unknown) {
@@ -279,6 +280,88 @@ describe('ApiClient.sendMessage', () => {
       content: 'Here is the comparison.',
     })
     expect(onTextDone).toHaveBeenCalledWith('Here is the comparison.', undefined, undefined)
+  })
+
+  it('forwards turn_started and interrupted events', async () => {
+    const apiClient = new ApiClient()
+    const onTurnStarted = vi.fn()
+    const onInterrupted = vi.fn()
+
+    const sendPromise = apiClient.sendMessage(
+      'session-stop',
+      'Hi',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onTurnStarted,
+      onInterrupted
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('turn_started', { turn_id: 'turn-1' })
+    streamRequest?.pushEvent('text', { chunk: 'Partial text' })
+    streamRequest?.pushEvent('interrupted', {
+      text: 'Partial text',
+      reason: 'user_stop',
+      assistant_message_id: 'assistant-stop-1',
+    })
+    streamRequest?.complete()
+
+    await expect(sendPromise).resolves.toMatchObject({
+      id: 'assistant-stop-1',
+      content: 'Partial text',
+      completionStatus: 'interrupted',
+      interruptedReason: 'user_stop',
+    })
+    expect(onTurnStarted).toHaveBeenCalledWith({ turnId: 'turn-1' })
+    expect(onInterrupted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Partial text',
+        reason: 'user_stop',
+        assistantMessageId: 'assistant-stop-1',
+      })
+    )
+  })
+
+  it('forwards panel_interrupted and finishes panel state once', async () => {
+    const apiClient = new ApiClient()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+    const onPanelInterrupted = vi.fn()
+
+    const sendPromise = apiClient.sendMessage(
+      'session-panel-stop',
+      'Hello',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onPanelStarted,
+      onPanelFinished,
+      undefined,
+      undefined,
+      undefined,
+      onPanelInterrupted
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('done', { text: 'Hello' })
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushEvent('panel_interrupted', { reason: 'user_stop' })
+    streamRequest?.complete()
+
+    await sendPromise
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
+    expect(onPanelInterrupted).toHaveBeenCalledWith({ reason: 'user_stop' })
   })
 
   it('branchFromUserMessage posts to the branch endpoint and reuses the SSE parser', async () => {
@@ -600,5 +683,72 @@ describe('ApiClient.sendMessage compaction SSE', () => {
     await sendPromise
     expect(onCompaction).toHaveBeenCalledTimes(2)
     expect(phases).toEqual(['started', 'done'])
+  })
+})
+
+describe('ApiClient.stopGeneration / cancelActiveStream', () => {
+  const originalXmlHttpRequest = globalThis.XMLHttpRequest
+
+  beforeEach(() => {
+    FakeXMLHttpRequest.instances = []
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+  })
+
+  afterEach(() => {
+    globalThis.XMLHttpRequest = originalXmlHttpRequest
+    vi.unstubAllGlobals()
+  })
+
+  it('posts stop-turn and maps snake_case response', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: 'cancelled', turn_id: 'turn-1', cancelled: true }),
+      })
+    )
+
+    const out = await apiClient.stopGeneration('session-1', 'turn-1')
+    expect(out).toEqual({ status: 'cancelled', turnId: 'turn-1', cancelled: true })
+  })
+
+  it('posts panel-refresh and maps cards payload', async () => {
+    const apiClient = new ApiClient()
+    setAuthToken('test-token')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          cards: [
+            {
+              kind: 'notes',
+              template: 'notes',
+              title: 'x',
+              content: { items: [] },
+              priority: 'high',
+            },
+          ],
+          assistant_message_id: 'assistant-1',
+        }),
+      })
+    )
+
+    const out = await apiClient.refreshInsightsPanel('session-1')
+    expect(out.assistantMessageId).toBe('assistant-1')
+    expect(out.cards).toHaveLength(1)
+    expect(out.cards[0]?.kind).toBe('notes')
+  })
+
+  it('cancels the active stream request for a session', async () => {
+    const apiClient = new ApiClient()
+    const sendPromise = apiClient.sendMessage('session-cancel', 'hello')
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    expect(streamRequest).toBeDefined()
+
+    expect(apiClient.cancelActiveStream('session-cancel')).toBe(true)
+    await expect(sendPromise).rejects.toThrow(CLIENT_ABORT_ERROR)
   })
 })

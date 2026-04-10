@@ -287,6 +287,7 @@ export const ChatBubble = memo(function ChatBubble({
                   minute: '2-digit',
                 })}
                 {usageLabel ? ` · ${usageLabel}` : ''}
+                {message.completionStatus === 'interrupted' ? ' · Stopped' : ''}
               </Text>
             )}
             {isUser && message.status === 'failed' && (

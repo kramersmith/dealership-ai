@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from app.core.config import settings
 from app.models.enums import AiCardKind, VehicleRole
@@ -46,6 +46,10 @@ PANEL_ASSISTANT_TRUNCATION = 220
 class PanelStreamEvent:
     type: str
     data: dict[str, Any]
+
+
+class PanelGenerationInterrupted(RuntimeError):
+    """Raised when panel generation is interrupted by user stop."""
 
 
 class _JsonArrayObjectStreamParser:
@@ -589,6 +593,7 @@ async def stream_ai_panel_cards_with_usage(
     usage_recorder: UsageRecorder | None = None,
     session_id: str | None = None,
     panel_prompt_cache: dict[str, Any] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> AsyncGenerator[PanelStreamEvent, None]:
     """Stream AI panel from Claude internally; SSE consumers see lifecycle only.
 
@@ -643,6 +648,10 @@ async def stream_ai_panel_cards_with_usage(
     cards: list[dict] = []
 
     for attempt in range(settings.CLAUDE_MAX_TOKENS_RETRIES + 1):
+        if is_cancelled and is_cancelled():
+            raise PanelGenerationInterrupted(
+                "Panel generation interrupted before start"
+            )
         yield PanelStreamEvent(
             type="panel_started",
             data={"attempt": attempt + 1, "max_tokens": current_max_tokens},
@@ -664,6 +673,10 @@ async def stream_ai_panel_cards_with_usage(
 
             async with stream_call as stream:
                 async for event in stream:
+                    if is_cancelled and is_cancelled():
+                        raise PanelGenerationInterrupted(
+                            "Panel generation interrupted during stream"
+                        )
                     if (
                         event.type == "content_block_delta"
                         and getattr(event.delta, "type", None) == "text_delta"
@@ -740,6 +753,8 @@ async def stream_ai_panel_cards_with_usage(
 
             break
 
+        except PanelGenerationInterrupted:
+            raise
         except Exception:
             if emitted_this_attempt > 0:
                 logger.warning(
@@ -749,6 +764,10 @@ async def stream_ai_panel_cards_with_usage(
                 break
 
             try:
+                if is_cancelled and is_cancelled():
+                    raise PanelGenerationInterrupted(
+                        "Panel generation interrupted before fallback"
+                    )
                 started_at = time.monotonic()
                 response = await _create_panel_message_with_retry(
                     client,
@@ -782,6 +801,8 @@ async def stream_ai_panel_cards_with_usage(
                 for card in _extract_cards_from_text(fallback_text):
                     cards.append(card)
                 break
+            except PanelGenerationInterrupted:
+                raise
             except Exception:
                 logger.exception(
                     "Failed to stream AI panel cards (attempt %d)", attempt + 1
