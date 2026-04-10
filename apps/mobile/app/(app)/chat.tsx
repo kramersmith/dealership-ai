@@ -44,9 +44,10 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { useChat } from '@/hooks/useChat'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useDesktopChatTransition, DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { STATUS_LABELS, STATUS_THEMES } from '@/lib/constants'
+import { STATUS_LABELS, STATUS_THEMES, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
 import { InsightsPanel, QuickActions, CompactPhaseIndicator } from '@/components/insights-panel'
 import { ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
@@ -172,6 +173,99 @@ const EDIT_BRANCH_CONFIRM_MESSAGE =
   'If there are replies after this message, they will be removed. Deal and vehicle details stored for this chat will be cleared. Your shopping situation (such as researching or at the dealership) is kept.'
 const EDIT_BRANCH_CONFIRM_CONTINUE_LABEL = 'Continue'
 const EDIT_BRANCH_CONFIRM_CANCEL_DOM_ID = 'edit-branch-confirm-cancel'
+const QUEUE_PREVIEW_EXIT_MS = 220
+const WEB_QUEUE_PREVIEW_SPACING_PX = 1
+const WEB_QUEUE_PREVIEW_CARD_WIDTH_PX = 320
+const MAX_QUEUE_PREVIEW_CARDS = 3
+
+function QueuePreviewCard({
+  content,
+  exiting,
+  prefersReducedMotion,
+}: {
+  content: string
+  exiting: boolean
+  prefersReducedMotion: boolean
+}) {
+  const opacity = useRef(new Animated.Value(prefersReducedMotion ? 1 : 0)).current
+  const translateY = useRef(new Animated.Value(prefersReducedMotion ? 0 : 8)).current
+  const scale = useRef(new Animated.Value(1)).current
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      opacity.setValue(exiting ? 0 : 1)
+      translateY.setValue(0)
+      scale.setValue(1)
+      return
+    }
+    if (exiting) {
+      Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: QUEUE_PREVIEW_EXIT_MS,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(translateY, {
+          toValue: -8,
+          duration: QUEUE_PREVIEW_EXIT_MS,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(scale, {
+          toValue: 0.98,
+          duration: QUEUE_PREVIEW_EXIT_MS,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]).start()
+      return
+    }
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start()
+  }, [exiting, opacity, prefersReducedMotion, scale, translateY])
+
+  return (
+    <Animated.View
+      style={{
+        opacity,
+        transform: [{ translateY }, { scale }],
+        width: Platform.OS === 'web' ? WEB_QUEUE_PREVIEW_CARD_WIDTH_PX : undefined,
+        alignSelf: 'flex-end',
+      }}
+    >
+      <YStack
+        maxWidth={Platform.OS === 'web' ? undefined : '78%'}
+        width={Platform.OS === 'web' ? '100%' : undefined}
+        backgroundColor="$backgroundHover"
+        borderWidth={1}
+        borderColor="$borderColor"
+        borderRadius="$4"
+        paddingHorizontal="$3"
+        paddingVertical="$2"
+      >
+        <Text fontSize={11} color="$placeholderColor" lineHeight={16}>
+          Queued
+        </Text>
+        <Text fontSize={13} lineHeight={19} color="$color" numberOfLines={2}>
+          {content}
+        </Text>
+      </YStack>
+    </Animated.View>
+  )
+}
 
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
@@ -195,9 +289,18 @@ export default function ChatScreen() {
   const [mobileInsightsPreviewHeight, setMobileInsightsPreviewHeight] = useState(0)
   const insightsSlide = useRef(new Animated.Value(mobileInsightsWidth)).current
   const insightsBackdropOpacity = useRef(new Animated.Value(0)).current
+  const [webScrollbarGutterPx, setWebScrollbarGutterPx] = useState(WEB_SCROLLBAR_GUTTER_PX)
 
-  const { messages, isSending, isLoading, streamingText, send, handleQuickAction } =
-    useChat(activeSessionId)
+  const {
+    messages,
+    isSending,
+    isLoading,
+    streamingText,
+    pendingQueueItems,
+    canBranchEdit,
+    send,
+    handleQuickAction,
+  } = useChat(activeSessionId)
   const editingUserMessageId = useChatStore((state) => state.editingUserMessageId)
   const startEditUserMessage = useChatStore((state) => state.startEditUserMessage)
   const cancelEditUserMessage = useChatStore((state) => state.cancelEditUserMessage)
@@ -216,6 +319,32 @@ export default function ChatScreen() {
   const suppressContextWarningUntilUsageRefresh = useChatStore(
     (state) => state.suppressContextWarningUntilUsageRefresh
   )
+  const prefersReducedMotion = usePrefersReducedMotion()
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return
+    const measureScrollbarGutter = () => {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return
+      const viewportScrollbarGutter = Math.max(
+        0,
+        window.innerWidth - document.documentElement.clientWidth
+      )
+      setWebScrollbarGutterPx(viewportScrollbarGutter)
+    }
+    measureScrollbarGutter()
+    window.addEventListener('resize', measureScrollbarGutter)
+    return () => window.removeEventListener('resize', measureScrollbarGutter)
+  }, [])
+
+  const webQueuePreviewRightInsetPx = useMemo(() => {
+    if (Platform.OS !== 'web') return 0
+    const measuredGutter =
+      Number.isFinite(webScrollbarGutterPx) && webScrollbarGutterPx > 0
+        ? webScrollbarGutterPx
+        : WEB_SCROLLBAR_GUTTER_PX
+    const gutter = Math.max(WEB_SCROLLBAR_GUTTER_PX, measuredGutter)
+    return Math.max(0, gutter + WEB_QUEUE_PREVIEW_SPACING_PX)
+  }, [webScrollbarGutterPx])
 
   // Mobile entrance animation — fade + slide up when the chat screen mounts
   const mobileEntrance = useSlideIn(isDesktop ? 0 : 260, 40)
@@ -288,6 +417,8 @@ export default function ChatScreen() {
         isCompacting: false,
         suppressContextWarningUntilUsageRefresh: false,
         editingUserMessageId: null,
+        activeQueueItemId: null,
+        isQueueDispatching: false,
       })
     },
   })
@@ -449,6 +580,8 @@ export default function ChatScreen() {
       isCompacting: false,
       suppressContextWarningUntilUsageRefresh: false,
       editingUserMessageId: null,
+      activeQueueItemId: null,
+      isQueueDispatching: false,
     })
   }
 
@@ -492,12 +625,72 @@ export default function ChatScreen() {
           <QuickActions
             actions={effectiveQuickActions}
             onAction={handleQuickAction}
-            disabled={isSending}
+            disabled={false}
           />
         </YStack>
       ) : null,
-    [showQuickActions, effectiveQuickActions, handleQuickAction, isSending]
+    [showQuickActions, effectiveQuickActions, handleQuickAction]
   )
+  const queuedItems = useMemo(
+    () => pendingQueueItems.filter((item) => item.status === 'queued'),
+    [pendingQueueItems]
+  )
+  const queuedPreviewItems = useMemo(
+    () => queuedItems.slice(0, MAX_QUEUE_PREVIEW_CARDS),
+    [queuedItems]
+  )
+  const queuedOverflowCount = useMemo(
+    () => Math.max(0, queuedItems.length - MAX_QUEUE_PREVIEW_CARDS),
+    [queuedItems]
+  )
+  const [queuedRenderableItems, setQueuedRenderableItems] = useState<
+    { id: string; content: string; exiting: boolean }[]
+  >([])
+
+  useEffect(() => {
+    const nextById = new Set(queuedPreviewItems.map((item) => item.id))
+    setQueuedRenderableItems((previous) => {
+      const nextItems = queuedPreviewItems.map((item) => ({
+        id: item.id,
+        content: item.payload.content,
+        exiting: false,
+      }))
+      const exitingItems = previous
+        .filter((item) => !nextById.has(item.id) && !item.exiting)
+        .map((item) => ({ ...item, exiting: true }))
+      const candidate = [...nextItems, ...exitingItems]
+      if (candidate.length === previous.length) {
+        const same = candidate.every((item, index) => {
+          const prior = previous[index]
+          return (
+            prior &&
+            prior.id === item.id &&
+            prior.content === item.content &&
+            prior.exiting === item.exiting
+          )
+        })
+        if (same) return previous
+      }
+      return candidate
+    })
+  }, [queuedPreviewItems])
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setQueuedRenderableItems((previous) => {
+        const hasExiting = previous.some((item) => item.exiting)
+        if (!hasExiting) return previous
+        return previous.filter((item) => !item.exiting)
+      })
+      return
+    }
+    const hasExiting = queuedRenderableItems.some((item) => item.exiting)
+    if (!hasExiting) return
+    const timeout = setTimeout(() => {
+      setQueuedRenderableItems((previous) => previous.filter((item) => !item.exiting))
+    }, QUEUE_PREVIEW_EXIT_MS + 20)
+    return () => clearTimeout(timeout)
+  }, [queuedRenderableItems, prefersReducedMotion])
 
   if (isLoading && messages.length === 0) {
     return (
@@ -645,7 +838,7 @@ export default function ChatScreen() {
             bottomPadding={pendingVinIntercept ? 28 : 12}
             footer={quickActionsFooter}
             scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
-            onStartEditUserMessage={startEditUserMessage}
+            onStartEditUserMessage={canBranchEdit ? startEditUserMessage : undefined}
             editingUserMessageId={editingUserMessageId}
             editingDraft={editDraft}
             onEditingUserMessageDraftChange={setEditDraft}
@@ -736,21 +929,50 @@ export default function ChatScreen() {
           </XStack>
         </Theme>
       ) : null}
-      <ChatInput
-        onSend={handleDirectSend}
-        disabled={isSending}
-        placeholder={
-          showContextPicker
-            ? 'Or just tell me what\u2019s going on'
-            : editingUserMessageId
-              ? 'Edit your message\u2026'
-              : undefined
-        }
-        controlledText={editingUserMessageId ? editDraft : null}
-        onControlledTextChange={editingUserMessageId ? setEditDraft : undefined}
-        editModeBanner={editingUserMessageId ? { onCancel: () => cancelEditUserMessage() } : null}
-        editingMessageId={editingUserMessageId}
-      />
+      <View style={{ position: 'relative' }}>
+        {queuedRenderableItems.length > 0 ? (
+          <YStack
+            position="absolute"
+            right={Platform.OS === 'web' ? webQueuePreviewRightInsetPx : '$3'}
+            width={Platform.OS === 'web' ? WEB_QUEUE_PREVIEW_CARD_WIDTH_PX : undefined}
+            bottom="100%"
+            marginBottom="$2.5"
+            gap="$1.5"
+            alignItems="flex-end"
+            pointerEvents="none"
+            zIndex={3}
+          >
+            {queuedRenderableItems.map((item) => (
+              <QueuePreviewCard
+                key={item.id}
+                content={item.content}
+                exiting={item.exiting}
+                prefersReducedMotion={prefersReducedMotion}
+              />
+            ))}
+            {queuedOverflowCount > 0 ? (
+              <Text fontSize={11} color="$placeholderColor">
+                +{queuedOverflowCount} more queued
+              </Text>
+            ) : null}
+          </YStack>
+        ) : null}
+        <ChatInput
+          onSend={handleDirectSend}
+          disabled={false}
+          placeholder={
+            showContextPicker
+              ? 'Or just tell me what\u2019s going on'
+              : editingUserMessageId
+                ? 'Edit your message\u2026'
+                : undefined
+          }
+          controlledText={editingUserMessageId ? editDraft : null}
+          onControlledTextChange={editingUserMessageId ? setEditDraft : undefined}
+          editModeBanner={editingUserMessageId ? { onCancel: () => cancelEditUserMessage() } : null}
+          editingMessageId={editingUserMessageId}
+        />
+      </View>
     </View>
   )
 

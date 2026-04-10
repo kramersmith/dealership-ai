@@ -322,7 +322,9 @@ export const InsightsPanel = memo(function InsightsPanel({
   }, [insightsPanelCommitGeneration, cards, prefersReducedMotion, panelOpacity, panelTranslateY])
 
   const handleSendReply = useCallback(async (text: string, quotedCard: QuotedCard) => {
-    await useChatStore.getState().sendMessage(text, undefined, quotedCard)
+    await useChatStore
+      .getState()
+      .sendMessage(text, undefined, quotedCard, false, undefined, 'card_reply')
   }, [])
 
   if (cards.length === 0 && !hasSituationBar) {

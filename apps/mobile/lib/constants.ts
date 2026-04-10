@@ -149,6 +149,9 @@ export const MAX_INSIGHTS_PREVIEW_ITEMS = 3
 /** Maximum width in pixels for chat bubbles (keeps text readable on wide screens). */
 export const CHAT_BUBBLE_MAX_WIDTH = 600
 
+/** Approximate width in pixels reserved for the web scrollbar gutter inside chat scroll views. */
+export const WEB_SCROLLBAR_GUTTER_PX = 10
+
 // ─── Confirmation / Feedback Timing ───
 
 /** Duration in ms to show "saved" / "sent" confirmation before auto-dismissing. */

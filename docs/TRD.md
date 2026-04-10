@@ -1,6 +1,6 @@
 # Technical Requirements Document: Dealership AI
 
-**Last updated: 2026-04-09**
+**Last updated: 2026-04-10**
 
 ---
 
@@ -691,6 +691,7 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 
 - **snake_case to camelCase mapping**: The `snakeToCamel` utility (`lib/utils.ts`) converts backend snake_case keys to frontend camelCase, replacing hand-mapped field assignments in the deal store.
 - **Markdown rendering**: Assistant chat bubbles render content as Markdown via `react-native-markdown-display`, supporting bold, italic, lists, code blocks, blockquotes, and links. User messages render as plain text.
+- **Client-side message queue**: Users can send messages while the AI is still processing — messages are queued client-side (`queueBySession` in chatStore) and dispatched FIFO. `_sendMessageImmediate` handles the actual send; `_recheckQueueDispatch` / `_runQueueItem` drive sequential dispatch. QueuePreviewCard renders up to 3 pending items above the composer. ChatInput and QuickActions remain always enabled. Branch edit is blocked while the queue has pending items. See ADR 0022.
 - **Optimistic message rollback**: When sending a chat message, the user message is added to the store optimistically. If the backend request fails, the message is removed from the store.
 - **Duplicate user message prevention**: Message history is loaded before the new user turn is persisted; optional compaction may persist a system notice first, then the user message is saved so the current turn is not duplicated in the constructed Claude context.
 - **Event-based SSE parsing**: The `useChat` hook parses SSE streams, dispatching `compaction_*`, `text`, `tool_result`, `retry`, `step`, `done`, and panel lifecycle events to store handlers. Message list fetches receive `context_pressure` alongside `messages` for UI context warnings.

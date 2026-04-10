@@ -140,15 +140,37 @@ async function runBuyerTurnStream(params: {
   failedMessageId: string | null
   invokeStream: BuyerTurnStreamInvoker
   onSuccess?: () => Promise<void> | void
+  onTextDone?: () => void
   errorLogLabel: string
 }): Promise<boolean> {
-  const { get, set, activeSessionId, failedMessageId, invokeStream, onSuccess, errorLogLabel } =
-    params
+  const {
+    get,
+    set,
+    activeSessionId,
+    failedMessageId,
+    invokeStream,
+    onSuccess,
+    onTextDone,
+    errorLogLabel,
+  } = params
 
   try {
     set({ suppressContextWarningUntilUsageRefresh: true, isCompacting: false })
     const newResponseCount = get().aiResponseCount + 1
     let messageFinalized = false
+    let clearedInFlightStatus = false
+
+    const clearInFlightUserStatus = () => {
+      if (clearedInFlightStatus || !failedMessageId) return
+      clearedInFlightStatus = true
+      set((state) => ({
+        messages: state.messages.map((message) =>
+          message.id === failedMessageId && message.status === 'sending'
+            ? { ...message, status: undefined }
+            : message
+        ),
+      }))
+    }
 
     // Finalize the assistant message as soon as text streaming completes
     // (the "done" SSE event), so the StreamingBubble is replaced by a
@@ -167,7 +189,14 @@ async function runBuyerTurnStream(params: {
           createdAt: new Date().toISOString(),
         }
         set((state) => ({
-          messages: [...state.messages, msg],
+          messages: [
+            ...state.messages.map((message) =>
+              failedMessageId && message.id === failedMessageId
+                ? { ...message, status: undefined }
+                : message
+            ),
+            msg,
+          ],
           isSending: false,
           streamingText: '',
           isRetrying: false,
@@ -175,14 +204,20 @@ async function runBuyerTurnStream(params: {
           aiResponseCount: newResponseCount,
         }))
       } else {
-        set({
+        set((state) => ({
+          messages: state.messages.map((message) =>
+            failedMessageId && message.id === failedMessageId
+              ? { ...message, status: undefined }
+              : message
+          ),
           isSending: false,
           streamingText: '',
           isRetrying: false,
           isThinking: false,
           aiResponseCount: newResponseCount,
-        })
+        }))
       }
+      onTextDone?.()
     }
 
     // Deal-driving tool results: apiClient defers callbacks until after the
@@ -245,17 +280,30 @@ async function runBuyerTurnStream(params: {
     }
 
     const assistantMessage = await invokeStream({
-      onChunk: (text) => set({ streamingText: text, isRetrying: false, isThinking: false }),
+      onChunk: (text) => {
+        clearInFlightUserStatus()
+        set({ streamingText: text, isRetrying: false, isThinking: false })
+      },
       onToolResult: handleToolResult,
       onTextDone: handleTextDone,
       onNonFatalError: (message) => set({ sendError: message }),
-      onRetry: () => set({ isRetrying: true }),
-      onStep: () => set({ isThinking: true }),
+      onRetry: () => {
+        clearInFlightUserStatus()
+        set({ isRetrying: true })
+      },
+      onStep: () => {
+        clearInFlightUserStatus()
+        set({ isThinking: true })
+      },
       onPanelStarted: () => {
+        clearInFlightUserStatus()
         set({ isPanelAnalyzing: true })
       },
       onPanelFinished: () => set({ isPanelAnalyzing: false }),
-      onCompaction: (phase) => set({ isCompacting: phase === 'started' }),
+      onCompaction: (phase) => {
+        clearInFlightUserStatus()
+        set({ isCompacting: phase === 'started' })
+      },
     })
 
     // If no tool results arrived (rare), finalize from onload
@@ -263,17 +311,29 @@ async function runBuyerTurnStream(params: {
       set({ aiResponseCount: newResponseCount })
       if (assistantMessage.content.trim()) {
         set((state) => ({
-          messages: [...state.messages, assistantMessage],
+          messages: [
+            ...state.messages.map((message) =>
+              failedMessageId && message.id === failedMessageId
+                ? { ...message, status: undefined }
+                : message
+            ),
+            assistantMessage,
+          ],
           isSending: false,
           streamingText: '',
           isPanelAnalyzing: false,
         }))
       } else {
-        set({
+        set((state) => ({
+          messages: state.messages.map((message) =>
+            failedMessageId && message.id === failedMessageId
+              ? { ...message, status: undefined }
+              : message
+          ),
           isSending: false,
           streamingText: '',
           isPanelAnalyzing: false,
-        })
+        }))
       }
     }
 
@@ -320,6 +380,90 @@ async function runBuyerTurnStream(params: {
   }
 }
 
+type QueueMessageSource = 'typed' | 'quick_action' | 'card_reply' | 'retry'
+type QueueFailureCategory = 'recoverable' | 'session_blocking' | 'validation_blocking'
+type QueueItemStatus =
+  | 'queued'
+  | 'dispatching'
+  | 'active'
+  | 'paused_vin'
+  | 'failed'
+  | 'cancelled'
+  | 'sent'
+
+interface QueueSendPayload {
+  content: string
+  imageUri?: string
+  quotedCard?: QuotedCard
+  skipVinIntercept?: boolean
+  existingUserMessageId?: string
+}
+
+interface ChatQueueItem {
+  id: string
+  sessionId: string
+  source: QueueMessageSource
+  payload: QueueSendPayload
+  status: QueueItemStatus
+  createdAt: string
+  dispatchedAt?: string
+  completedAt?: string
+  optimisticMessageId?: string
+  failureCategory?: QueueFailureCategory
+  errorMessage?: string
+}
+
+interface ImmediateSendResult {
+  outcome: 'sent' | 'paused_vin' | 'failed'
+  failedMessageId: string | null
+  errorMessage?: string
+  failureCategory?: QueueFailureCategory
+}
+
+function classifyQueueFailure(message: string): QueueFailureCategory {
+  const normalized = message.toLowerCase()
+  if (
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('session') ||
+    normalized.includes('not found') ||
+    normalized.includes('401') ||
+    normalized.includes('403') ||
+    normalized.includes('404')
+  ) {
+    return 'session_blocking'
+  }
+  if (
+    normalized.includes('vin') ||
+    normalized.includes('validation') ||
+    normalized.includes('invalid')
+  ) {
+    return 'validation_blocking'
+  }
+  return 'recoverable'
+}
+
+function upsertQueueItem(
+  queueBySession: Record<string, ChatQueueItem[]>,
+  queueItem: ChatQueueItem
+): Record<string, ChatQueueItem[]> {
+  const sessionQueue = queueBySession[queueItem.sessionId] ?? []
+  const nextSessionQueue = [...sessionQueue, queueItem]
+  return { ...queueBySession, [queueItem.sessionId]: nextSessionQueue }
+}
+
+function mapSessionQueue(
+  queueBySession: Record<string, ChatQueueItem[]>,
+  sessionId: string,
+  updater: (item: ChatQueueItem) => ChatQueueItem
+): Record<string, ChatQueueItem[]> {
+  const sessionQueue = queueBySession[sessionId] ?? []
+  return {
+    ...queueBySession,
+    [sessionId]: sessionQueue.map((item) => updater(item)),
+  }
+}
+
 interface ChatState {
   activeSessionId: string | null
   messages: Message[]
@@ -363,6 +507,11 @@ interface ChatState {
   suppressContextWarningUntilUsageRefresh: boolean
   /** When set, the composer is editing this user message for a branch send. */
   editingUserMessageId: string | null
+  queueBySession: Record<string, ChatQueueItem[]>
+  activeQueueItemId: string | null
+  isQueueDispatching: boolean
+  queueDispatchGeneration: number
+  lastQueueEvent: string | null
 
   loadSessions: () => Promise<void>
   searchSessions: (query: string) => Promise<Session[]>
@@ -380,8 +529,20 @@ interface ChatState {
     imageUri?: string,
     quotedCard?: QuotedCard,
     _skipVinIntercept?: boolean,
-    existingUserMessageId?: string
+    existingUserMessageId?: string,
+    source?: QueueMessageSource
   ) => Promise<void>
+  _sendMessageImmediate: (
+    payload: QueueSendPayload,
+    queueItemId?: string,
+    optimisticMessageId?: string,
+    onTextDone?: () => void
+  ) => Promise<ImmediateSendResult>
+  _recheckQueueDispatch: () => void
+  _runQueueItem: (queueItemId: string, generation: number) => Promise<void>
+  removeQueuedMessage: (queueItemId: string) => void
+  clearQueue: () => void
+  recoverQueueStall: () => void
   /** Resume a VIN-intercepted send — called after decode/confirm/skip. */
   resumePendingSend: () => Promise<void>
   skipVinAssist: (vinAssistId: string) => void
@@ -422,6 +583,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   _sessionJustCreated: false,
   _pendingSend: null,
   editingUserMessageId: null,
+  queueBySession: {},
+  activeQueueItemId: null,
+  isQueueDispatching: false,
+  queueDispatchGeneration: 0,
+  lastQueueEvent: null,
   ...COMPACTION_RESET_SLICE,
 
   loadSessions: async () => {
@@ -489,6 +655,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       _sessionJustCreated: false,
       _pendingSend: null,
       editingUserMessageId: null,
+      activeQueueItemId: null,
+      isQueueDispatching: false,
       ...COMPACTION_RESET_SLICE,
     })
     try {
@@ -501,6 +669,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         contextPressure,
         isLoading: false,
       })
+      get()._recheckQueueDispatch()
     } catch (err) {
       console.error(
         '[chatStore] setActiveSession failed:',
@@ -527,9 +696,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isCreatingSession: false,
         _sessionJustCreated: true,
         editingUserMessageId: null,
+        activeQueueItemId: null,
+        isQueueDispatching: false,
         ...COMPACTION_RESET_SLICE,
       }))
       useDealStore.getState().resetDealState(session.id, buyerContext)
+      get()._recheckQueueDispatch()
       return session
     } catch (err) {
       console.error('[chatStore] createSession failed:', err instanceof Error ? err.message : err)
@@ -543,6 +715,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await api.deleteSession(sessionId)
       const isActive = get().activeSessionId === sessionId
       set((state) => ({
+        queueBySession: Object.fromEntries(
+          Object.entries(state.queueBySession).filter(([key]) => key !== sessionId)
+        ),
         sessions: state.sessions.filter((session) => session.id !== sessionId),
         activeSessionId: isActive ? null : state.activeSessionId,
         messages: isActive ? [] : state.messages,
@@ -553,6 +728,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         insightsPanelCommitGeneration: isActive ? 0 : state.insightsPanelCommitGeneration,
         _pendingSend: isActive ? null : state._pendingSend,
         editingUserMessageId: isActive ? null : state.editingUserMessageId,
+        activeQueueItemId: isActive ? null : state.activeQueueItemId,
+        isQueueDispatching: isActive ? false : state.isQueueDispatching,
         contextPressure: isActive ? null : state.contextPressure,
         isCompacting: isActive ? false : state.isCompacting,
         suppressContextWarningUntilUsageRefresh: isActive
@@ -580,14 +757,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
-  sendMessage: async (content, imageUri, quotedCard, _skipVinIntercept, existingUserMessageId) => {
+  _sendMessageImmediate: async (payload, queueItemId, queuedMessageId, onTextDone) => {
     const { activeSessionId } = get()
-    if (!activeSessionId) return
+    if (!activeSessionId) {
+      return {
+        outcome: 'failed',
+        failedMessageId: null,
+        errorMessage: 'No active session selected.',
+        failureCategory: 'session_blocking',
+      }
+    }
 
-    // Track client-visible user message id for stream failure (marks failed on wrong row)
-    let optimisticMessageId: string | null = null
+    const { content, imageUri, quotedCard, skipVinIntercept, existingUserMessageId } = payload
+    let optimisticMessageId: string | null = queuedMessageId ?? null
 
-    if (!_skipVinIntercept) {
+    if (!skipVinIntercept) {
       const detectedVins = normalizeVinCandidates(content)
       if (detectedVins.length > 0) {
         const apiContent = buildMessageContent(content, quotedCard)
@@ -598,8 +782,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const message = err instanceof Error ? err.message : 'Failed to save message'
           console.error('[chatStore] persistUserMessage failed:', message)
           set({ sendError: message, isSending: false })
-          return
+          return {
+            outcome: 'failed',
+            failedMessageId: optimisticMessageId,
+            errorMessage: message,
+            failureCategory: classifyQueueFailure(message),
+          }
         }
+
         const userMessage: Message = {
           ...persisted,
           quotedCard,
@@ -628,7 +818,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             nextVinItems.push(vinAssistItem)
           }
           return {
-            messages: [...state.messages, userMessage],
+            messages: queuedMessageId
+              ? state.messages.map((message) =>
+                  message.id === queuedMessageId ? { ...userMessage, status: undefined } : message
+                )
+              : [...state.messages, userMessage],
             vinAssistItems: nextVinItems,
             isSending: false,
             streamingText: '',
@@ -637,33 +831,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
             _pendingSend: { content, imageUri, quotedCard, sourceMessageId: userMessage.id },
           }
         })
+        if (queueItemId) {
+          set((state) => ({
+            queueBySession: mapSessionQueue(state.queueBySession, activeSessionId, (item) =>
+              item.id === queueItemId
+                ? {
+                    ...item,
+                    status: 'paused_vin',
+                    completedAt: new Date().toISOString(),
+                    optimisticMessageId: userMessage.id,
+                  }
+                : item
+            ),
+            activeQueueItemId: null,
+            isQueueDispatching: false,
+            lastQueueEvent: `queue_paused_vin:${queueItemId}`,
+          }))
+        }
         for (const vin of detectedVins) {
           trackVinAssistEvent('detected', { sessionId: activeSessionId, vin })
         }
-        return
+        return { outcome: 'paused_vin', failedMessageId: userMessage.id }
       }
 
-      // No VIN — optimistic local user row (server inserts on stream, then silent refresh replaces ids)
-      const userMessage: Message = {
-        id: Math.random().toString(36).substring(2),
-        sessionId: activeSessionId,
-        role: 'user',
-        content,
-        imageUri,
-        quotedCard,
-        createdAt: new Date().toISOString(),
+      if (queuedMessageId) {
+        optimisticMessageId = queuedMessageId
+        set((state) => ({
+          messages: state.messages.map((message) =>
+            message.id === queuedMessageId ? { ...message, status: 'sending' } : message
+          ),
+          isSending: true,
+          streamingText: '',
+          sendError: null,
+          isPanelAnalyzing: false,
+        }))
+      } else {
+        const userMessage: Message = {
+          id: Math.random().toString(36).substring(2),
+          sessionId: activeSessionId,
+          role: 'user',
+          content,
+          imageUri,
+          quotedCard,
+          status: 'sending',
+          createdAt: new Date().toISOString(),
+        }
+        optimisticMessageId = userMessage.id
+        set((state) => ({
+          messages: [...state.messages, userMessage],
+          isSending: true,
+          streamingText: '',
+          sendError: null,
+          isPanelAnalyzing: false,
+        }))
       }
-      optimisticMessageId = userMessage.id
-      set((state) => ({
-        messages: [...state.messages, userMessage],
-        isSending: true,
-        streamingText: '',
-        sendError: null,
-        isPanelAnalyzing: false,
-      }))
     } else {
-      // Resume path — message already persisted; drop VIN assist chrome so we do not imply the user message is still uploading.
-      // Track the persisted id so a stream failure marks the correct row as failed.
       if (existingUserMessageId) {
         optimisticMessageId = existingUserMessageId
       }
@@ -679,12 +901,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const apiContent = buildMessageContent(content, quotedCard)
-    await runBuyerTurnStream({
+    const success = await runBuyerTurnStream({
       get,
       set,
       activeSessionId,
       failedMessageId: optimisticMessageId,
       errorLogLabel: 'sendMessage',
+      onTextDone,
       invokeStream: (cbs) =>
         api.sendMessage(
           activeSessionId,
@@ -698,10 +921,288 @@ export const useChatStore = create<ChatState>((set, get) => ({
           cbs.onPanelStarted,
           cbs.onPanelFinished,
           cbs.onCompaction,
-          _skipVinIntercept ? existingUserMessageId : undefined,
+          skipVinIntercept ? existingUserMessageId : undefined,
           cbs.onNonFatalError
         ),
     })
+
+    if (!success) {
+      const errorMessage = get().sendError ?? 'Failed to send message'
+      return {
+        outcome: 'failed',
+        failedMessageId: optimisticMessageId,
+        errorMessage,
+        failureCategory: classifyQueueFailure(errorMessage),
+      }
+    }
+    return { outcome: 'sent', failedMessageId: optimisticMessageId }
+  },
+
+  sendMessage: async (
+    content,
+    imageUri,
+    quotedCard,
+    _skipVinIntercept,
+    existingUserMessageId,
+    source
+  ) => {
+    const { activeSessionId } = get()
+    if (!activeSessionId) return
+    // Backward-compatible immediate mode for legacy/internal callers that do not
+    // provide an explicit source. The queueing UX paths pass source values.
+    if (!source) {
+      await get()._sendMessageImmediate({
+        content,
+        imageUri,
+        quotedCard,
+        skipVinIntercept: _skipVinIntercept,
+        existingUserMessageId,
+      })
+      // An immediate (non-queued) send may have been blocking queued items
+      // behind isSending / _pendingSend. Re-check so the queue resumes.
+      get()._recheckQueueDispatch()
+      return
+    }
+
+    const queueItemId = Math.random().toString(36).substring(2)
+    const optimisticMessageId =
+      _skipVinIntercept || existingUserMessageId ? existingUserMessageId : undefined
+
+    set((state) => ({
+      sendError: null,
+      queueBySession: upsertQueueItem(state.queueBySession, {
+        id: queueItemId,
+        sessionId: activeSessionId,
+        source,
+        payload: {
+          content,
+          imageUri,
+          quotedCard,
+          skipVinIntercept: _skipVinIntercept,
+          existingUserMessageId,
+        },
+        status: 'queued',
+        createdAt: new Date().toISOString(),
+        optimisticMessageId,
+      }),
+      lastQueueEvent: `enqueue:${queueItemId}`,
+    }))
+
+    get()._recheckQueueDispatch()
+  },
+
+  _recheckQueueDispatch: () => {
+    const state = get()
+    const activeSessionId = state.activeSessionId
+    if (!activeSessionId) return
+    if (state.isQueueDispatching || state.isSending || state._pendingSend) return
+    const queue = state.queueBySession[activeSessionId] ?? []
+    const nextItem = queue.find((item) => item.status === 'queued')
+    if (!nextItem) return
+
+    const generation = state.queueDispatchGeneration + 1
+    set((prev) => ({
+      queueDispatchGeneration: generation,
+      activeQueueItemId: nextItem.id,
+      isQueueDispatching: true,
+      lastQueueEvent: `dispatching:${nextItem.id}`,
+      queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+        item.id === nextItem.id
+          ? { ...item, status: 'dispatching', dispatchedAt: new Date().toISOString() }
+          : item
+      ),
+    }))
+    void get()
+      ._runQueueItem(nextItem.id, generation)
+      .catch((error) => {
+        console.error(
+          '[chatStore] queue run failed:',
+          error instanceof Error ? error.message : String(error)
+        )
+        set({
+          activeQueueItemId: null,
+          isQueueDispatching: false,
+          lastQueueEvent: `queue_runner_error:${nextItem.id}`,
+        })
+      })
+  },
+
+  _runQueueItem: async (queueItemId, generation) => {
+    const state = get()
+    const activeSessionId = state.activeSessionId
+    if (!activeSessionId) return
+    if (state.queueDispatchGeneration !== generation) return
+
+    const queueItem = (state.queueBySession[activeSessionId] ?? []).find(
+      (item) => item.id === queueItemId
+    )
+    if (!queueItem) return
+
+    set((prev) => ({
+      queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+        item.id === queueItemId ? { ...item, status: 'active' } : item
+      ),
+      lastQueueEvent: `active:${queueItemId}`,
+    }))
+
+    let finalizedOnDone = false
+    const finalizeSentOnDone = () => {
+      finalizedOnDone = true
+      set((prev) => ({
+        queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+          item.id === queueItemId
+            ? { ...item, status: 'sent', completedAt: new Date().toISOString() }
+            : item
+        ),
+        activeQueueItemId: null,
+        isQueueDispatching: false,
+        lastQueueEvent: `sent:${queueItemId}`,
+      }))
+      get()._recheckQueueDispatch()
+    }
+
+    const result = await get()._sendMessageImmediate(
+      queueItem.payload,
+      queueItemId,
+      queueItem.optimisticMessageId,
+      finalizeSentOnDone
+    )
+
+    if (result.outcome === 'paused_vin') {
+      set((prev) => ({
+        queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+          item.id === queueItemId
+            ? {
+                ...item,
+                status: 'paused_vin',
+                completedAt: new Date().toISOString(),
+                optimisticMessageId: result.failedMessageId ?? item.optimisticMessageId,
+              }
+            : item
+        ),
+        activeQueueItemId: null,
+        isQueueDispatching: false,
+        lastQueueEvent: `paused_vin:${queueItemId}`,
+      }))
+      return
+    }
+
+    if (result.outcome === 'failed') {
+      set((prev) => ({
+        queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+          item.id === queueItemId
+            ? {
+                ...item,
+                status: 'failed',
+                completedAt: new Date().toISOString(),
+                errorMessage: result.errorMessage,
+                failureCategory: result.failureCategory,
+              }
+            : item
+        ),
+        activeQueueItemId: null,
+        isQueueDispatching: false,
+        lastQueueEvent: `failed:${queueItemId}`,
+      }))
+      if (result.failureCategory !== 'session_blocking') {
+        get()._recheckQueueDispatch()
+      }
+      return
+    }
+
+    if (!finalizedOnDone) {
+      set((prev) => ({
+        queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+          item.id === queueItemId
+            ? { ...item, status: 'sent', completedAt: new Date().toISOString() }
+            : item
+        ),
+        activeQueueItemId: null,
+        isQueueDispatching: false,
+        lastQueueEvent: `sent_late:${queueItemId}`,
+      }))
+      get()._recheckQueueDispatch()
+    }
+  },
+
+  removeQueuedMessage: (queueItemId) => {
+    const activeSessionId = get().activeSessionId
+    if (!activeSessionId) return
+    set((state) => {
+      const sessionQueue = state.queueBySession[activeSessionId] ?? []
+      const queueItem = sessionQueue.find((item) => item.id === queueItemId)
+      if (!queueItem) return {}
+      if (queueItem.status === 'active' || queueItem.status === 'dispatching') return {}
+      const shouldRemoveMessage =
+        !!queueItem.optimisticMessageId &&
+        state.messages.some(
+          (message) => message.id === queueItem.optimisticMessageId && message.status === 'queued'
+        )
+      return {
+        queueBySession: {
+          ...state.queueBySession,
+          [activeSessionId]: sessionQueue.filter((item) => item.id !== queueItemId),
+        },
+        messages: shouldRemoveMessage
+          ? state.messages.filter((message) => message.id !== queueItem.optimisticMessageId)
+          : state.messages,
+        lastQueueEvent: `cancelled:${queueItemId}`,
+      }
+    })
+  },
+
+  clearQueue: () => {
+    const activeSessionId = get().activeSessionId
+    if (!activeSessionId) return
+    set((state) => {
+      const sessionQueue = state.queueBySession[activeSessionId] ?? []
+      const cancellable = sessionQueue.filter(
+        (item) => item.status === 'queued' || item.status === 'paused_vin'
+      )
+      const cancelledMessageIds = new Set(
+        cancellable
+          .map((item) => item.optimisticMessageId)
+          .filter(
+            (messageId): messageId is string =>
+              !!messageId &&
+              state.messages.some(
+                (message) => message.id === messageId && message.status === 'queued'
+              )
+          )
+      )
+      return {
+        queueBySession: {
+          ...state.queueBySession,
+          [activeSessionId]: sessionQueue.filter(
+            (item) => item.status !== 'queued' && item.status !== 'paused_vin'
+          ),
+        },
+        messages: state.messages.filter((message) => !cancelledMessageIds.has(message.id)),
+        lastQueueEvent: `clear_queue:${activeSessionId}`,
+      }
+    })
+  },
+
+  recoverQueueStall: () => {
+    const state = get()
+    const activeSessionId = state.activeSessionId
+    if (!activeSessionId) return
+    if (state.isSending || state._pendingSend) return
+    if (!state.isQueueDispatching && !state.activeQueueItemId) {
+      get()._recheckQueueDispatch()
+      return
+    }
+    set((prev) => ({
+      activeQueueItemId: null,
+      isQueueDispatching: false,
+      queueBySession: mapSessionQueue(prev.queueBySession, activeSessionId, (item) =>
+        item.id === prev.activeQueueItemId && item.status !== 'sent'
+          ? { ...item, status: 'queued' }
+          : item
+      ),
+      lastQueueEvent: `recover_stall:${activeSessionId}`,
+    }))
+    get()._recheckQueueDispatch()
   },
 
   resumePendingSend: async () => {
@@ -738,7 +1239,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const sourceMessageId = pending.sourceMessageId
-    set({ _pendingSend: null })
+    set((state) => ({
+      _pendingSend: null,
+      queueBySession: mapSessionQueue(state.queueBySession, activeSessionId, (item) =>
+        item.status === 'paused_vin' && item.optimisticMessageId === sourceMessageId
+          ? { ...item, status: 'sent', completedAt: new Date().toISOString() }
+          : item
+      ),
+    }))
     // Stream updates the persisted user row and runs the assistant (see existing_user_message_id).
     await get().sendMessage(
       enrichedContent,
@@ -1003,7 +1511,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: state.messages.filter((message) => message.id !== messageId),
       sendError: null,
     }))
-    await get().sendMessage(failedMessage.content, failedMessage.imageUri, failedMessage.quotedCard)
+    await get().sendMessage(
+      failedMessage.content,
+      failedMessage.imageUri,
+      failedMessage.quotedCard,
+      false,
+      undefined,
+      'retry'
+    )
   },
 
   clearSendError: () => {
@@ -1013,6 +1528,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startEditUserMessage: (messageId) => {
     if (get().isSending) return
     if (get()._pendingSend) return
+    const activeSessionId = get().activeSessionId
+    if (activeSessionId) {
+      const pendingQueue = (get().queueBySession[activeSessionId] ?? []).some(
+        (item) =>
+          item.status === 'queued' ||
+          item.status === 'dispatching' ||
+          item.status === 'active' ||
+          item.status === 'paused_vin'
+      )
+      if (pendingQueue) return
+    }
     if (!isServerMessageId(messageId)) return
     const userMessage = get().messages.find(
       (message) => message.id === messageId && message.role === 'user'
@@ -1028,6 +1554,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendBranchFromEdit: async (content, imageUri, quotedCard) => {
     const { activeSessionId, editingUserMessageId, messages } = get()
     if (!activeSessionId || !editingUserMessageId) return
+    const hasPendingQueue = (get().queueBySession[activeSessionId] ?? []).some(
+      (item) =>
+        item.status === 'queued' ||
+        item.status === 'dispatching' ||
+        item.status === 'active' ||
+        item.status === 'paused_vin'
+    )
+    if (hasPendingQueue) {
+      set({
+        sendError:
+          'Clear queued messages before editing from here. Queue and timeline forking cannot run together.',
+      })
+      return
+    }
 
     if (normalizeVinCandidates(content).length > 0) {
       set({

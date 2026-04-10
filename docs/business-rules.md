@@ -1,6 +1,6 @@
 # Business Rules
 
-Last updated: 2026-04-09
+Last updated: 2026-04-10
 
 ## Table of Contents
 
@@ -205,9 +205,15 @@ Each message stores:
 
 Normally `POST /api/chat/{session_id}/message` creates the user message row inline as part of the stream and deletes it on stream failure. For gated flows where the user's text must be visible in `GET /messages` before the model call (specifically the **multi-VIN intercept** flow), the client first calls `POST /api/chat/{session_id}/user-message` to persist the user row immediately, then later calls `/message` with `existing_user_message_id` set to that row. On resume the stream updates (not inserts) the pre-persisted row, and pre-persisted rows are **not** rolled back on stream failure — only newly inserted user rows are deleted. `existing_user_message_id` is only valid for the latest message row in the session; editing earlier history must use the branch endpoint described below. See ADR 0019.
 
+### Client-Side Message Queue
+
+Users can send multiple messages while the AI is still processing a prior turn. Messages are queued client-side in the Zustand chat store (`queueBySession`, keyed by session ID) and dispatched sequentially in FIFO order after each turn completes. Queue preview cards above the composer show up to 3 pending items. The chat input and quick actions remain always enabled — they are never disabled during AI processing.
+
+Queue management functions: `removeQueuedMessage` (cancel a single queued item), `clearQueue` (cancel all pending items for the active session), `recoverQueueStall` (reset a stuck dispatch cycle). Branch edit is blocked while the queue has pending items. See ADR 0022.
+
 ### Branch From Earlier User Message
 
-When the buyer chooses "edit from here" on an earlier user message, the client calls `POST /api/chat/{session_id}/messages/{message_id}/branch` instead of overloading `existing_user_message_id`. The server deletes any later messages after that anchor, clears `ChatSession.compaction_state` and `ChatSession.usage`, clears structured commerce state for the session (deals, vehicles, panel cards, negotiation context, active deal, and related deal-state aggregates), preserves `buyer_context`, updates the anchor user row in place, and then runs the normal buyer chat SSE stream from that point. This is a server-authoritative branch, not a local rewind: if the post-branch stream fails, the truncated timeline and cleared structured state remain authoritative until the next successful stream. See ADR 0020.
+When the buyer chooses "edit from here" on an earlier user message, the client calls `POST /api/chat/{session_id}/messages/{message_id}/branch` instead of overloading `existing_user_message_id`. The branch action is blocked when the message queue has pending items — users must clear or wait for the queue before editing an earlier message. The server deletes any later messages after that anchor, clears `ChatSession.compaction_state` and `ChatSession.usage`, clears structured commerce state for the session (deals, vehicles, panel cards, negotiation context, active deal, and related deal-state aggregates), preserves `buyer_context`, updates the anchor user row in place, and then runs the normal buyer chat SSE stream from that point. This is a server-authoritative branch, not a local rewind: if the post-branch stream fails, the truncated timeline and cleared structured state remain authoritative until the next successful stream. See ADR 0020.
 
 ### Vehicle Roles and VIN Intercept
 

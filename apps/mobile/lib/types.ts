@@ -389,7 +389,7 @@ export interface Message {
   usage?: MessageUsage
   quotedCard?: QuotedCard
   createdAt: string
-  status?: 'sending' | 'failed'
+  status?: 'queued' | 'sending' | 'failed'
 }
 
 export interface VinAssistDecodedVehicle {

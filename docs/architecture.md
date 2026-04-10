@@ -1,6 +1,6 @@
 # Dealership AI MVP — Technical Architecture Plan
 
-**Last updated:** 2026-04-09
+**Last updated:** 2026-04-10
 
 ## Table of Contents
 
@@ -64,7 +64,7 @@ dealership-ai/
 │   │   │   ├── useDesktopChatTransition.ts # Desktop animated chat/insights panel transitions
 │   │   │   ├── useScreenWidth.ts # Responsive breakpoint hook
 │   │   │   └── useWebAriaHiddenFocusWorkaround.ts # RN Web modal focus/a11y shim
-│   │   ├── stores/              # Zustand: auth, chat, deal, simulation, theme
+│   │   ├── stores/              # Zustand: auth, chat (with client-side message queue), deal, simulation, theme
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend (shared SSE parser for send + branch)
 │   │       ├── theme/
@@ -261,6 +261,7 @@ POST   /simulations/{id}/complete     # End + score
 15. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
 16. Frontend `apiClient.ts` uses a shared `streamBuyerChatSse()` parser for both normal sends and branch sends. It preserves structured backend 4xx details, hides raw 5xx/proxy bodies behind generic messages, treats `error` events before `done` as fatal, and treats `error` events after `done` as non-fatal warnings so the delivered reply stays on screen. Tool result callbacks are still deferred until after `done`, and malformed post-`done` SSE payloads are ignored so panel cleanup can finish safely.
 17. On normal-send failure, optimistic user rows are marked failed or rolled back as appropriate. On branch failure, the frontend treats the server as authoritative, refreshes history/deal state, and keeps the branch truncation semantics aligned with the committed prepare step.
+18. **Client-side message queue:** Users can send follow-up messages while the AI is processing. Messages are queued in the Zustand chat store (`queueBySession`) and dispatched FIFO after each turn completes. QueuePreviewCard renders up to 3 pending items above the composer. ChatInput and QuickActions remain always enabled. Branch edit is blocked while the queue has pending items. See ADR 0022.
 
 ---
 

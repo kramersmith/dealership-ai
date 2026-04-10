@@ -28,6 +28,11 @@ const baseState = {
   isCompacting: false,
   suppressContextWarningUntilUsageRefresh: false,
   editingUserMessageId: null,
+  queueBySession: {},
+  activeQueueItemId: null,
+  isQueueDispatching: false,
+  queueDispatchGeneration: 0,
+  lastQueueEvent: null,
 }
 
 describe('normalizeVinCandidate / normalizeVinCandidates', () => {
@@ -609,6 +614,47 @@ describe('useChatStore.sendMessage', () => {
     await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
 
     expect(useChatStore.getState().suppressContextWarningUntilUsageRefresh).toBe(false)
+  })
+
+  it('clears user sending status once the assistant turn starts processing', async () => {
+    let release: (() => void) | undefined
+    api.sendMessage = vi.fn(
+      async (
+        _sessionId,
+        _content,
+        _imageUri,
+        _onChunk,
+        _onToolResult,
+        onTextDone,
+        _onRetry,
+        onStep
+      ) => {
+        onStep?.({ step: 1, reason: 'processing' } as any)
+        await new Promise<void>((resolve) => {
+          release = () => {
+            onTextDone?.('reply')
+            resolve()
+          }
+        })
+        return {
+          id: 'assistant-step',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'reply',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    const sendPromise = useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const duringSend = useChatStore
+      .getState()
+      .messages.find((message) => message.role === 'user' && message.content === 'hello')
+    expect(duringSend?.status).toBeUndefined()
+
+    release?.()
+    await sendPromise
   })
 
   it('sendBranchFromEdit truncates the local tail and appends the branched reply', async () => {
@@ -1200,5 +1246,264 @@ describe('useChatStore.sendMessage', () => {
 
     await useChatStore.getState().sendBranchFromEdit('anything')
     expect(branchSpy).not.toHaveBeenCalled()
+  })
+
+  it('processes queued messages in FIFO order', async () => {
+    const startedContents: string[] = []
+    const resolvers: Array<() => void> = []
+
+    api.sendMessage = vi.fn(
+      async (_sessionId, content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
+        startedContents.push(content)
+        onTextDone?.(`reply:${content}`)
+        await new Promise<void>((resolve) => {
+          resolvers.push(resolve)
+        })
+        return {
+          id: `assistant-${content}`,
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: `reply:${content}`,
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    await useChatStore
+      .getState()
+      .sendMessage('first', undefined, undefined, true, undefined, 'typed')
+    await useChatStore
+      .getState()
+      .sendMessage('second', undefined, undefined, true, undefined, 'typed')
+    await useChatStore
+      .getState()
+      .sendMessage('third', undefined, undefined, true, undefined, 'typed')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(startedContents).toEqual(['first', 'second', 'third'])
+
+    while (resolvers.length > 0) {
+      const resolve = resolvers.shift()
+      resolve?.()
+      await new Promise((done) => setTimeout(done, 0))
+    }
+  })
+
+  it('blocks branch edit sends while queue has pending items', async () => {
+    const anchorId = '77777777-7777-4777-8777-777777777777'
+    const createdAt = new Date().toISOString()
+    const branchSpy = vi.fn()
+    api.branchFromUserMessage = branchSpy as typeof api.branchFromUserMessage
+
+    useChatStore.setState({
+      ...baseState,
+      activeSessionId: 'session-1',
+      editingUserMessageId: anchorId,
+      messages: [
+        {
+          id: anchorId,
+          sessionId: 'session-1',
+          role: 'user',
+          content: 'Original',
+          createdAt,
+        },
+      ],
+      queueBySession: {
+        'session-1': [
+          {
+            id: 'queued-1',
+            sessionId: 'session-1',
+            source: 'typed',
+            payload: { content: 'queued message' },
+            status: 'queued',
+            createdAt,
+          },
+        ],
+      },
+    })
+
+    await useChatStore.getState().sendBranchFromEdit('Edited')
+
+    expect(branchSpy).not.toHaveBeenCalled()
+    expect(useChatStore.getState().sendError).toContain(
+      'Clear queued messages before editing from here'
+    )
+  })
+
+  it('clearQueue removes pending queue entries while preserving transcript', async () => {
+    api.sendMessage = vi.fn(
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, _onTextDone) => {
+        await new Promise<void>(() => {
+          // Keep stream unresolved so queued-2 remains pending.
+        })
+        return {
+          id: 'assistant-clear',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'reply',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    await useChatStore
+      .getState()
+      .sendMessage('queued-1', undefined, undefined, false, undefined, 'typed')
+    await useChatStore
+      .getState()
+      .sendMessage('queued-2', undefined, undefined, false, undefined, 'typed')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const preClear = useChatStore.getState()
+    const preClearQueue = preClear.activeSessionId
+      ? (preClear.queueBySession[preClear.activeSessionId] ?? [])
+      : []
+    expect(preClearQueue.some((item) => item.status === 'queued')).toBe(true)
+
+    useChatStore.getState().clearQueue()
+
+    const postClear = useChatStore.getState()
+    const activeQueue = postClear.activeSessionId
+      ? (postClear.queueBySession[postClear.activeSessionId] ?? [])
+      : []
+    expect(
+      activeQueue.some((item) => item.status === 'queued' || item.status === 'paused_vin')
+    ).toBe(false)
+  })
+
+  it('removeQueuedMessage removes a queued item from the session queue', () => {
+    const createdAt = new Date().toISOString()
+    useChatStore.setState({
+      ...baseState,
+      activeSessionId: 'session-1',
+      queueBySession: {
+        'session-1': [
+          {
+            id: 'q-1',
+            sessionId: 'session-1',
+            source: 'typed',
+            payload: { content: 'first' },
+            status: 'queued',
+            createdAt,
+          },
+          {
+            id: 'q-2',
+            sessionId: 'session-1',
+            source: 'typed',
+            payload: { content: 'second' },
+            status: 'queued',
+            createdAt,
+          },
+        ],
+      },
+    })
+
+    useChatStore.getState().removeQueuedMessage('q-1')
+
+    const queue = useChatStore.getState().queueBySession['session-1'] ?? []
+    expect(queue).toHaveLength(1)
+    expect(queue[0].id).toBe('q-2')
+  })
+
+  it('removeQueuedMessage does not remove an active/dispatching item', () => {
+    const createdAt = new Date().toISOString()
+    useChatStore.setState({
+      ...baseState,
+      activeSessionId: 'session-1',
+      queueBySession: {
+        'session-1': [
+          {
+            id: 'q-active',
+            sessionId: 'session-1',
+            source: 'typed',
+            payload: { content: 'active msg' },
+            status: 'active',
+            createdAt,
+          },
+        ],
+      },
+    })
+
+    useChatStore.getState().removeQueuedMessage('q-active')
+
+    const queue = useChatStore.getState().queueBySession['session-1'] ?? []
+    expect(queue).toHaveLength(1)
+    expect(queue[0].id).toBe('q-active')
+  })
+
+  it('recoverQueueStall resets a stuck dispatch and re-triggers queue processing', () => {
+    const createdAt = new Date().toISOString()
+    // Mock _sendMessageImmediate to prevent the re-dispatched item from
+    // completing or changing state — we only care that recovery resets the
+    // stuck item back to 'queued' and kicks off a new dispatch cycle.
+    api.sendMessage = vi.fn(
+      async () =>
+        new Promise<never>(() => {
+          // never resolves — keeps the stream open
+        })
+    ) as unknown as typeof api.sendMessage
+
+    useChatStore.setState({
+      ...baseState,
+      activeSessionId: 'session-1',
+      isQueueDispatching: true,
+      activeQueueItemId: 'q-stuck',
+      queueBySession: {
+        'session-1': [
+          {
+            id: 'q-stuck',
+            sessionId: 'session-1',
+            source: 'typed',
+            payload: { content: 'stuck' },
+            status: 'dispatching',
+            createdAt,
+          },
+        ],
+      },
+    })
+
+    useChatStore.getState().recoverQueueStall()
+
+    const state = useChatStore.getState()
+    // After recovery, _recheckQueueDispatch immediately picks up the re-queued
+    // item, so isQueueDispatching is true again (a new dispatch cycle started).
+    expect(state.isQueueDispatching).toBe(true)
+    // The re-dispatched item transitions dispatching→active synchronously,
+    // so lastQueueEvent reflects the active state, not the intermediate dispatching.
+    expect(state.lastQueueEvent).toContain('q-stuck')
+  })
+
+  it('startEditUserMessage is blocked when queue has pending items', () => {
+    const serverId = '00000000-0000-4000-8000-000000000099'
+    const createdAt = new Date().toISOString()
+    useChatStore.setState({
+      ...baseState,
+      activeSessionId: 'session-1',
+      messages: [
+        {
+          id: serverId,
+          sessionId: 'session-1',
+          role: 'user',
+          content: 'Hello',
+          createdAt,
+        },
+      ],
+      queueBySession: {
+        'session-1': [
+          {
+            id: 'q-pending',
+            sessionId: 'session-1',
+            source: 'typed',
+            payload: { content: 'pending' },
+            status: 'queued',
+            createdAt,
+          },
+        ],
+      },
+    })
+
+    useChatStore.getState().startEditUserMessage(serverId)
+
+    expect(useChatStore.getState().editingUserMessageId).toBeNull()
   })
 })

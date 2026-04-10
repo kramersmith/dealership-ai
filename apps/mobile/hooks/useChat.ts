@@ -10,6 +10,13 @@ export function useChat(sessionId: string | null) {
   const streamingText = useChatStore((s) => s.streamingText)
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const sendMessage = useChatStore((s) => s.sendMessage)
+  const clearQueue = useChatStore((s) => s.clearQueue)
+  const recoverQueueStall = useChatStore((s) => s.recoverQueueStall)
+  const removeQueuedMessage = useChatStore((s) => s.removeQueuedMessage)
+  const queueBySession = useChatStore((s) => s.queueBySession)
+  const activeQueueItemId = useChatStore((s) => s.activeQueueItemId)
+  const isQueueDispatching = useChatStore((s) => s.isQueueDispatching)
+  const isPendingVinIntercept = useChatStore((s) => s._pendingSend != null)
 
   const timerStartedAt = useDealStore((s) => s.dealState?.timerStartedAt ?? null)
   const startTimer = useDealStore((s) => s.startTimer)
@@ -22,7 +29,7 @@ export function useChat(sessionId: string | null) {
 
   const send = useCallback(
     async (content: string, imageUri?: string) => {
-      await sendMessage(content, imageUri)
+      await sendMessage(content, imageUri, undefined, false, undefined, 'typed')
 
       // Auto-start timer when user mentions being at the dealership
       const lower = content.toLowerCase()
@@ -42,18 +49,40 @@ export function useChat(sessionId: string | null) {
   const handleQuickAction = useCallback(
     (prompt: string) => {
       if (prompt) {
-        sendMessage(prompt)
+        sendMessage(prompt, undefined, undefined, false, undefined, 'quick_action')
       }
     },
     [sendMessage]
   )
+
+  const activeSessionQueue = sessionId ? (queueBySession[sessionId] ?? []) : []
+  const pendingQueueItems = activeSessionQueue.filter(
+    (item) =>
+      item.status === 'queued' ||
+      item.status === 'dispatching' ||
+      item.status === 'active' ||
+      item.status === 'paused_vin'
+  )
+  const queuedCount = pendingQueueItems.filter((item) => item.status === 'queued').length
+  const firstQueuedPreview =
+    pendingQueueItems.find((item) => item.status === 'queued')?.payload.content ?? null
+  const canBranchEdit = !isSending && !isPendingVinIntercept && pendingQueueItems.length === 0
 
   return {
     messages,
     isSending,
     isLoading,
     streamingText,
+    queuedCount,
+    firstQueuedPreview,
+    pendingQueueItems,
+    activeQueueItemId,
+    isQueueDispatching,
+    canBranchEdit,
     send,
     handleQuickAction,
+    clearQueue,
+    recoverQueueStall,
+    removeQueuedMessage,
   }
 }

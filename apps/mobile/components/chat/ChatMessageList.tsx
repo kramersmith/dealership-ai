@@ -1,4 +1,4 @@
-import { useRef, useEffect, memo, type ReactNode } from 'react'
+import { useRef, useEffect, useMemo, memo, type ReactNode } from 'react'
 import { ScrollView, Animated } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
@@ -205,6 +205,17 @@ export const ChatMessageList = memo(function ChatMessageList({
   const scrollRef = useRef<ScrollView>(null)
   const messageLayoutY = useRef<Record<string, number>>({})
   const theme = useTheme()
+  const renderableMessages = useMemo(() => {
+    const seenById = new Map<string, number>()
+    return messages.map((message) => {
+      const count = seenById.get(message.id) ?? 0
+      seenById.set(message.id, count + 1)
+      // Defensive keying: backend/optimistic races can temporarily produce duplicate ids.
+      // Keep key stable for the first occurrence while disambiguating later duplicates.
+      const renderKey = count === 0 ? message.id : `${message.id}::dup-${count}`
+      return { message, renderKey }
+    })
+  }, [messages])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -255,13 +266,13 @@ export const ChatMessageList = memo(function ChatMessageList({
         }
       }}
     >
-      {messages.map((message) => {
+      {renderableMessages.map(({ message, renderKey }) => {
         const vinAssistItemsForMessage = vinAssistItems.filter(
           (item) => item.sourceMessageId === message.id
         )
         return (
           <YStack
-            key={message.id}
+            key={renderKey}
             onLayout={(layoutEvent) => {
               messageLayoutY.current[message.id] = layoutEvent.nativeEvent.layout.y
             }}

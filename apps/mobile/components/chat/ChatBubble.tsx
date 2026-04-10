@@ -10,7 +10,7 @@ import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
 import { Pencil, RefreshCw, Undo2 } from '@tamagui/lucide-icons'
 import type { Message } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
-import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
+import { APP_NAME, CHAT_BUBBLE_MAX_WIDTH, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { useChatStore } from '@/stores/chatStore'
@@ -41,6 +41,25 @@ function formatUsageCount(value: number) {
   return String(value)
 }
 
+function StatusBadge({ label }: { label: string }) {
+  return (
+    <XStack
+      minHeight={22}
+      paddingHorizontal="$2"
+      borderRadius="$2"
+      backgroundColor="$backgroundHover"
+      borderWidth={1}
+      borderColor="$borderColor"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <Text fontSize={10} lineHeight={14} color="$placeholderColor">
+        {label}
+      </Text>
+    </XStack>
+  )
+}
+
 export const ChatBubble = memo(function ChatBubble({
   message,
   skipAnimation = false,
@@ -64,6 +83,13 @@ export const ChatBubble = memo(function ChatBubble({
     !isUser && message.usage
       ? `${message.usage.requests} req · ${formatUsageCount(message.usage.inputTokens)} in · ${formatUsageCount(message.usage.outputTokens)} out`
       : null
+  const userMessageStatusLabel = isUser
+    ? message.status === 'queued'
+      ? 'Queued'
+      : message.status === 'sending'
+        ? 'Sending now'
+        : null
+    : null
 
   useEffect(() => {
     if (!isUser || !isEditTarget || !onEditDraftChange) return
@@ -141,6 +167,13 @@ export const ChatBubble = memo(function ChatBubble({
         paddingVertical={isUser ? '$1' : '$0.5'}
         alignItems={isUser ? 'flex-end' : 'flex-start'}
         gap="$1"
+        style={
+          Platform.OS === 'web' && isUser
+            ? ({
+                paddingRight: Math.max(0, 16 - WEB_SCROLLBAR_GUTTER_PX),
+              } as const)
+            : undefined
+        }
       >
         <YStack
           style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
@@ -275,6 +308,7 @@ export const ChatBubble = memo(function ChatBubble({
                   minute: '2-digit',
                 })}
               </Text>
+              {userMessageStatusLabel ? <StatusBadge label={userMessageStatusLabel} /> : null}
               {isEditTarget ? (
                 <XStack
                   minHeight={44}
@@ -329,18 +363,21 @@ export const ChatBubble = memo(function ChatBubble({
               )}
             </XStack>
           ) : isUser ? (
-            <Text
-              fontSize={10}
-              color="$placeholderColor"
+            <XStack
               marginTop="$1"
-              textAlign="right"
               width="100%"
+              justifyContent="flex-end"
+              alignItems="center"
+              gap="$1.5"
             >
-              {new Date(message.createdAt).toLocaleTimeString([], {
-                hour: 'numeric',
-                minute: '2-digit',
-              })}
-            </Text>
+              <Text fontSize={10} color="$placeholderColor">
+                {new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+              {userMessageStatusLabel ? <StatusBadge label={userMessageStatusLabel} /> : null}
+            </XStack>
           ) : null}
         </YStack>
       </XStack>
