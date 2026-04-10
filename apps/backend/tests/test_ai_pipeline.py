@@ -16,9 +16,10 @@ from app.core.security import create_access_token
 from app.main import app
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, MessageRole
+from app.models.enums import BuyerContext, InsightsUpdateMode, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
+from app.models.user_settings import UserSettings
 from app.services.buyer_chat_stream import stream_buyer_chat_turn
 from app.services.claude import (
     CHAT_TOOLS,
@@ -2387,6 +2388,74 @@ async def test_send_message_runs_compaction_before_chat_when_over_budget(
         rows = list(message_result.scalars().all())
         assert any(m.role == MessageRole.SYSTEM for m in rows)
         assert rows[-1].role == MessageRole.ASSISTANT
+
+
+async def test_send_message_skips_live_panel_events_when_user_mode_is_paused(
+    async_client, adb, async_buyer_user
+):
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
+    adb.add(
+        UserSettings(
+            user_id=async_buyer_user.id,
+            insights_update_mode=InsightsUpdateMode.PAUSED.value,
+        )
+    )
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def fake_stream_chat_loop(*args, **kwargs):
+        result = args[4]
+        result.full_text = "Manual mode response."
+        merge_usage_summary(
+            result.usage_summary,
+            summarize_usage(
+                SimpleNamespace(
+                    input_tokens=16,
+                    output_tokens=12,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                )
+            ),
+        )
+        result.completed = True
+        yield ('event: text\ndata: {"chunk": "Manual mode response."}\n\n')
+
+    panel_called = False
+
+    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
+        nonlocal panel_called
+        panel_called = True
+        yield SimpleNamespace(
+            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
+        )
+
+    with (
+        patch(
+            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+        ),
+        patch(
+            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
+            new=fake_stream_panel_cards_with_usage,
+        ),
+        patch(
+            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/message",
+            json={"content": "Check mode"},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert [event_name for event_name, _ in events] == ["turn_started", "text", "done"]
+    assert panel_called is False
 
 
 async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(

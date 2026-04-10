@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import { setAuthToken } from '@/lib/apiClient'
+import { useUserSettingsStore } from '@/stores/userSettingsStore'
 
 interface AuthState {
   userId: string | null
@@ -33,6 +34,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true,
         isLoading: false,
       })
+      useUserSettingsStore.getState().hydrateFromAuthPayload(result.settings)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed'
       console.error('[authStore] login failed:', message)
@@ -47,10 +49,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       const result = await api.register(email, password, role)
       set({
         userId: result.userId,
-        role: role as 'buyer' | 'dealer',
+        role: result.role as 'buyer' | 'dealer',
         isAuthenticated: true,
         isLoading: false,
       })
+      useUserSettingsStore.getState().hydrateFromAuthPayload(result.settings)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Registration failed'
       console.error('[authStore] register failed:', message)
@@ -62,6 +65,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     setAuthToken(null)
     set({ userId: null, role: null, isAuthenticated: false, error: null })
+    useUserSettingsStore.getState().reset()
   },
 
   setRole: (role) => {

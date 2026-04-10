@@ -5,7 +5,6 @@ import {
   Platform,
   TouchableOpacity,
   Pressable,
-  ScrollView,
   Modal,
   View,
   Animated,
@@ -33,7 +32,7 @@ import {
   MAX_INSIGHTS_PREVIEW_ITEMS,
   WEB_FONT_FAMILY,
 } from '@/lib/constants'
-import type { BuyerContext, DealState, HealthStatus } from '@/lib/types'
+import type { AiPanelCard, BuyerContext, DealState, HealthStatus } from '@/lib/types'
 import { formatCurrency, getActiveDeal } from '@/lib/utils'
 import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
@@ -42,13 +41,21 @@ import { getVehicleAwareHeaderTitleInfo } from '@/lib/headerTitles'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
+import { useUserSettingsStore } from '@/stores/userSettingsStore'
 import { useChat } from '@/hooks/useChat'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
-import { useDesktopChatTransition, DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
+import { DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
+import { useDesktopInsightsShell } from '@/hooks/useDesktopInsightsShell'
+import { useDesktopPanelPreference } from '@/hooks/useDesktopPanelPreference'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { STATUS_LABELS, STATUS_THEMES, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
-import { InsightsPanel, QuickActions, CompactPhaseIndicator } from '@/components/insights-panel'
+import {
+  InsightsPanel,
+  QuickActions,
+  CompactPhaseIndicator,
+  DesktopInsightsDockControl,
+} from '@/components/insights-panel'
 import { ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
 function useMobileInsightsWidth() {
@@ -146,6 +153,31 @@ type PreviewItem =
   | { type: 'flag'; label: string }
   | { type: 'savings'; label: string }
   | { type: 'flagCount'; count: number }
+
+function getCollapsedInsightsPreview(cards: AiPanelCard[]): string {
+  for (const card of cards) {
+    if (!card) continue
+    const { content } = card
+    if (!content || typeof content !== 'object') continue
+    const candidateKeys = [
+      'summary',
+      'headline',
+      'message',
+      'recommendation',
+      'label',
+      'value',
+      'status',
+      'title',
+    ] as const
+    for (const key of candidateKeys) {
+      const value = (content as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim()
+      }
+    }
+  }
+  return ''
+}
 
 function getUserVisibleErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) return fallback
@@ -323,6 +355,8 @@ export default function ChatScreen() {
     (state) => state.suppressContextWarningUntilUsageRefresh
   )
   const prefersReducedMotion = usePrefersReducedMotion()
+  const insightsUpdateMode = useUserSettingsStore((state) => state.insightsUpdateMode)
+  const { desktopInsightsCollapsed, setDesktopInsightsCollapsed } = useDesktopPanelPreference()
 
   useEffect(() => {
     if (Platform.OS !== 'web') return
@@ -393,6 +427,17 @@ export default function ChatScreen() {
   const headerTitle = showContextPicker ? 'New Chat' : headerTitleInfo.title
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
   const isDesktopChatActive = isDesktop && !showContextPicker
+  const collapsedInsightsPreviewText = useMemo(
+    () => getCollapsedInsightsPreview(dealState?.aiPanelCards ?? []),
+    [dealState?.aiPanelCards]
+  )
+
+  const handleDesktopCollapsePress = useCallback(() => {
+    setDesktopInsightsCollapsed(true)
+  }, [setDesktopInsightsCollapsed])
+  const handleDesktopExpandPress = useCallback(() => {
+    setDesktopInsightsCollapsed(false)
+  }, [setDesktopInsightsCollapsed])
 
   const navigateBackOrChats = useCallback(() => {
     if (router.canGoBack()) {
@@ -402,32 +447,39 @@ export default function ChatScreen() {
     router.replace('/(app)/chats')
   }, [router])
 
-  const desktopTransition = useDesktopChatTransition({
+  const resetDesktopChatShell = useCallback(() => {
+    useChatStore.setState({
+      activeSessionId: null,
+      messages: [],
+      streamingText: '',
+      vinAssistItems: [],
+      quickActions: [],
+      aiResponseCount: 0,
+      quickActionsUpdatedAtResponse: 0,
+      activeTurnId: null,
+      isStopRequested: false,
+      panelInterruptionNotice: null,
+      _sessionJustCreated: false,
+      contextPressure: null,
+      isCompacting: false,
+      suppressContextWarningUntilUsageRefresh: false,
+      editingUserMessageId: null,
+      activeQueueItemId: null,
+      isQueueDispatching: false,
+    })
+  }, [])
+
+  const desktopShell = useDesktopInsightsShell({
     dealState,
     enabled: isDesktopChatActive,
+    desktopInsightsCollapsed,
+    isPanelAnalyzing,
+    prefersReducedMotion,
+    onCollapseChange: setDesktopInsightsCollapsed,
     onBackComplete: navigateBackOrChats,
-    onResetComplete: () => {
-      useChatStore.setState({
-        activeSessionId: null,
-        messages: [],
-        streamingText: '',
-        vinAssistItems: [],
-        quickActions: [],
-        aiResponseCount: 0,
-        quickActionsUpdatedAtResponse: 0,
-        activeTurnId: null,
-        isStopRequested: false,
-        panelInterruptionNotice: null,
-        _sessionJustCreated: false,
-        contextPressure: null,
-        isCompacting: false,
-        suppressContextWarningUntilUsageRefresh: false,
-        editingUserMessageId: null,
-        activeQueueItemId: null,
-        isQueueDispatching: false,
-      })
-    },
+    onResetComplete: resetDesktopChatShell,
   })
+  const { transition: desktopTransition } = desktopShell
 
   const handleBack = useCallback(() => {
     if (isDesktopChatActive) {
@@ -879,6 +931,15 @@ export default function ChatScreen() {
               </YStack>
             </YStack>
           ) : null}
+          <DesktopInsightsDockControl
+            shellState={desktopShell.shellState}
+            collapsedPreviewText={collapsedInsightsPreviewText}
+            insightsUpdateMode={insightsUpdateMode}
+            launcherOpacity={desktopShell.launcherOpacity}
+            launcherTranslateX={desktopShell.launcherTranslateX}
+            onCollapsePress={handleDesktopCollapsePress}
+            onExpandPress={handleDesktopExpandPress}
+          />
         </YStack>
       )}
       {isCompacting ? (
@@ -1037,19 +1098,7 @@ export default function ChatScreen() {
                   }}
                 >
                   <View style={{ width: '100%', flex: 1 }}>
-                    <ScrollView
-                      showsVerticalScrollIndicator
-                      style={
-                        {
-                          flex: 1,
-                          scrollbarWidth: 'thin',
-                          scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
-                        } as any
-                      }
-                      contentContainerStyle={{ flexGrow: 1 }}
-                    >
-                      <InsightsPanel dealStateOverride={desktopTransition.insightsDealState} />
-                    </ScrollView>
+                    <InsightsPanel dealStateOverride={desktopTransition.insightsDealState} />
                   </View>
                 </Animated.View>
               ) : null}
@@ -1183,13 +1232,7 @@ export default function ChatScreen() {
                       </HeaderIconButton>
                     </XStack>
 
-                    <ScrollView
-                      showsVerticalScrollIndicator={false}
-                      style={{ flex: 1 }}
-                      contentContainerStyle={{ flexGrow: 1 }}
-                    >
-                      {dealState ? <InsightsPanel /> : null}
-                    </ScrollView>
+                    <YStack flex={1}>{dealState ? <InsightsPanel /> : null}</YStack>
                   </YStack>
                 </ThemedSafeArea>
               </YStack>

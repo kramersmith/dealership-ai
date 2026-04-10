@@ -37,6 +37,7 @@ from app.services.panel import (
     PanelGenerationInterrupted,
     stream_ai_panel_cards_with_usage,
 )
+from app.services.panel_update_service import resolve_panel_update_policy
 from app.services.post_chat_processing import update_session_metadata
 from app.services.turn_cancellation import TurnCancellationState
 from app.services.turn_context import TurnContext
@@ -376,7 +377,13 @@ async def stream_buyer_chat_turn(
         if message.role in (MessageRole.USER, MessageRole.ASSISTANT)
     ]
 
-    if deal_state and updated_state_dict is not None:
+    panel_policy = await resolve_panel_update_policy(db, user_id=session.user_id)
+
+    if (
+        deal_state
+        and updated_state_dict is not None
+        and panel_policy.live_updates_enabled
+    ):
         logger.debug("Streaming AI panel cards, session_id=%s", session_id)
         panel_started = False
         panel_finished = False
@@ -465,6 +472,11 @@ async def stream_buyer_chat_turn(
             logger.exception("AI panel generation failed: session_id=%s", session_id)
             if panel_started and not panel_finished:
                 yield 'event: panel_error\ndata: {"message": "Panel generation failed"}\n\n'
+    elif not panel_policy.live_updates_enabled:
+        logger.debug(
+            "Skipping live panel generation (paused mode): session_id=%s",
+            session_id,
+        )
 
     assistant_message.tool_calls = result.tool_calls if result.tool_calls else None
     assistant_message.usage = _message_usage_payload(result.usage_summary)

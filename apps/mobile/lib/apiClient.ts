@@ -11,6 +11,7 @@ import type {
   MessageUsage,
   ModelUsageSummary,
   SessionUsage,
+  UserSettings,
 } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
@@ -114,6 +115,13 @@ function mapSession(rawSession: any): Session {
     dealSummary: mapDealSummary(rawSession.deal_summary),
     updatedAt: rawSession.updated_at,
     createdAt: rawSession.created_at,
+  }
+}
+
+function mapUserSettings(rawSettings: any): UserSettings {
+  const rawMode = rawSettings?.insights_update_mode
+  return {
+    insightsUpdateMode: rawMode === 'paused' || rawMode === 'manual' ? 'paused' : 'live',
   }
 }
 
@@ -769,21 +777,46 @@ class ApiClient implements ApiService {
   // ─── Auth ───
 
   async login(email: string, password: string) {
-    const data = await request<{ access_token: string; user_id: string; role: string }>(
-      '/auth/login',
-      { method: 'POST', body: JSON.stringify({ email, password }) }
-    )
+    const data = await request<{
+      access_token: string
+      user_id: string
+      role: string
+      settings: { insights_update_mode: string }
+    }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     setAuthToken(data.access_token)
-    return { userId: data.user_id, role: data.role }
+    return { userId: data.user_id, role: data.role, settings: mapUserSettings(data.settings) }
   }
 
   async register(email: string, password: string, role: string) {
-    const data = await request<{ access_token: string; user_id: string; role: string }>(
-      '/auth/signup',
-      { method: 'POST', body: JSON.stringify({ email, password, role }) }
-    )
+    const data = await request<{
+      access_token: string
+      user_id: string
+      role: string
+      settings: { insights_update_mode: string }
+    }>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, role }) })
     setAuthToken(data.access_token)
-    return { userId: data.user_id }
+    return { userId: data.user_id, role: data.role, settings: mapUserSettings(data.settings) }
+  }
+
+  async getUserSettings() {
+    const data = await request<{
+      insights_update_mode: string
+    }>('/auth/settings')
+    return mapUserSettings(data)
+  }
+
+  async updateUserSettings(patch: Partial<UserSettings>) {
+    const body: Record<string, unknown> = {}
+    if (patch.insightsUpdateMode != null) {
+      body.insights_update_mode = patch.insightsUpdateMode
+    }
+    const data = await request<{
+      insights_update_mode: string
+    }>('/auth/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+    return mapUserSettings(data)
   }
 
   // ─── Sessions ───

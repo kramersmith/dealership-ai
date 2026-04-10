@@ -33,3 +33,4 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0021](0021-chat-harness-logging.md) | Chat harness logging (full vs lite `chat_turn_summary`) | Accepted | 2026-04 |
 | [0022](0022-client-side-message-queue.md) | Client-side message queue for buyer chat | Accepted | 2026-04 |
 | [0023](0023-stop-generation-cancellation-contract.md) | Stop generation cancellation contract | Accepted | 2026-04 |
+| [0024](0024-panel-update-policy-and-user-settings.md) | Centralized panel update policy and user settings | Accepted | 2026-04 |

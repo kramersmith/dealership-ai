@@ -2,6 +2,7 @@ import { memo, useEffect, useRef } from 'react'
 import {
   Animated,
   Platform,
+  Pressable,
   TextInput,
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
@@ -189,7 +190,10 @@ export const ChatBubble = memo(function ChatBubble({
             borderRadius={useInlineAssistantLayout ? 0 : '$4'}
             borderBottomRightRadius={isUser ? '$1' : '$4'}
             borderBottomLeftRadius={isUser ? '$4' : useInlineAssistantLayout ? 0 : '$1'}
-            paddingHorizontal={useInlineAssistantLayout ? '$0' : '$4'}
+            paddingLeft={useInlineAssistantLayout ? '$0' : '$4'}
+            paddingRight={
+              isUser && onStartEdit && !isEditTarget ? '$1' : useInlineAssistantLayout ? '$0' : '$4'
+            }
             paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
             borderWidth={isUser && isEditTarget ? 2 : 0}
             borderColor="transparent"
@@ -271,9 +275,46 @@ export const ChatBubble = memo(function ChatBubble({
                   placeholderTextColor={palette.whiteTint55}
                 />
               ) : (
-                <Text fontSize={15} lineHeight={22} color="$white">
-                  {userVisibleBody}
-                </Text>
+                <XStack alignItems="flex-end" gap="$2">
+                  <Text flexShrink={1} fontSize={15} lineHeight={22} color="$white">
+                    {userVisibleBody}
+                  </Text>
+                  {onStartEdit ? (
+                    <Pressable
+                      onPress={onStartEdit}
+                      style={({ pressed }) =>
+                        ({
+                          alignSelf: 'flex-end',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          width: 28,
+                          height: 28,
+                          marginTop: -3,
+                          marginBottom: -3,
+                          borderRadius: 14,
+                          opacity: pressed ? 0.82 : 1,
+                          backgroundColor: 'transparent',
+                          ...(Platform.OS === 'web'
+                            ? {
+                                cursor: 'pointer',
+                              }
+                            : null),
+                        }) as any
+                      }
+                      {...(Platform.OS === 'web'
+                        ? ({
+                            'aria-label':
+                              'Revert to this message and continue the conversation from here',
+                          } as any)
+                        : {
+                            accessibilityLabel:
+                              'Revert to this message and continue the conversation from here',
+                          })}
+                    >
+                      <Undo2 size={16} color={palette.white} />
+                    </Pressable>
+                  ) : null}
+                </XStack>
               )
             ) : (
               <YStack>
@@ -331,37 +372,7 @@ export const ChatBubble = memo(function ChatBubble({
                     Editing
                   </Text>
                 </XStack>
-              ) : (
-                <Button
-                  size="$3"
-                  minHeight={44}
-                  paddingHorizontal="$3"
-                  borderRadius="$3"
-                  backgroundColor="transparent"
-                  borderWidth={1}
-                  borderColor="$brand"
-                  pressStyle={{ backgroundColor: '$brandSubtle' }}
-                  onPress={onStartEdit}
-                  {...(Platform.OS === 'web'
-                    ? ({
-                        hoverStyle: { backgroundColor: '$backgroundHover' },
-                        cursor: 'pointer',
-                        'aria-label':
-                          'Revert to this message and continue the conversation from here',
-                      } as any)
-                    : {
-                        accessibilityLabel:
-                          'Revert to this message and continue the conversation from here',
-                      })}
-                >
-                  <XStack gap="$1.5" alignItems="center" justifyContent="center">
-                    <Undo2 size={16} color="$brand" />
-                    <Button.Text color="$brand" fontWeight="600" fontSize={13}>
-                      Edit from here
-                    </Button.Text>
-                  </XStack>
-                </Button>
-              )}
+              ) : null}
             </XStack>
           ) : isUser ? (
             <XStack

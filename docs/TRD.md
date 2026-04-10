@@ -150,9 +150,10 @@ graph TB
 
 ### Authentication Flow
 
-1. **Signup** (`POST /api/auth/signup`): Accepts email, password, role, optional display name. Returns a JWT access token.
-2. **Login** (`POST /api/auth/login`): Accepts email and password. Returns a JWT access token.
-3. **Authenticated requests**: Include `Authorization: Bearer <token>` header. The `get_current_user` dependency decodes the token and loads the user.
+1. **Signup** (`POST /api/auth/signup`): Accepts email, password, role, optional display name. Returns a JWT access token and user settings (including `insights_update_mode`).
+2. **Login** (`POST /api/auth/login`): Accepts email and password. Returns a JWT access token and user settings.
+3. **Settings** (`GET/PATCH /api/auth/settings`): Read or update persisted user-level settings (e.g. `insights_update_mode: live|paused`). Settings are stored in the `user_settings` table and created lazily on first access.
+4. **Authenticated requests**: Include `Authorization: Bearer <token>` header. The `get_current_user` dependency decodes the token and loads the user.
 
 ### Token Specification
 
@@ -204,8 +205,10 @@ graph TB
 
 | Method   | Endpoint                          | Auth | Description                         |
 | -------- | --------------------------------- | ---- | ----------------------------------- |
-| `POST`   | `/api/auth/signup`                | No   | Create account, return token        |
-| `POST`   | `/api/auth/login`                 | No   | Authenticate, return token          |
+| `POST`   | `/api/auth/signup`                | No   | Create account, return token + settings |
+| `POST`   | `/api/auth/login`                 | No   | Authenticate, return token + settings |
+| `GET`    | `/api/auth/settings`              | Yes  | Read persisted user settings        |
+| `PATCH`  | `/api/auth/settings`              | Yes  | Update persisted user settings      |
 | `GET`    | `/api/sessions`                   | Yes  | List user's sessions (optional `?q=` search) |
 | `POST`   | `/api/sessions`                   | Yes  | Create session + deal state (with optional buyer_context) |
 | `GET`    | `/api/sessions/{session_id}`      | Yes  | Get single session                  |
@@ -350,6 +353,7 @@ Dealer training scenarios are currently hardcoded (4 scenarios). Each defines:
 
 ```mermaid
 erDiagram
+    users ||--o| user_settings : "has one"
     users ||--o{ chat_sessions : "has many"
     chat_sessions ||--o{ messages : "has many"
     chat_sessions ||--o| deal_states : "has one"
@@ -366,6 +370,14 @@ erDiagram
         string role "buyer | dealer"
         string display_name
         datetime created_at
+    }
+
+    user_settings {
+        string id PK
+        string user_id FK "unique, indexed"
+        string insights_update_mode "live | paused"
+        datetime created_at
+        datetime updated_at
     }
 
     chat_sessions {
@@ -488,6 +500,18 @@ erDiagram
 | `role`            | String   | Not Null, default `"buyer"` | `buyer` or `dealer` |
 | `display_name`    | String   | Nullable                    |                     |
 | `created_at`      | DateTime | default now(UTC)            |                     |
+
+
+#### `user_settings`
+
+
+| Column                  | Type     | Constraints                            | Notes                           |
+| ----------------------- | -------- | -------------------------------------- | ------------------------------- |
+| `id`                    | String   | PK, default UUID                       |                                 |
+| `user_id`               | String   | FK -> users.id, Unique, Not Null, Indexed |                              |
+| `insights_update_mode`  | String   | Not Null, default `"live"`             | `live` or `paused` (InsightsUpdateMode) |
+| `created_at`            | DateTime | default now(UTC)                       |                                 |
+| `updated_at`            | DateTime | default now(UTC), on update            |                                 |
 
 
 #### `chat_sessions`

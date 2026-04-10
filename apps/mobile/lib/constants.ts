@@ -152,6 +152,9 @@ export const CHAT_BUBBLE_MAX_WIDTH = 600
 /** Approximate width in pixels reserved for the web scrollbar gutter inside chat scroll views. */
 export const WEB_SCROLLBAR_GUTTER_PX = 10
 
+/** Shared minimum height for the desktop-aligned chat and insights footers. */
+export const PANEL_FOOTER_MIN_HEIGHT = 60
+
 // ─── Confirmation / Feedback Timing ───
 
 /** Duration in ms to show "saved" / "sent" confirmation before auto-dismissing. */

@@ -11,6 +11,7 @@ import {
 } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Camera, Send, Square, X } from '@tamagui/lucide-icons'
+import { PANEL_FOOTER_MIN_HEIGHT } from '@/lib/constants'
 import { palette } from '@/lib/theme/tokens'
 import { useVisibilityTransition } from '@/hooks/useAnimatedValue'
 import { VoiceButton } from './VoiceButton'
@@ -179,7 +180,7 @@ export function ChatInput({
         >
           <XStack alignItems="center" justifyContent="space-between" gap="$2">
             <Text fontSize={12} lineHeight={18} color="$placeholderColor" flex={1}>
-              Edit in the highlighted message above or here, then send.
+              Press send to replace that message and continue the conversation from there.
             </Text>
             <TouchableOpacity
               onPress={editModeBanner.onCancel}
@@ -204,6 +205,7 @@ export function ChatInput({
         </YStack>
       ) : null}
       <XStack
+        minHeight={PANEL_FOOTER_MIN_HEIGHT}
         paddingHorizontal="$3"
         paddingTop="$2"
         paddingBottom="$2"
@@ -298,7 +300,7 @@ export function ChatInput({
               justifyContent="center"
               opacity={isStopRequested ? 0.45 : undefined}
             >
-              <Square size={16} color="rgb(176, 179, 184)" fill="rgb(176, 179, 184)" />
+              <Square size={16} color="$placeholderColor" fill="$placeholderColor" />
             </XStack>
           </TouchableOpacity>
         ) : showSendButton ? (

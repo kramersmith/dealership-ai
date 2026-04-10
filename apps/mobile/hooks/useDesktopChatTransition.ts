@@ -12,6 +12,7 @@ const DESKTOP_FADE_OUT_DURATION = 180
 interface UseDesktopChatTransitionArgs {
   dealState: DealState | null
   enabled: boolean
+  panelExpanded: boolean
   onBackComplete: () => void
   onResetComplete: () => void
 }
@@ -19,6 +20,7 @@ interface UseDesktopChatTransitionArgs {
 export function useDesktopChatTransition({
   dealState,
   enabled,
+  panelExpanded,
   onBackComplete,
   onResetComplete,
 }: UseDesktopChatTransitionArgs) {
@@ -36,7 +38,8 @@ export function useDesktopChatTransition({
   const chatInset = useRef(new Animated.Value(0)).current
   const chatOpacity = useRef(new Animated.Value(1)).current
 
-  const showInsights = enabled && !isClosingChat && !isNavigatingBack && !!dealState
+  const showInsights =
+    enabled && panelExpanded && !isClosingChat && !isNavigatingBack && !!dealState
 
   useEffect(() => {
     return () => {
@@ -138,7 +141,7 @@ export function useDesktopChatTransition({
         useNativeDriver: false,
       }),
       Animated.timing(chatOpacity, {
-        toValue: 0,
+        toValue: 1,
         duration: DESKTOP_FADE_OUT_DURATION,
         useNativeDriver: USE_NATIVE_DRIVER,
       }),

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr
 
-from app.models.enums import UserRole
+from app.models.enums import InsightsUpdateMode, UserRole
 
 
 class SignupRequest(BaseModel):
@@ -15,11 +15,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserSettingsResponse(BaseModel):
+    insights_update_mode: InsightsUpdateMode
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_id: str
     role: UserRole
+    settings: UserSettingsResponse
 
 
 class UserResponse(BaseModel):
@@ -30,3 +35,7 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UpdateUserSettingsRequest(BaseModel):
+    insights_update_mode: InsightsUpdateMode | None = None

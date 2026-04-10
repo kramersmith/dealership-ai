@@ -2,6 +2,12 @@
 
 export type BuyerContext = 'researching' | 'reviewing_deal' | 'at_dealership'
 
+export type InsightsUpdateMode = 'live' | 'paused'
+
+export interface UserSettings {
+  insightsUpdateMode: InsightsUpdateMode
+}
+
 // ─── Deal Phases ───
 
 export type DealPhase =
@@ -465,8 +471,17 @@ export interface Scenario {
 
 export interface ApiService {
   // Auth
-  login(email: string, password: string): Promise<{ userId: string; role: string }>
-  register(email: string, password: string, role: string): Promise<{ userId: string }>
+  login(
+    email: string,
+    password: string
+  ): Promise<{ userId: string; role: string; settings: UserSettings }>
+  register(
+    email: string,
+    password: string,
+    role: string
+  ): Promise<{ userId: string; role: string; settings: UserSettings }>
+  getUserSettings(): Promise<UserSettings>
+  updateUserSettings(patch: Partial<UserSettings>): Promise<UserSettings>
 
   // Sessions
   getSessions(): Promise<Session[]>

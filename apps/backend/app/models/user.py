@@ -1,11 +1,15 @@
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import UserRole
+
+if TYPE_CHECKING:
+    from app.models.user_settings import UserSettings
 
 
 class User(Base):
@@ -20,4 +24,10 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
+    )
+    settings: Mapped["UserSettings | None"] = relationship(
+        "UserSettings",
+        cascade="all, delete-orphan",
+        uselist=False,
+        back_populates="user",
     )

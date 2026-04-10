@@ -6,6 +6,21 @@ class UserRole(StrEnum):
     DEALER = "dealer"
 
 
+class InsightsUpdateMode(StrEnum):
+    LIVE = "live"
+    PAUSED = "paused"
+
+    @classmethod
+    def _missing_(cls, value):
+        legacy_map = {
+            "auto": cls.LIVE,
+            "manual": cls.PAUSED,
+        }
+        if isinstance(value, str):
+            return legacy_map.get(value.lower())
+        return None
+
+
 class SessionType(StrEnum):
     BUYER_CHAT = "buyer_chat"
     DEALER_SIM = "dealer_sim"

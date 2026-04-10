@@ -1,5 +1,6 @@
 import logging
 
+import app.models as _models  # noqa: F401
 import pytest
 import pytest_asyncio
 from app.core.deps import get_db

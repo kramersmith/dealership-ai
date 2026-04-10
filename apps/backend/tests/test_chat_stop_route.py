@@ -1,4 +1,4 @@
-"""Route-level tests for POST /api/chat/{session_id}/stop."""
+"""Route-level tests for POST /api/chat/{session_id}/stop and panel-refresh."""
 
 import pytest
 from app.models.enums import MessageRole
@@ -122,7 +122,8 @@ def test_panel_refresh_updates_session_usage_ledger(client, db, monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.routes.chat.generate_ai_panel_cards_with_usage", _fake_generate
+        "app.services.panel_update_service.generate_ai_panel_cards_with_usage",
+        _fake_generate,
     )
 
     response = client.post(
@@ -139,3 +140,32 @@ def test_panel_refresh_updates_session_usage_ledger(client, db, monkeypatch):
     assert refreshed_session.usage is not None
     assert refreshed_session.usage["request_count"] == 1
     assert refreshed_session.usage["total_tokens"] == 150
+
+
+def test_panel_refresh_returns_404_when_no_deal_state(client, db):
+    """Panel refresh requires a deal state row; sessions without one get 404."""
+    user, token = create_user_and_token(db)
+    # Create a session WITHOUT deal state
+    session = ChatSession(user_id=user.id, title="No deal")
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    response = client.post(
+        f"/api/chat/{session.id}/panel-refresh",
+        headers=auth_header(token),
+    )
+    assert response.status_code == 404
+
+
+def test_panel_refresh_returns_409_when_no_assistant_message(client, db):
+    """Panel refresh with deal state but no assistant messages returns 409."""
+    user, token = create_user_and_token(db)
+    session, _ = create_session_with_deal_state(db, user)
+    # No assistant messages added
+
+    response = client.post(
+        f"/api/chat/{session.id}/panel-refresh",
+        headers=auth_header(token),
+    )
+    assert response.status_code == 409

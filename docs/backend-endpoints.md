@@ -52,7 +52,10 @@ Create a new user account.
   "access_token": "eyJ...",
   "token_type": "bearer",
   "user_id": "uuid",
-  "role": "buyer"
+  "role": "buyer",
+  "settings": {
+    "insights_update_mode": "live"
+  }
 }
 ```
 
@@ -91,7 +94,10 @@ Authenticate an existing user.
   "access_token": "eyJ...",
   "token_type": "bearer",
   "user_id": "uuid",
-  "role": "buyer"
+  "role": "buyer",
+  "settings": {
+    "insights_update_mode": "live"
+  }
 }
 ```
 
@@ -100,6 +106,44 @@ Authenticate an existing user.
 | Status | Detail |
 |---|---|
 | `401` | Invalid credentials |
+
+---
+
+### GET /api/auth/settings
+
+Get persisted user-level settings for insights behavior.
+
+**Auth required:** Yes
+
+**Response:** `200 OK`
+
+```json
+{
+  "insights_update_mode": "live"
+}
+```
+
+### PATCH /api/auth/settings
+
+Update persisted user-level settings for insights behavior.
+
+**Auth required:** Yes
+
+**Request body:** (all fields optional)
+
+```json
+{
+  "insights_update_mode": "paused"
+}
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "insights_update_mode": "paused"
+}
+```
 
 ---
 
@@ -446,7 +490,7 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. The backend emits `turn_started` first with a per-turn `turn_id`. Core chat events are `text`, `tool_result`, and terminal `done` **or** `interrupted`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. After `done`, panel generation continues asynchronously via `panel_started`, then a single atomic `panel_done` (canonical `cards` + panel-phase `usage` + `assistant_message_id` binding the snapshot to the persisted assistant row), `panel_interrupted` (user stop intent), or `panel_error`. **Incremental `panel_card` events are not emitted** on this contract — the model may still stream partial JSON internally; only `panel_done` carries client-visible card data. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
+The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. The backend emits `turn_started` first with a per-turn `turn_id`. Core chat events are `text`, `tool_result`, and terminal `done` **or** `interrupted`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. After `done`, panel generation is policy-driven by user settings: in `insights_update_mode = "live"` the stream continues with `panel_started`, then a single atomic `panel_done` (canonical `cards` + panel-phase `usage` + `assistant_message_id` binding the snapshot to the persisted assistant row), `panel_interrupted`, or `panel_error`; in `insights_update_mode = "paused"` no panel lifecycle events are emitted for normal sends. **Incremental `panel_card` events are not emitted** on this contract — the model may still stream partial JSON internally; only `panel_done` carries client-visible card data. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
 
 **`turn_started` event** — Backend accepted the turn and assigned a cancellable `turn_id`:
 ```
@@ -651,6 +695,7 @@ Request cancellation for the currently active turn in this session.
 ### POST /api/chat/{session_id}/panel-refresh
 
 Regenerate insights panel cards from the current structured deal state and latest persisted assistant message without creating a new chat turn.
+This is the explicit command path used when `insights_update_mode` is `paused` and is also available on demand in `live` mode.
 
 **Auth required:** Yes
 
