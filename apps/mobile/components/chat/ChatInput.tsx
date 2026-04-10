@@ -298,11 +298,7 @@ export function ChatInput({
               justifyContent="center"
               opacity={isStopRequested ? 0.45 : undefined}
             >
-              <Square
-                size={16}
-                color="rgb(176, 179, 184)"
-                fill="rgb(176, 179, 184)"
-              />
+              <Square size={16} color="rgb(176, 179, 184)" fill="rgb(176, 179, 184)" />
             </XStack>
           </TouchableOpacity>
         ) : showSendButton ? (

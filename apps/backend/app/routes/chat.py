@@ -7,8 +7,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
-from app.core.deps import get_current_user, get_db
 from app.core.config import settings
+from app.core.deps import get_current_user, get_db
 from app.models.deal_state import DealState
 from app.models.enums import MessageCompletionStatus, MessageRole
 from app.models.message import Message

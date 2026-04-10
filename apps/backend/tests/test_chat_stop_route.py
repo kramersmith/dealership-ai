@@ -104,7 +104,10 @@ def test_panel_refresh_updates_session_usage_ledger(client, db, monkeypatch):
                     "kind": "phase",
                     "template": "briefing",
                     "title": "Status",
-                    "content": {"stance": "researching", "situation": "Evaluating options."},
+                    "content": {
+                        "stance": "researching",
+                        "situation": "Evaluating options.",
+                    },
                     "priority": "high",
                 }
             ],
@@ -118,7 +121,9 @@ def test_panel_refresh_updates_session_usage_ledger(client, db, monkeypatch):
             },
         )
 
-    monkeypatch.setattr("app.routes.chat.generate_ai_panel_cards_with_usage", _fake_generate)
+    monkeypatch.setattr(
+        "app.routes.chat.generate_ai_panel_cards_with_usage", _fake_generate
+    )
 
     response = client.post(
         f"/api/chat/{session.id}/panel-refresh",
