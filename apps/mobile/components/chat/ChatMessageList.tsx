@@ -5,6 +5,7 @@ import { palette } from '@/lib/theme/tokens'
 import type { Message, VinAssistItem } from '@/lib/types'
 import { isServerMessageId } from '@/stores/chatStore'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
+import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { ChatBubble } from './ChatBubble'
 import { StreamingBubble } from './StreamingBubble'
@@ -36,7 +37,9 @@ function TypingIndicator() {
   const dot3 = useRef(new Animated.Value(0)).current
   const fadeIn = useFadeIn(200)
   const theme = useTheme()
+  const { isDesktop } = useScreenWidth()
   const dotColor = theme.placeholderColor?.val as string
+  const railHorizontalPadding = isDesktop ? '$0' : '$4'
 
   useEffect(() => {
     const animate = (dot: Animated.Value, delay: number) =>
@@ -63,7 +66,7 @@ function TypingIndicator() {
 
   return (
     <Animated.View style={{ opacity: fadeIn }}>
-      <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
+      <YStack padding={railHorizontalPadding} alignItems="flex-start" paddingLeft="$6">
         <XStack
           backgroundColor="$backgroundStrong"
           borderRadius={16}
@@ -92,10 +95,12 @@ function TypingIndicator() {
 
 function RetryingIndicator() {
   const fadeIn = useFadeIn(200)
+  const { isDesktop } = useScreenWidth()
+  const railHorizontalPadding = isDesktop ? '$0' : '$4'
 
   return (
     <Animated.View style={{ opacity: fadeIn }}>
-      <YStack padding="$4" alignItems="flex-start" paddingLeft="$6">
+      <YStack padding={railHorizontalPadding} alignItems="flex-start" paddingLeft="$6">
         <XStack
           backgroundColor="$backgroundStrong"
           borderRadius={16}
@@ -248,7 +253,12 @@ export const ChatMessageList = memo(function ChatMessageList({
     <ScrollView
       ref={scrollRef}
       showsVerticalScrollIndicator
-      contentContainerStyle={{ paddingTop: topPadding, paddingBottom: bottomPadding }}
+      contentContainerStyle={{
+        flexGrow: 1,
+        justifyContent: 'flex-end',
+        paddingTop: topPadding,
+        paddingBottom: bottomPadding,
+      }}
       style={
         {
           flex: 1,

@@ -3,6 +3,7 @@ import { ScrollView, View, Text, type StyleSheet } from 'react-native'
 import Markdown, { MarkdownIt, type RenderRules } from 'react-native-markdown-display'
 import { YStack } from 'tamagui'
 import { CopyableBlock } from './CopyableBlock'
+import { CHAT_MARKDOWN_BLOCK_GAP_PX } from './markdownStyles'
 import {
   buildColumnGrowthWeights,
   buildColumnWidths,
@@ -159,7 +160,7 @@ export function ChatMarkdown({ children, style }: ChatMarkdownProps) {
   const blocks = splitMarkdownBlocks(children)
 
   return (
-    <YStack>
+    <YStack gap={CHAT_MARKDOWN_BLOCK_GAP_PX}>
       {blocks.map((block, index) => (
         <Fragment key={`markdown-block-${index}`}>
           {block.type === 'markdown' ? (

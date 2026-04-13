@@ -1,11 +1,11 @@
-import { useRef, useEffect, useCallback, useMemo, memo, useState } from 'react'
+import { useRef, useEffect, useCallback, useMemo, memo, useState, type ReactNode } from 'react'
 import { Animated, Easing, Platform, ScrollView } from 'react-native'
 import { YStack, XStack, Text, Button, useTheme } from 'tamagui'
 import { BarChart3, RefreshCw, Sparkles } from '@tamagui/lucide-icons'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { api } from '@/lib/api'
-import { PANEL_FOOTER_MIN_HEIGHT, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
+import { WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { palette } from '@/lib/theme/tokens'
 import type { AiPanelCard, DealState, QuotedCard, Vehicle } from '@/lib/types'
@@ -15,7 +15,6 @@ import { useUserSettingsStore } from '@/stores/userSettingsStore'
 import { AiCard } from './AiCard'
 import { AiVehicleCard } from './AiVehicleCard'
 import { SituationBar } from './SituationBar'
-import { ThinkingIndicator } from './ThinkingIndicator'
 
 // ─── Panel refresh: subtle settle (opacity + tiny vertical) — no horizontal strip ───
 // UX: dense side panels favor a light “content refreshed” cue over carousel motion (readable, robust).
@@ -192,8 +191,10 @@ const MemoAiCard = memo(AiCard)
 
 export const InsightsPanel = memo(function InsightsPanel({
   dealStateOverride,
+  headerAccessory,
 }: {
   dealStateOverride?: DealState | null
+  headerAccessory?: ReactNode
 }) {
   const [isRefreshingAfterInterruption, setIsRefreshingAfterInterruption] = useState(false)
   const storeDealState = useDealStore((state) => state.dealState)
@@ -391,89 +392,99 @@ export const InsightsPanel = memo(function InsightsPanel({
   const toggleUpdateMode = useCallback(() => {
     setUpdateMode(isPausedMode ? 'live' : 'paused')
   }, [isPausedMode, setUpdateMode])
-  const updatesExplainer = isSettingsUpdating
-    ? 'Saving...'
-    : isPausedMode
-      ? 'Refresh when you want a new read.'
-      : 'Updates after each reply.'
-  const panelControlsFooter = (
+  const updatesExplainer = isPanelAnalyzing
+    ? 'Updating now...'
+    : isSettingsUpdating
+      ? 'Saving...'
+      : isPausedMode
+        ? 'Paused · Refresh manually'
+        : 'Updates after each reply'
+  const panelHeaderControls = (
+    <XStack alignItems="center" gap="$2" flexShrink={0}>
+      <Button
+        size="$3"
+        minHeight={44}
+        minWidth={84}
+        paddingHorizontal="$3.5"
+        borderRadius="$5"
+        borderWidth={1}
+        borderColor={isPausedMode ? '$danger' : '$brand'}
+        backgroundColor={isPausedMode ? '$danger' : '$brand'}
+        onPress={toggleUpdateMode}
+        disabled={isSettingsUpdating}
+        hoverStyle={{
+          backgroundColor: '$backgroundHover',
+          borderColor: '$borderColor',
+        }}
+        pressStyle={{ opacity: 0.9 }}
+        {...(Platform.OS === 'web'
+          ? ({
+              'aria-label': isPausedMode
+                ? 'Resume live insights updates'
+                : 'Pause live insights updates',
+            } as any)
+          : {
+              accessibilityLabel: isPausedMode
+                ? 'Resume live insights updates'
+                : 'Pause live insights updates',
+            })}
+      >
+        <Button.Text fontSize={11} color="$white" fontWeight="700">
+          {isPausedMode ? 'Paused' : 'Live'}
+        </Button.Text>
+      </Button>
+      <Button
+        size="$3"
+        width={44}
+        minWidth={44}
+        minHeight={44}
+        paddingHorizontal="$0"
+        borderRadius="$5"
+        backgroundColor="$brand"
+        onPress={refreshPanel}
+        disabled={isRefreshingAfterInterruption || isPanelAnalyzing}
+        pressStyle={{ opacity: 0.85 }}
+        {...(Platform.OS === 'web'
+          ? ({ 'aria-label': 'Refresh insights now' } as any)
+          : { accessibilityLabel: 'Refresh insights now' })}
+      >
+        <RefreshCw size={16} color="$white" />
+      </Button>
+      {headerAccessory ? headerAccessory : null}
+    </XStack>
+  )
+  const panelHeader = (
     <XStack
-      alignItems="flex-start"
+      alignItems="center"
       justifyContent="space-between"
       gap="$3"
-      minHeight={PANEL_FOOTER_MIN_HEIGHT}
       paddingHorizontal="$3"
       paddingVertical="$2"
-      borderTopWidth={1}
-      borderTopColor="$borderColor"
+      borderBottomWidth={1}
+      borderBottomColor="$borderColor"
       backgroundColor="$backgroundStrong"
     >
       <YStack flex={1} minWidth={0} gap="$0.75">
-        {isPanelAnalyzing ? (
-          <XStack alignItems="center" gap="$2">
-            <ThinkingIndicator />
-          </XStack>
-        ) : null}
-        <Text fontSize={11} color="$placeholderColor" lineHeight={15} flexShrink={1}>
+        <Text
+          fontSize={12}
+          fontWeight="700"
+          color="$placeholderColor"
+          textTransform="uppercase"
+          letterSpacing={1}
+        >
+          Insights
+        </Text>
+        <Text fontSize={11} color="$placeholderColor" lineHeight={15}>
           {updatesExplainer}
         </Text>
       </YStack>
-      <XStack alignItems="center" gap="$2" flexShrink={0}>
-        <Button
-          size="$3"
-          minHeight={44}
-          minWidth={92}
-          paddingHorizontal="$3.5"
-          borderRadius="$5"
-          borderWidth={1}
-          borderColor={isPausedMode ? '$borderColor' : '$brand'}
-          backgroundColor={isPausedMode ? '$backgroundStrong' : '$brand'}
-          onPress={toggleUpdateMode}
-          disabled={isSettingsUpdating}
-          hoverStyle={{
-            backgroundColor: isPausedMode ? '$backgroundHover' : '$brand',
-            borderColor: isPausedMode ? '$borderColor' : '$brand',
-          }}
-          pressStyle={{ opacity: 0.9 }}
-          {...(Platform.OS === 'web'
-            ? ({
-                'aria-label': isPausedMode
-                  ? 'Resume live insights updates'
-                  : 'Pause live insights updates',
-              } as any)
-            : {
-                accessibilityLabel: isPausedMode
-                  ? 'Resume live insights updates'
-                  : 'Pause live insights updates',
-              })}
-        >
-          <Button.Text fontSize={11} color={isPausedMode ? '$color' : '$white'} fontWeight="700">
-            {isPausedMode ? 'Paused' : 'Live'}
-          </Button.Text>
-        </Button>
-        <Button
-          size="$3"
-          width={44}
-          minWidth={44}
-          minHeight={44}
-          paddingHorizontal="$0"
-          borderRadius="$5"
-          backgroundColor="$brand"
-          onPress={refreshPanel}
-          disabled={isRefreshingAfterInterruption || isPanelAnalyzing}
-          pressStyle={{ opacity: 0.85 }}
-          {...(Platform.OS === 'web'
-            ? ({ 'aria-label': 'Refresh insights now' } as any)
-            : { accessibilityLabel: 'Refresh insights now' })}
-        >
-          <RefreshCw size={16} color="$white" />
-        </Button>
-      </XStack>
+      {panelHeaderControls}
     </XStack>
   )
 
   return (
     <YStack flex={1} backgroundColor="$backgroundStrong">
+      {panelHeader}
       <ScrollView
         showsVerticalScrollIndicator
         style={
@@ -629,7 +640,6 @@ export const InsightsPanel = memo(function InsightsPanel({
           )}
         </YStack>
       </ScrollView>
-      {panelControlsFooter}
     </YStack>
   )
 })

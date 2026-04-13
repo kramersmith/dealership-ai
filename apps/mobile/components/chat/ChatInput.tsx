@@ -13,11 +13,14 @@ import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Camera, Send, Square, X } from '@tamagui/lucide-icons'
 import { PANEL_FOOTER_MIN_HEIGHT } from '@/lib/constants'
 import { palette } from '@/lib/theme/tokens'
-import { useVisibilityTransition } from '@/hooks/useAnimatedValue'
+import { useAnimatedNumber, useVisibilityTransition } from '@/hooks/useAnimatedValue'
 import { VoiceButton } from './VoiceButton'
 
 const MIN_INPUT_HEIGHT = 44
 const MAX_INPUT_HEIGHT = 118
+const INPUT_HEIGHT_TRANSITION_MS = 140
+const EDIT_MODE_BANNER_TRANSITION_MS = 220
+const EDIT_MODE_BANNER_MAX_HEIGHT = 88
 
 interface ChatInputProps {
   onSend: (content: string, imageUri?: string) => void
@@ -34,6 +37,8 @@ interface ChatInputProps {
   editModeBanner?: { onCancel: () => void } | null
   /** When non-null, focuses the composer (stable per message being edited). */
   editingMessageId?: string | null
+  /** Surface treatment of the composer container. */
+  surfaceVariant?: 'docked' | 'floating'
 }
 
 export function ChatInput({
@@ -48,10 +53,12 @@ export function ChatInput({
   onControlledTextChange,
   editModeBanner,
   editingMessageId = null,
+  surfaceVariant = 'docked',
 }: ChatInputProps) {
   const [text, setText] = useState('')
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT)
   const [focused, setFocused] = useState(false)
+  const [activeEditModeBanner, setActiveEditModeBanner] = useState(editModeBanner)
   const inputRef = useRef<TextInput>(null)
   const theme = useTheme()
   const focusAnim = useRef(new Animated.Value(0)).current
@@ -61,6 +68,30 @@ export function ChatInput({
     hiddenOffsetY: 20,
     animateOnMount: true,
   })
+  const animatedInputHeight = useAnimatedNumber(inputHeight, INPUT_HEIGHT_TRANSITION_MS)
+  const showEditModeBanner = !!editModeBanner
+  const bannerMaxHeight = useAnimatedNumber(
+    showEditModeBanner ? EDIT_MODE_BANNER_MAX_HEIGHT : 0,
+    EDIT_MODE_BANNER_TRANSITION_MS
+  )
+  const { opacity: bannerOpacity, translateY: bannerTranslateY } = useVisibilityTransition({
+    visible: showEditModeBanner,
+    duration: EDIT_MODE_BANNER_TRANSITION_MS,
+    hiddenOffsetY: 10,
+  })
+
+  useEffect(() => {
+    if (editModeBanner) {
+      setActiveEditModeBanner(editModeBanner)
+      return
+    }
+
+    const clearBannerTimeoutId = setTimeout(() => {
+      setActiveEditModeBanner(null)
+    }, EDIT_MODE_BANNER_TRANSITION_MS)
+
+    return () => clearTimeout(clearBannerTimeoutId)
+  }, [editModeBanner])
 
   useEffect(() => {
     Animated.timing(focusAnim, {
@@ -90,8 +121,15 @@ export function ChatInput({
   }, [editingMessageId, isControlled])
 
   useEffect(() => {
-    if (!isControlled) return
-    setInputHeight(MIN_INPUT_HEIGHT)
+    if (!isControlled) {
+      setInputHeight(MIN_INPUT_HEIGHT)
+      return
+    }
+
+    if (controlledText === undefined || controlledText === null) return
+    if (controlledText.length === 0) {
+      setInputHeight(MIN_INPUT_HEIGHT)
+    }
   }, [isControlled, controlledText])
 
   const handleSend = useCallback(() => {
@@ -164,45 +202,55 @@ export function ChatInput({
   const showStopButton = isGenerating && !!onStop
   const showSendButton = hasText || !!editModeBanner
   const sendDisabled = disabled || !hasText
+  const usesFloatingSurface = surfaceVariant === 'floating'
 
   return (
     <Animated.View
       style={{ opacity: visibilityOpacity, transform: [{ translateY: visibilityTranslateY }] }}
     >
-      {editModeBanner ? (
-        <YStack
-          paddingHorizontal="$3"
-          paddingTop="$2"
-          paddingBottom="$1"
-          backgroundColor="$backgroundHover"
-          borderTopWidth={1}
-          borderTopColor="$borderColor"
+      {activeEditModeBanner ? (
+        <Animated.View
+          style={{
+            maxHeight: bannerMaxHeight,
+            opacity: bannerOpacity,
+            overflow: 'hidden',
+            transform: [{ translateY: bannerTranslateY }],
+          }}
         >
-          <XStack alignItems="center" justifyContent="space-between" gap="$2">
-            <Text fontSize={12} lineHeight={18} color="$placeholderColor" flex={1}>
-              Press send to replace that message and continue the conversation from there.
-            </Text>
-            <TouchableOpacity
-              onPress={editModeBanner.onCancel}
-              disabled={disabled}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              {...(Platform.OS === 'web'
-                ? ({ 'aria-label': 'Cancel editing message' } as any)
-                : { accessibilityLabel: 'Cancel editing message' })}
-            >
-              <XStack
-                width={44}
-                height={44}
-                borderRadius={100}
-                alignItems="center"
-                justifyContent="center"
+          <YStack
+            paddingHorizontal="$3"
+            paddingTop="$2"
+            paddingBottom="$1"
+            backgroundColor="$backgroundHover"
+            borderTopWidth={usesFloatingSurface ? 0 : 1}
+            borderTopColor="$borderColor"
+          >
+            <XStack alignItems="center" justifyContent="space-between" gap="$2">
+              <Text fontSize={12} lineHeight={18} color="$placeholderColor" flex={1}>
+                Press send to replace that message and continue the conversation from there.
+              </Text>
+              <TouchableOpacity
+                onPress={activeEditModeBanner.onCancel}
+                disabled={disabled}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                {...(Platform.OS === 'web'
+                  ? ({ 'aria-label': 'Cancel editing message' } as any)
+                  : { accessibilityLabel: 'Cancel editing message' })}
               >
-                <X size={20} color="$placeholderColor" />
-              </XStack>
-            </TouchableOpacity>
-          </XStack>
-        </YStack>
+                <XStack
+                  width={44}
+                  height={44}
+                  borderRadius={100}
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <X size={20} color="$placeholderColor" />
+                </XStack>
+              </TouchableOpacity>
+            </XStack>
+          </YStack>
+        </Animated.View>
       ) : null}
       <XStack
         minHeight={PANEL_FOOTER_MIN_HEIGHT}
@@ -212,7 +260,7 @@ export function ChatInput({
         gap="$2"
         alignItems="flex-end"
         backgroundColor="$backgroundStrong"
-        borderTopWidth={1}
+        borderTopWidth={usesFloatingSurface ? 0 : 1}
         borderTopColor="$borderColor"
       >
         <TouchableOpacity onPress={handlePhoto} activeOpacity={0.6}>
@@ -233,12 +281,13 @@ export function ChatInput({
         <Animated.View
           style={{
             flex: 1,
+            height: animatedInputHeight,
             borderRadius: 12,
             borderWidth: 1,
             borderColor: animatedBorderColor,
             backgroundColor: theme.backgroundHover?.val as string,
             overflow: 'hidden',
-            maxHeight: 120,
+            maxHeight: MAX_INPUT_HEIGHT,
           }}
         >
           <TextInput
@@ -252,6 +301,7 @@ export function ChatInput({
                 paddingTop: 12,
                 paddingBottom: 12,
                 height: inputHeight,
+                minHeight: MIN_INPUT_HEIGHT,
                 margin: 0,
                 maxHeight: MAX_INPUT_HEIGHT,
                 outlineWidth: 0,
@@ -271,6 +321,7 @@ export function ChatInput({
             onContentSizeChange={handleContentSizeChange}
             onKeyPress={handleKeyPress}
             multiline
+            textAlignVertical="top"
             scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
             editable={!disabled}
             onFocus={() => setFocused(true)}

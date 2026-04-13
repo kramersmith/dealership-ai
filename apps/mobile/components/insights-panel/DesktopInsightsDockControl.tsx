@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Animated, Platform, Pressable } from 'react-native'
-import { ChevronRight, Sparkles } from '@tamagui/lucide-icons'
+import { Sparkles } from '@tamagui/lucide-icons'
 import { Text, XStack, YStack, useTheme } from 'tamagui'
 import { HeaderIconButton } from '@/components/shared'
 import { useIconEntrance } from '@/hooks/useAnimatedValue'
@@ -36,13 +36,29 @@ function DockIconPill({ children, shadowColor }: { children: ReactNode; shadowCo
   )
 }
 
+function DockAnimatedIcon({ color = '$color' }: { color?: string }) {
+  const entrance = useIconEntrance(true)
+
+  return (
+    <Animated.View
+      style={{
+        opacity: entrance.opacity,
+        transform: [{ rotate: entrance.rotate }],
+      }}
+    >
+      <Sparkles size={16} color={color} />
+    </Animated.View>
+  )
+}
+
 interface DesktopInsightsDockControlProps {
   shellState: DesktopPanelShellState
   collapsedPreviewText: string
   insightsUpdateMode: InsightsUpdateMode
   launcherOpacity: Animated.Value
   launcherTranslateX: Animated.Value
-  onCollapsePress: () => void
+  topOffsetPx?: number
+  rightOffsetPx?: number
   onExpandPress: () => void
 }
 
@@ -52,50 +68,24 @@ export function DesktopInsightsDockControl({
   insightsUpdateMode,
   launcherOpacity,
   launcherTranslateX,
-  onCollapsePress,
+  topOffsetPx = 8,
+  rightOffsetPx = 12,
   onExpandPress,
 }: DesktopInsightsDockControlProps) {
   const theme = useTheme()
-  const showLauncher = shellState === 'collapsed_idle' || shellState === 'collapsed_updating'
-  const collapseEntrance = useIconEntrance(shellState === 'expanded')
-  const launcherEntrance = useIconEntrance(showLauncher)
   const shadowColor = theme.shadowColor?.val ?? palette.shadowOverlay
 
   if (shellState === 'hidden') {
     return null
   }
 
-  if (shellState === 'expanded') {
-    return (
-      <YStack position="absolute" top={8} right={12} zIndex={4} pointerEvents="box-none">
-        <HeaderIconButton onPress={onCollapsePress} accessibilityLabel="Collapse insights panel">
-          <DockIconPill shadowColor={shadowColor}>
-            <Animated.View
-              style={{
-                opacity: collapseEntrance.opacity,
-                transform: [{ rotate: collapseEntrance.rotate }],
-              }}
-            >
-              <ChevronRight size={16} color="$color" />
-            </Animated.View>
-          </DockIconPill>
-        </HeaderIconButton>
-      </YStack>
-    )
-  }
+  if (shellState === 'expanded') return null
 
   const content =
     shellState === 'collapsed_idle' ? (
       <HeaderIconButton onPress={onExpandPress} accessibilityLabel="Open insights panel">
         <DockIconPill shadowColor={shadowColor}>
-          <Animated.View
-            style={{
-              opacity: launcherEntrance.opacity,
-              transform: [{ rotate: launcherEntrance.rotate }],
-            }}
-          >
-            <Sparkles size={16} color="$color" />
-          </Animated.View>
+          <DockAnimatedIcon />
         </DockIconPill>
       </HeaderIconButton>
     ) : (
@@ -140,14 +130,7 @@ export function DesktopInsightsDockControl({
               }
             : null)}
         >
-          <Animated.View
-            style={{
-              opacity: launcherEntrance.opacity,
-              transform: [{ rotate: launcherEntrance.rotate }],
-            }}
-          >
-            <Sparkles size={16} color="$color" />
-          </Animated.View>
+          <DockAnimatedIcon />
           <Text
             fontSize={12}
             fontWeight="600"
@@ -166,7 +149,13 @@ export function DesktopInsightsDockControl({
     )
 
   return (
-    <YStack position="absolute" top={8} right={12} zIndex={4} pointerEvents="box-none">
+    <YStack
+      position="absolute"
+      top={topOffsetPx}
+      right={rightOffsetPx}
+      zIndex={4}
+      style={{ pointerEvents: 'box-none' } as any}
+    >
       <Animated.View
         style={{
           opacity: launcherOpacity,

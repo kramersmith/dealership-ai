@@ -1780,8 +1780,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!activeSessionId || !editingUserMessageId) return
     if (get().isPanelAnalyzing) {
       set({
-        sendError:
-          'Wait for the current insights refresh to finish before editing from here.',
+        sendError: 'Wait for the current insights refresh to finish before editing from here.',
       })
       return
     }

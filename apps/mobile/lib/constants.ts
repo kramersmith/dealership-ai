@@ -97,6 +97,12 @@ export const MAX_INSIGHTS_PREVIEW_ITEMS = 3
 /** Maximum width in pixels for chat bubbles (keeps text readable on wide screens). */
 export const CHAT_BUBBLE_MAX_WIDTH = 600
 
+/** Slightly wider desktop cap for assistant messages so long replies feel less stranded. */
+export const DESKTOP_ASSISTANT_BUBBLE_MAX_WIDTH = 720
+
+/** Maximum width in pixels for the desktop chat rail (keeps left/right bubbles visually grouped). */
+export const CHAT_VIEW_MAX_WIDTH = 1040
+
 /** Approximate width in pixels reserved for the web scrollbar gutter inside chat scroll views. */
 export const WEB_SCROLLBAR_GUTTER_PX = 10
 

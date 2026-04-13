@@ -62,10 +62,7 @@ export function useChat(sessionId: string | null) {
   const firstQueuedPreview =
     pendingQueueItems.find((item) => item.status === 'queued')?.payload.content ?? null
   const canBranchEdit =
-    !isSending &&
-    !isPanelAnalyzing &&
-    !isPendingVinIntercept &&
-    pendingQueueItems.length === 0
+    !isSending && !isPanelAnalyzing && !isPendingVinIntercept && pendingQueueItems.length === 0
 
   return {
     messages,

@@ -10,14 +10,13 @@ import {
   Animated,
   Dimensions,
 } from 'react-native'
-import { YStack, XStack, Text, Theme, useTheme } from 'tamagui'
+import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
 import {
   ConfirmModal,
   ThemedSafeArea,
   LoadingIndicator,
   RoleGuard,
   ScreenHeader,
-  HeaderIconButton,
 } from '@/components/shared'
 import { MessageSquarePlus, X, ChevronLeft } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
@@ -28,7 +27,21 @@ import {
   MAX_INSIGHTS_PREVIEW_ITEMS,
   WEB_FONT_FAMILY,
 } from '@/lib/constants'
-import type { AiPanelCard, BuyerContext, DealState, HealthStatus } from '@/lib/types'
+import {
+  CHAT_SCREEN_LAYOUT,
+  getChatBottomPadding,
+  getContextPickerBottomPadding,
+  getDesktopChatRailStyle,
+  getWebQueuePreviewRightInsetPx,
+} from '@/lib/chatLayout'
+import type {
+  AiPanelCard,
+  BuyerContext,
+  DealState,
+  HealthStatus,
+  Message,
+  VinAssistItem,
+} from '@/lib/types'
 import { formatCurrency, getActiveDeal } from '@/lib/utils'
 import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
@@ -39,19 +52,19 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import { useUserSettingsStore } from '@/stores/userSettingsStore'
 import { useChat } from '@/hooks/useChat'
-import { useSlideIn } from '@/hooks/useAnimatedValue'
+import { useIconEntrance, useSlideIn } from '@/hooks/useAnimatedValue'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
 import { useDesktopInsightsShell } from '@/hooks/useDesktopInsightsShell'
 import { useDesktopPanelPreference } from '@/hooks/useDesktopPanelPreference'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { STATUS_LABELS, STATUS_THEMES, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
+import { STATUS_LABELS, STATUS_THEMES } from '@/lib/constants'
 import {
   InsightsPanel,
   CompactPhaseIndicator,
   DesktopInsightsDockControl,
 } from '@/components/insights-panel'
-import { ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
+import { ChatComposerOverlay, ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
 function useMobileInsightsWidth() {
   const [width, setWidth] = useState(
@@ -195,14 +208,31 @@ const GREETING_MESSAGES: Record<BuyerContext, string> = {
     'just said or offered, and I\u2019ll tell you exactly how to respond.',
 }
 
+/** Shared reset payload for clearing the active chat session state in chatStore. */
+const CHAT_SESSION_RESET_STATE = {
+  activeSessionId: null,
+  messages: [] as Message[],
+  streamingText: '',
+  vinAssistItems: [] as VinAssistItem[],
+  aiResponseCount: 0,
+  activeTurnId: null,
+  isStopRequested: false,
+  panelInterruptionNotice: null,
+  _sessionJustCreated: false,
+  contextPressure: null,
+  isCompacting: false,
+  suppressContextWarningUntilUsageRefresh: false,
+  editingUserMessageId: null,
+  activeQueueItemId: null,
+  isQueueDispatching: false,
+}
+
 const EDIT_BRANCH_CONFIRM_TITLE = 'Edit from here'
 const EDIT_BRANCH_CONFIRM_MESSAGE =
   'If there are replies after this message, they will be removed. Deal and vehicle details stored for this chat will be cleared. Your shopping situation (such as researching or at the dealership) is kept.'
 const EDIT_BRANCH_CONFIRM_CONTINUE_LABEL = 'Continue'
 const EDIT_BRANCH_CONFIRM_CANCEL_DOM_ID = 'edit-branch-confirm-cancel'
 const QUEUE_PREVIEW_EXIT_MS = 220
-const WEB_QUEUE_PREVIEW_SPACING_PX = 1
-const WEB_QUEUE_PREVIEW_CARD_WIDTH_PX = 320
 const MAX_QUEUE_PREVIEW_CARDS = 3
 
 function QueuePreviewCard({
@@ -269,7 +299,7 @@ function QueuePreviewCard({
       style={{
         opacity,
         transform: [{ translateY }, { scale }],
-        width: Platform.OS === 'web' ? WEB_QUEUE_PREVIEW_CARD_WIDTH_PX : undefined,
+        width: Platform.OS === 'web' ? CHAT_SCREEN_LAYOUT.webQueuePreviewCardWidthPx : undefined,
         alignSelf: 'flex-end',
       }}
     >
@@ -311,9 +341,9 @@ export default function ChatScreen() {
 
   const [isInsightsVisible, setIsInsightsVisible] = useState(false)
   const [mobileInsightsPreviewHeight, setMobileInsightsPreviewHeight] = useState(0)
+  const [desktopComposerTrayHeight, setDesktopComposerTrayHeight] = useState(0)
   const insightsSlide = useRef(new Animated.Value(mobileInsightsWidth)).current
   const insightsBackdropOpacity = useRef(new Animated.Value(0)).current
-  const [webScrollbarGutterPx, setWebScrollbarGutterPx] = useState(WEB_SCROLLBAR_GUTTER_PX)
 
   const {
     messages,
@@ -349,30 +379,7 @@ export default function ChatScreen() {
   const insightsUpdateMode = useUserSettingsStore((state) => state.insightsUpdateMode)
   const { desktopInsightsCollapsed, setDesktopInsightsCollapsed } = useDesktopPanelPreference()
 
-  useEffect(() => {
-    if (Platform.OS !== 'web') return
-    const measureScrollbarGutter = () => {
-      if (typeof window === 'undefined' || typeof document === 'undefined') return
-      const viewportScrollbarGutter = Math.max(
-        0,
-        window.innerWidth - document.documentElement.clientWidth
-      )
-      setWebScrollbarGutterPx(viewportScrollbarGutter)
-    }
-    measureScrollbarGutter()
-    window.addEventListener('resize', measureScrollbarGutter)
-    return () => window.removeEventListener('resize', measureScrollbarGutter)
-  }, [])
-
-  const webQueuePreviewRightInsetPx = useMemo(() => {
-    if (Platform.OS !== 'web') return 0
-    const measuredGutter =
-      Number.isFinite(webScrollbarGutterPx) && webScrollbarGutterPx > 0
-        ? webScrollbarGutterPx
-        : WEB_SCROLLBAR_GUTTER_PX
-    const gutter = Math.max(WEB_SCROLLBAR_GUTTER_PX, measuredGutter)
-    return Math.max(0, gutter + WEB_QUEUE_PREVIEW_SPACING_PX)
-  }, [webScrollbarGutterPx])
+  const webQueuePreviewRightInsetPx = getWebQueuePreviewRightInsetPx(Platform.OS)
 
   // Mobile entrance animation — fade + slide up when the chat screen mounts
   const mobileEntrance = useSlideIn(isDesktop ? 0 : 260, 40)
@@ -429,6 +436,11 @@ export default function ChatScreen() {
   const handleDesktopExpandPress = useCallback(() => {
     setDesktopInsightsCollapsed(false)
   }, [setDesktopInsightsCollapsed])
+  const handleDesktopComposerTrayHeightChange = useCallback((nextHeight: number) => {
+    setDesktopComposerTrayHeight((previousHeight) =>
+      previousHeight === nextHeight ? previousHeight : nextHeight
+    )
+  }, [])
 
   const navigateBackOrChats = useCallback(() => {
     if (router.canGoBack()) {
@@ -439,23 +451,7 @@ export default function ChatScreen() {
   }, [router])
 
   const resetDesktopChatShell = useCallback(() => {
-    useChatStore.setState({
-      activeSessionId: null,
-      messages: [],
-      streamingText: '',
-      vinAssistItems: [],
-      aiResponseCount: 0,
-      activeTurnId: null,
-      isStopRequested: false,
-      panelInterruptionNotice: null,
-      _sessionJustCreated: false,
-      contextPressure: null,
-      isCompacting: false,
-      suppressContextWarningUntilUsageRefresh: false,
-      editingUserMessageId: null,
-      activeQueueItemId: null,
-      isQueueDispatching: false,
-    })
+    useChatStore.setState(CHAT_SESSION_RESET_STATE)
   }, [])
 
   const desktopShell = useDesktopInsightsShell({
@@ -469,6 +465,7 @@ export default function ChatScreen() {
     onResetComplete: resetDesktopChatShell,
   })
   const { transition: desktopTransition } = desktopShell
+  const desktopPanelCollapseEntrance = useIconEntrance(desktopShell.shellState === 'expanded')
 
   const handleBack = useCallback(() => {
     if (isDesktopChatActive) {
@@ -615,31 +612,49 @@ export default function ChatScreen() {
       desktopTransition.beginChatReset()
       return
     }
-    useChatStore.setState({
-      activeSessionId: null,
-      messages: [],
-      vinAssistItems: [],
-      aiResponseCount: 0,
-      activeTurnId: null,
-      isStopRequested: false,
-      panelInterruptionNotice: null,
-      _sessionJustCreated: false,
-      contextPressure: null,
-      isCompacting: false,
-      suppressContextWarningUntilUsageRefresh: false,
-      editingUserMessageId: null,
-      activeQueueItemId: null,
-      isQueueDispatching: false,
-    })
+    useChatStore.setState(CHAT_SESSION_RESET_STATE)
   }
 
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewItems = getPreviewItems(dealState, dismissedFlagIds)
   const activeDealForPreview = dealState ? getActiveDeal(dealState) : null
+  const desktopChatRailStyle = isDesktop ? getDesktopChatRailStyle() : undefined
+  const composerTrayStyle = isDesktop
+    ? ({
+        marginHorizontal: CHAT_SCREEN_LAYOUT.desktopComposerTrayInsetPx,
+        marginBottom: CHAT_SCREEN_LAYOUT.desktopComposerTrayBottomPx,
+        borderRadius: CHAT_SCREEN_LAYOUT.desktopComposerTrayRadiusPx,
+        borderWidth: 1,
+        borderColor: theme.borderColor?.val as string,
+        backgroundColor: theme.backgroundStrong?.val as string,
+        overflow: 'hidden',
+        boxShadow: `0 10px 26px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
+      } as const)
+    : ({
+        marginHorizontal: CHAT_SCREEN_LAYOUT.mobileComposerTrayInsetPx,
+        marginBottom: 0,
+        paddingBottom: CHAT_SCREEN_LAYOUT.mobileComposerTrayBottomPx,
+        borderTopLeftRadius: CHAT_SCREEN_LAYOUT.mobileComposerTrayRadiusPx,
+        borderTopRightRadius: CHAT_SCREEN_LAYOUT.mobileComposerTrayRadiusPx,
+        borderTopWidth: 1,
+        borderTopColor: theme.borderColor?.val as string,
+        backgroundColor: theme.backgroundStrong?.val as string,
+        overflow: 'hidden',
+        shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.2,
+        shadowRadius: 20,
+        elevation: 10,
+      } as any)
   const sendErrorText =
     sendError && editingUserMessageId
       ? `${sendError} Edit the highlighted message and send again.`
       : sendError
+  const chatBottomPadding = getChatBottomPadding({
+    isDesktop,
+    desktopComposerTrayHeight,
+    pendingVinIntercept,
+  })
   const queuedItems = useMemo(
     () => pendingQueueItems.filter((item) => item.status === 'queued'),
     [pendingQueueItems]
@@ -827,10 +842,144 @@ export default function ChatScreen() {
       </Pressable>
     ) : null
 
+  const compactingNotice = isCompacting ? (
+    <YStack paddingHorizontal="$3" paddingVertical="$2" backgroundColor="$backgroundHover">
+      <Text fontSize={12} lineHeight={18} color="$placeholderColor">
+        Summarizing earlier messages so the assistant can keep full context…
+      </Text>
+    </YStack>
+  ) : null
+
+  const contextWarningNotice =
+    !suppressContextWarningUntilUsageRefresh &&
+    contextPressure &&
+    (contextPressure.level === 'warn' || contextPressure.level === 'critical') ? (
+      <Theme name="warning">
+        <YStack
+          paddingHorizontal="$3"
+          paddingVertical="$2"
+          borderTopWidth={1}
+          borderTopColor="$borderColor"
+          backgroundColor="$background"
+        >
+          <Text fontSize={12} lineHeight={18} color="$color">
+            {contextPressure.level === 'critical'
+              ? 'Context usage is very high. The assistant may summarize older turns automatically on your next message.'
+              : 'Context usage is getting high. Consider starting a fresh chat for a new vehicle or deal if replies degrade.'}{' '}
+            (about {contextPressure.estimatedInputTokens.toLocaleString()} /{' '}
+            {contextPressure.inputBudget.toLocaleString()} tokens)
+          </Text>
+        </YStack>
+      </Theme>
+    ) : null
+
+  const sendErrorNotice = sendErrorText ? (
+    <Theme name="warning">
+      <XStack
+        alignItems="center"
+        gap="$2"
+        paddingHorizontal="$3"
+        paddingVertical="$2"
+        borderTopWidth={1}
+        borderTopColor="$borderColor"
+        backgroundColor="$background"
+      >
+        <Text flex={1} fontSize={12} lineHeight={18} color="$color">
+          {sendErrorText}
+        </Text>
+        <TouchableOpacity
+          onPress={clearSendError}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          {...(Platform.OS === 'web'
+            ? ({ 'aria-label': 'Dismiss chat error' } as any)
+            : { accessibilityLabel: 'Dismiss chat error' })}
+        >
+          <XStack width={44} height={44} alignItems="center" justifyContent="center">
+            <X size={18} color="$color" />
+          </XStack>
+        </TouchableOpacity>
+      </XStack>
+    </Theme>
+  ) : null
+
+  const composerControl = (
+    <ChatInput
+      onSend={handleDirectSend}
+      disabled={false}
+      isGenerating={isSending}
+      isStopRequested={isStopRequested}
+      onStop={() => void stopGeneration()}
+      placeholder={
+        showContextPicker
+          ? 'Or just tell me what\u2019s going on'
+          : editingUserMessageId
+            ? 'Edit your message\u2026'
+            : undefined
+      }
+      controlledText={editingUserMessageId ? editDraft : null}
+      onControlledTextChange={editingUserMessageId ? setEditDraft : undefined}
+      editModeBanner={editingUserMessageId ? { onCancel: () => cancelEditUserMessage() } : null}
+      editingMessageId={editingUserMessageId}
+      surfaceVariant="floating"
+    />
+  )
+
+  const queuePreview =
+    queuedRenderableItems.length > 0 ? (
+      <YStack
+        position="absolute"
+        right={
+          Platform.OS === 'web'
+            ? webQueuePreviewRightInsetPx +
+              (isDesktop ? CHAT_SCREEN_LAYOUT.desktopComposerTrayInsetPx : 0)
+            : '$3'
+        }
+        width={Platform.OS === 'web' ? CHAT_SCREEN_LAYOUT.webQueuePreviewCardWidthPx : undefined}
+        bottom="100%"
+        marginBottom="$2.5"
+        gap="$1.5"
+        alignItems="flex-end"
+        zIndex={3}
+        style={{ pointerEvents: 'none' } as any}
+      >
+        {queuedRenderableItems.map((item) => (
+          <QueuePreviewCard
+            key={item.id}
+            content={item.content}
+            exiting={item.exiting}
+            prefersReducedMotion={prefersReducedMotion}
+          />
+        ))}
+        {queuedOverflowCount > 0 ? (
+          <Text fontSize={11} color="$placeholderColor">
+            +{queuedOverflowCount} more queued
+          </Text>
+        ) : null}
+      </YStack>
+    ) : null
+  const composerOverlayNotices = (
+    <>
+      {compactingNotice}
+      {contextWarningNotice}
+      {sendErrorNotice}
+    </>
+  )
+
   const chatColumn = (
-    <View style={{ flex: 1, overflow: 'hidden' }}>
+    <View style={[{ flex: 1, overflow: 'hidden', position: 'relative' }, desktopChatRailStyle]}>
       {showContextPicker ? (
-        <View style={{ flex: 1, justifyContent: 'center', overflow: 'auto' as any }}>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            overflow: 'auto' as any,
+            paddingBottom: getContextPickerBottomPadding({
+              isDesktop,
+              desktopComposerTrayHeight,
+            }),
+          }}
+        >
           <ContextPicker onSelect={handleContextSelect} onVinSubmit={handleVinSubmit} />
         </View>
       ) : (
@@ -842,7 +991,7 @@ export default function ChatScreen() {
             isRetrying={isRetrying}
             streamingText={streamingText}
             topPadding={mobileChatTopInset}
-            bottomPadding={pendingVinIntercept ? 28 : 12}
+            bottomPadding={chatBottomPadding}
             scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
             onStartEditUserMessage={canBranchEdit ? startEditUserMessage : undefined}
             editingUserMessageId={editingUserMessageId}
@@ -861,7 +1010,7 @@ export default function ChatScreen() {
               left={0}
               right={0}
               zIndex={2}
-              pointerEvents="box-none"
+              style={{ pointerEvents: 'box-none' } as any}
             >
               <YStack
                 onLayout={(event) => {
@@ -870,127 +1019,24 @@ export default function ChatScreen() {
                     setMobileInsightsPreviewHeight(nextHeight)
                   }
                 }}
-                pointerEvents="box-none"
+                style={{ pointerEvents: 'box-none' } as any}
               >
                 {mobileInsightsPreview}
               </YStack>
             </YStack>
           ) : null}
-          <DesktopInsightsDockControl
-            shellState={desktopShell.shellState}
-            collapsedPreviewText={collapsedInsightsPreviewText}
-            insightsUpdateMode={insightsUpdateMode}
-            launcherOpacity={desktopShell.launcherOpacity}
-            launcherTranslateX={desktopShell.launcherTranslateX}
-            onCollapsePress={handleDesktopCollapsePress}
-            onExpandPress={handleDesktopExpandPress}
-          />
         </YStack>
       )}
-      {isCompacting ? (
-        <YStack paddingHorizontal="$3" paddingVertical="$2" backgroundColor="$backgroundHover">
-          <Text fontSize={12} lineHeight={18} color="$placeholderColor">
-            Summarizing earlier messages so the assistant can keep full context…
-          </Text>
-        </YStack>
-      ) : null}
-      {!suppressContextWarningUntilUsageRefresh &&
-      contextPressure &&
-      (contextPressure.level === 'warn' || contextPressure.level === 'critical') ? (
-        <Theme name="warning">
-          <YStack
-            paddingHorizontal="$3"
-            paddingVertical="$2"
-            borderTopWidth={1}
-            borderTopColor="$borderColor"
-            backgroundColor="$background"
-          >
-            <Text fontSize={12} lineHeight={18} color="$color">
-              {contextPressure.level === 'critical'
-                ? 'Context usage is very high. The assistant may summarize older turns automatically on your next message.'
-                : 'Context usage is getting high. Consider starting a fresh chat for a new vehicle or deal if replies degrade.'}{' '}
-              (about {contextPressure.estimatedInputTokens.toLocaleString()} /{' '}
-              {contextPressure.inputBudget.toLocaleString()} tokens)
-            </Text>
-          </YStack>
-        </Theme>
-      ) : null}
-      {sendErrorText ? (
-        <Theme name="warning">
-          <XStack
-            alignItems="center"
-            gap="$2"
-            paddingHorizontal="$3"
-            paddingVertical="$2"
-            borderTopWidth={1}
-            borderTopColor="$borderColor"
-            backgroundColor="$background"
-          >
-            <Text flex={1} fontSize={12} lineHeight={18} color="$color">
-              {sendErrorText}
-            </Text>
-            <TouchableOpacity
-              onPress={clearSendError}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              {...(Platform.OS === 'web'
-                ? ({ 'aria-label': 'Dismiss chat error' } as any)
-                : { accessibilityLabel: 'Dismiss chat error' })}
-            >
-              <XStack width={44} height={44} alignItems="center" justifyContent="center">
-                <X size={18} color="$color" />
-              </XStack>
-            </TouchableOpacity>
-          </XStack>
-        </Theme>
-      ) : null}
-      <View style={{ position: 'relative' }}>
-        {queuedRenderableItems.length > 0 ? (
-          <YStack
-            position="absolute"
-            right={Platform.OS === 'web' ? webQueuePreviewRightInsetPx : '$3'}
-            width={Platform.OS === 'web' ? WEB_QUEUE_PREVIEW_CARD_WIDTH_PX : undefined}
-            bottom="100%"
-            marginBottom="$2.5"
-            gap="$1.5"
-            alignItems="flex-end"
-            pointerEvents="none"
-            zIndex={3}
-          >
-            {queuedRenderableItems.map((item) => (
-              <QueuePreviewCard
-                key={item.id}
-                content={item.content}
-                exiting={item.exiting}
-                prefersReducedMotion={prefersReducedMotion}
-              />
-            ))}
-            {queuedOverflowCount > 0 ? (
-              <Text fontSize={11} color="$placeholderColor">
-                +{queuedOverflowCount} more queued
-              </Text>
-            ) : null}
-          </YStack>
-        ) : null}
-        <ChatInput
-          onSend={handleDirectSend}
-          disabled={false}
-          isGenerating={isSending}
-          isStopRequested={isStopRequested}
-          onStop={() => void stopGeneration()}
-          placeholder={
-            showContextPicker
-              ? 'Or just tell me what\u2019s going on'
-              : editingUserMessageId
-                ? 'Edit your message\u2026'
-                : undefined
-          }
-          controlledText={editingUserMessageId ? editDraft : null}
-          onControlledTextChange={editingUserMessageId ? setEditDraft : undefined}
-          editModeBanner={editingUserMessageId ? { onCancel: () => cancelEditUserMessage() } : null}
-          editingMessageId={editingUserMessageId}
-        />
-      </View>
+      <ChatComposerOverlay
+        isDesktop={isDesktop}
+        desktopLeftPx={CHAT_SCREEN_LAYOUT.desktopChatRailLeftGutterPx}
+        desktopRightPx={webQueuePreviewRightInsetPx}
+        composerTrayStyle={composerTrayStyle}
+        notices={composerOverlayNotices}
+        queuePreview={queuePreview}
+        composer={composerControl}
+        onDesktopComposerTrayHeightChange={handleDesktopComposerTrayHeightChange}
+      />
     </View>
   )
 
@@ -1025,25 +1071,98 @@ export default function ChatScreen() {
                 {chatColumn}
               </Animated.View>
 
+              {desktopShell.shellState !== 'expanded' ? (
+                <DesktopInsightsDockControl
+                  shellState={desktopShell.shellState}
+                  collapsedPreviewText={collapsedInsightsPreviewText}
+                  insightsUpdateMode={insightsUpdateMode}
+                  launcherOpacity={desktopShell.launcherOpacity}
+                  launcherTranslateX={desktopShell.launcherTranslateX}
+                  topOffsetPx={CHAT_SCREEN_LAYOUT.desktopDockTopOffsetPx}
+                  rightOffsetPx={CHAT_SCREEN_LAYOUT.desktopDockRightOffsetPx}
+                  onExpandPress={handleDesktopExpandPress}
+                />
+              ) : null}
+
               {/* AI Insights Panel — right sidebar on desktop */}
               {desktopTransition.isInsightsVisible && desktopTransition.insightsDealState ? (
                 <Animated.View
                   style={{
                     position: 'absolute',
-                    top: 0,
+                    top: CHAT_SCREEN_LAYOUT.desktopInsightsSheetInsetPx,
                     right: 0,
-                    bottom: 0,
+                    bottom: CHAT_SCREEN_LAYOUT.desktopInsightsSheetInsetPx,
                     width: DESKTOP_INSIGHTS_WIDTH,
-                    overflow: 'hidden',
-                    borderLeftWidth: 1,
-                    borderLeftColor: theme.borderColor?.val as string,
-                    backgroundColor: theme.backgroundStrong?.val as string,
                     opacity: desktopTransition.insightsOpacity,
                     transform: [{ translateX: desktopTransition.insightsTranslateX }],
                   }}
                 >
-                  <View style={{ width: '100%', flex: 1 }}>
-                    <InsightsPanel dealStateOverride={desktopTransition.insightsDealState} />
+                  <View
+                    style={{
+                      width: '100%',
+                      flex: 1,
+                      paddingLeft: CHAT_SCREEN_LAYOUT.desktopInsightsSheetGapPx,
+                    }}
+                  >
+                    <View style={{ flex: 1, overflow: 'visible' }}>
+                      <YStack
+                        flex={1}
+                        backgroundColor="$backgroundStrong"
+                        borderLeftWidth={1}
+                        borderLeftColor="$borderColor"
+                        borderTopLeftRadius={CHAT_SCREEN_LAYOUT.desktopInsightsSheetRadiusPx}
+                        borderBottomLeftRadius={CHAT_SCREEN_LAYOUT.desktopInsightsSheetRadiusPx}
+                        overflow="hidden"
+                        {...(Platform.OS === 'web'
+                          ? {
+                              style: {
+                                boxShadow: `-10px 0 24px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
+                              },
+                            }
+                          : {
+                              shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
+                              shadowOffset: { width: -6, height: 0 },
+                              shadowOpacity: 0.18,
+                              shadowRadius: 16,
+                              elevation: 8,
+                            })}
+                      >
+                        <InsightsPanel
+                          dealStateOverride={desktopTransition.insightsDealState}
+                          headerAccessory={
+                            <Button
+                              size="$3"
+                              width={36}
+                              minWidth={36}
+                              minHeight={36}
+                              paddingHorizontal="$0"
+                              borderRadius="$5"
+                              backgroundColor="$backgroundHover"
+                              borderWidth={1}
+                              borderColor="$borderColor"
+                              onPress={handleDesktopCollapsePress}
+                              hoverStyle={{
+                                backgroundColor: '$danger',
+                                borderColor: '$danger',
+                              }}
+                              pressStyle={{ opacity: 0.85 }}
+                              {...(Platform.OS === 'web'
+                                ? ({ 'aria-label': 'Collapse insights panel' } as any)
+                                : { accessibilityLabel: 'Collapse insights panel' })}
+                            >
+                              <Animated.View
+                                style={{
+                                  opacity: desktopPanelCollapseEntrance.opacity,
+                                  transform: [{ rotate: desktopPanelCollapseEntrance.rotate }],
+                                }}
+                              >
+                                <X size={16} color="$white" />
+                              </Animated.View>
+                            </Button>
+                          }
+                        />
+                      </YStack>
+                    </View>
                   </View>
                 </Animated.View>
               ) : null}
@@ -1129,9 +1248,9 @@ export default function ChatScreen() {
             <Animated.View
               style={{
                 position: 'absolute',
-                top: 0,
+                top: CHAT_SCREEN_LAYOUT.mobileInsightsSheetInsetPx,
                 right: 0,
-                bottom: 0,
+                bottom: CHAT_SCREEN_LAYOUT.mobileInsightsSheetInsetPx,
                 width: mobileInsightsWidth,
                 transform: [{ translateX: insightsSlide }],
               }}
@@ -1141,6 +1260,9 @@ export default function ChatScreen() {
                 backgroundColor="$backgroundStrong"
                 borderLeftWidth={1}
                 borderLeftColor="$borderColor"
+                borderTopLeftRadius={CHAT_SCREEN_LAYOUT.mobileInsightsSheetRadiusPx}
+                borderBottomLeftRadius={CHAT_SCREEN_LAYOUT.mobileInsightsSheetRadiusPx}
+                overflow="hidden"
                 {...(Platform.OS === 'web'
                   ? {
                       style: {
@@ -1150,34 +1272,46 @@ export default function ChatScreen() {
                   : {
                       shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
                       shadowOffset: { width: -4, height: 0 },
-                      shadowOpacity: 1,
-                      shadowRadius: 12,
+                      shadowOpacity: 0.24,
+                      shadowRadius: 18,
                       elevation: 12,
                     })}
               >
-                <ThemedSafeArea edges={['top']}>
+                <ThemedSafeArea edges={['top', 'bottom']}>
                   <YStack flex={1} backgroundColor="$backgroundStrong">
-                    <XStack
-                      alignItems="center"
-                      justifyContent="space-between"
-                      paddingHorizontal="$4"
-                      paddingVertical="$3"
-                      borderBottomWidth={1}
-                      borderBottomColor="$borderColor"
-                    >
-                      <Text fontSize={18} fontWeight="700" color="$color">
-                        Insights
-                      </Text>
-                      <HeaderIconButton
-                        webDomId="chat-mobile-insights-close"
-                        onPress={() => setIsInsightsOpen(false)}
-                        accessibilityLabel="Close insights"
-                      >
-                        <X size={18} color="$color" />
-                      </HeaderIconButton>
-                    </XStack>
-
-                    <YStack flex={1}>{dealState ? <InsightsPanel /> : null}</YStack>
+                    <YStack flex={1}>
+                      {dealState ? (
+                        <InsightsPanel
+                          headerAccessory={
+                            <Button
+                              size="$3"
+                              width={44}
+                              minWidth={44}
+                              minHeight={44}
+                              paddingHorizontal="$0"
+                              borderRadius="$5"
+                              backgroundColor="$backgroundHover"
+                              borderWidth={1}
+                              borderColor="$borderColor"
+                              onPress={() => setIsInsightsOpen(false)}
+                              hoverStyle={{
+                                backgroundColor: '$danger',
+                                borderColor: '$danger',
+                              }}
+                              pressStyle={{ opacity: 0.85 }}
+                              {...(Platform.OS === 'web'
+                                ? ({
+                                    id: 'chat-mobile-insights-close',
+                                    'aria-label': 'Close insights',
+                                  } as any)
+                                : { accessibilityLabel: 'Close insights' })}
+                            >
+                              <X size={16} color="$white" />
+                            </Button>
+                          }
+                        />
+                      ) : null}
+                    </YStack>
                   </YStack>
                 </ThemedSafeArea>
               </YStack>

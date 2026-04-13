@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import { YStack, XStack, useTheme } from 'tamagui'
-import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
+import { CHAT_BUBBLE_MAX_WIDTH, DESKTOP_ASSISTANT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
 import { ChatMarkdown } from './markdownRenderer'
@@ -24,6 +24,8 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
   const theme = useTheme()
   const { isDesktop } = useScreenWidth()
   const useInlineAssistantLayout = !isDesktop
+  const railHorizontalPadding = isDesktop ? '$0' : '$4'
+  const bubbleMaxWidth = isDesktop ? DESKTOP_ASSISTANT_BUBBLE_MAX_WIDTH : CHAT_BUBBLE_MAX_WIDTH
   const colors = getAssistantMarkdownColors(theme)
 
   // Keep target in sync with incoming text
@@ -66,9 +68,13 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
   const markdownStyles = buildMarkdownStyles(colors)
 
   return (
-    <XStack justifyContent="flex-start" paddingHorizontal="$4" paddingVertical="$0.5">
+    <XStack
+      justifyContent="flex-start"
+      paddingHorizontal={railHorizontalPadding}
+      paddingVertical="$0.5"
+    >
       <YStack
-        style={{ maxWidth: `min(100%, ${CHAT_BUBBLE_MAX_WIDTH}px)` } as any}
+        style={{ maxWidth: `min(100%, ${bubbleMaxWidth}px)` } as any}
         backgroundColor={useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'}
         borderRadius={useInlineAssistantLayout ? 0 : '$4'}
         borderBottomLeftRadius={useInlineAssistantLayout ? 0 : '$1'}

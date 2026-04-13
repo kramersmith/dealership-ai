@@ -1,4 +1,5 @@
 export { ChatBubble } from './ChatBubble'
+export { ChatComposerOverlay } from './ChatComposerOverlay'
 export { ChatMessageList } from './ChatMessageList'
 export { ChatInput } from './ChatInput'
 export { VoiceButton } from './VoiceButton'
