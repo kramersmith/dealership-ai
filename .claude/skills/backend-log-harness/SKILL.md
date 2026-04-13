@@ -4,7 +4,9 @@ description: >-
   Reads and interprets Dealership AI backend NDJSON logs for debugging chat turns,
   tools, and insights panel output. Use when the user asks about logs, chat_turn_summary,
   request_id correlation, Docker logging, insights panel verification, or local harness
-  debugging. Triggers - "backend logs", "chat_turn_summary", "log slice", "insights panel logs".
+  debugging. Turn lifecycle (when `done` and `chat_turn_summary` fire vs panel streaming)
+  is documented in `docs/buyer-chat-turn.md`. Triggers - "backend logs", "chat_turn_summary",
+  "log slice", "insights panel logs".
 ---
 
 # Backend log harness (NDJSON)
@@ -65,6 +67,7 @@ Optional extra DEBUG: set **`LOG_CHAT_HARNESS_VERBOSITY=verbose`** and **`LOG_LE
 
 ## Docs
 
+- `docs/buyer-chat-turn.md` — when `done`, panel streaming, and `chat_turn_summary` fit in the turn lifecycle  
 - `docs/logging-harness.md` — agent workflow, comparison with CLI-style logging  
 - `docs/logging-guidelines.md` — PII, field schema  
 - `docs/development.md` — `backend-log-slice`, env vars  

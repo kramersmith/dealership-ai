@@ -490,7 +490,7 @@ Send a message and receive a streaming AI response via Server-Sent Events.
 
 **Response:** `200 OK` — `text/event-stream`
 
-The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. The backend emits `turn_started` first with a per-turn `turn_id`. Core chat events are `text`, `tool_result`, and terminal `done` **or** `interrupted`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. After `done`, panel generation is policy-driven by user settings: in `insights_update_mode = "live"` the stream continues with `panel_started`, then a single atomic `panel_done` (canonical `cards` + panel-phase `usage` + `assistant_message_id` binding the snapshot to the persisted assistant row), `panel_interrupted`, or `panel_error`; in `insights_update_mode = "paused"` no panel lifecycle events are emitted for normal sends. **Incremental `panel_card` events are not emitted** on this contract — the model may still stream partial JSON internally; only `panel_done` carries client-visible card data. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
+The response is a stream of Server-Sent Events. When **auto context compaction** runs for this turn, `compaction_started`, `compaction_done`, or `compaction_error` are emitted **before** chat streaming. The backend emits `turn_started` first with a per-turn `turn_id`. Core chat events are `text`, `tool_result`, and terminal `done` **or** `interrupted`, with additional recovery/status events such as `retry`, `step`, and `tool_error`, and an `error` event for safe user-visible failures. The chat stream now ends at `done`: if `insights_update_mode = "live"`, the client starts a second SSE request to `POST /api/chat/{session_id}/insights-followup` using the `assistant_message_id` returned in `done`. If `insights_update_mode = "paused"`, the chat turn does not expose persistence-affecting buyer tools; only explicitly allowed chat-only tools remain available. If an `error` arrives **after** `done`, the reply text was already delivered and the client should surface the error as a warning rather than discard the reply.
 
 **`turn_started` event** — Backend accepted the turn and assigned a cancellable `turn_id`:
 ```
@@ -534,40 +534,16 @@ event: tool_result
 data: {"tool": "update_scorecard", "data": {"score_price": "green", "score_overall": "yellow"}}
 ```
 
-**`done` event** — Chat text completion event (input can unblock immediately):
+**`done` event** — Chat text completion event (input can unblock immediately and the client can optionally start detached follow-up):
 ```
 event: done
-data: {"text": "Based on the numbers you've shared, this is a fair deal.", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
+data: {"text": "Based on the numbers you've shared, this is a fair deal.", "assistant_message_id": "uuid-of-assistant-row", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
 ```
 
 **`interrupted` event** — User-requested stop before `done`; partial text is preserved:
 ```
 event: interrupted
 data: {"text": "Partial assistant text...", "reason": "user_stop", "assistant_message_id": "uuid", "usage": {"requests": 1, "inputTokens": 1200, "outputTokens": 80, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "totalTokens": 1280}}
-```
-
-**`panel_started` event** — Panel generation phase started:
-```
-event: panel_started
-data: {"attempt": 1, "max_tokens": 2048}
-```
-
-**`panel_done` event** — Panel generation completed with canonical cards, panel-phase usage, and the server id of the assistant message row this snapshot belongs to:
-```
-event: panel_done
-data: {"cards": [{"kind": "phase", "template": "briefing", "title": "Status", "content": {"stance": "researching", "situation": "at_dealership"}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}, "assistant_message_id": "uuid-of-assistant-row"}
-```
-
-**`panel_error` event** — Panel generation failed after retries:
-```
-event: panel_error
-data: {"message": "...", "attempt": 2}
-```
-
-**`panel_interrupted` event** — User-requested stop during panel phase:
-```
-event: panel_interrupted
-data: {"reason": "user_stop"}
 ```
 
 **`error` event** — Safe user-visible failure. Before `done`, the stream terminates after this event. After `done`, it indicates a late persistence/update failure and the already-delivered reply should remain visible:
@@ -581,13 +557,13 @@ data: {"message": "AI response failed. Please try again."}
 - Optional auto-compaction may run first inside the stream: can persist `Message(role=system)` notice, update `ChatSession.compaction_state`, and `commit` before the user row is created or updated
 - Either a **new** user message is inserted after compaction side effects, or an **existing** user message is updated when `existing_user_message_id` is set; chat streaming then runs. Only **newly inserted** user messages are deleted on stream failure or failed step loop (retries after VIN resume do not delete the pre-persisted row; see ADR 0016 / ADR 0017)
 - The step loop may execute multiple model requests before the `done` event; the `usage` payload on `done` reflects chat text generation only
+- In `insights_update_mode = "paused"`, the backend withholds persistence-affecting buyer tools for the chat turn
 - If a stop request lands before text completion, the stream terminates with `interrupted` (not `done`) and persists partial assistant output with interruption metadata
-- Panel generation runs after `done`; the client applies the canonical card list from `panel_done` only (no incremental `panel_card` SSE). The same snapshot is persisted on `Message.panel_cards` for that assistant turn; `DealState.ai_panel_cards` remains the session-level “current” view
-- If stop lands during panel generation after `done`, the stream emits `panel_interrupted` and keeps the last stable persisted panel snapshot
-- Persisted assistant-message usage (history endpoint) aggregates chat-phase and panel-phase usage totals
+- The persisted assistant row exists before `done`; `assistant_message_id` in the `done` payload lets the client bind a later follow-up stream to that row
+- Persisted assistant-message usage on the send path is chat-phase usage only. Later detached follow-up work merges additional usage into the same assistant row and the session usage ledger
 - The backend may emit a safe `error` event after `done` if a later persistence step fails; clients should keep the delivered reply and show the warning
-- If Claude doesn't call `update_quick_actions`, the backend generates quick actions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` event
-- Assistant message (with tool calls and any follow-up text) is persisted after streaming completes
+- After `done`, the client may open a detached follow-up stream to reconcile state and refresh the insights panel for the persisted assistant row
+- Assistant message (with tool calls and chat-phase usage) is persisted before `done`; detached follow-up may later add `panel_cards` and merged usage to that same row
 - Tool call results are applied to the session's deal state
 - Post-chat processing updates `last_message_preview` and auto-generates a session title (deterministic vehicle title or LLM fallback via Haiku) when `auto_title` is true
 - Session `updated_at` timestamp is refreshed
@@ -603,9 +579,73 @@ data: {"message": "AI response failed. Please try again."}
 
 ---
 
+### POST /api/chat/{session_id}/insights-followup
+
+Start a detached insights follow-up stream for a previously persisted assistant message.
+
+This is the live-mode follow-up path triggered by the client after `POST .../message` or `POST .../messages/{message_id}/branch` returns `done`. It emits `panel_started` immediately so the UI can show panel activity while detached work is still running, then reconciles structured state, runs panel generation, and persists a durable follow-up job row keyed by `(session_id, assistant_message_id, kind)`. In paused mode the mobile client skips this automatic request and users call `POST .../panel-refresh` explicitly.
+
+**Auth required:** Yes
+
+**Path parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `session_id` | string | Session UUID |
+
+**Request body:**
+
+```json
+{
+  "assistant_message_id": "uuid-of-assistant-row"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `assistant_message_id` | string | Yes | Persisted assistant message row this follow-up belongs to |
+
+**Response:** `200 OK` — `text/event-stream`
+
+**`panel_started` event** — Live follow-up processing began; the client can show panel activity immediately while reconcile/panel work continues:
+```
+event: panel_started
+data: {}
+```
+
+**`panel_done` event** — Follow-up completed with canonical cards, panel-phase usage, and the assistant row id this snapshot belongs to:
+```
+event: panel_done
+data: {"cards": [{"kind": "phase", "template": "briefing", "title": "Status", "content": {"stance": "researching", "situation": "at_dealership"}, "priority": "high"}], "usage": {"requests": 1, "inputTokens": 120, "outputTokens": 40, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 60, "totalTokens": 160}, "assistant_message_id": "uuid-of-assistant-row"}
+```
+
+**`panel_error` event** — Follow-up failed after retries:
+```
+event: panel_error
+data: {"message": "...", "attempt": 2}
+```
+
+**Side effects:**
+
+- Creates or reuses an `insights_followup_jobs` row for the assistant message
+- Emits `panel_started` before reconcile and panel generation so the client can show “updating insights” earlier
+- Persists the canonical card snapshot on `Message.panel_cards`
+- Replaces `DealState.ai_panel_cards` with the same canonical snapshot
+- Merges panel-phase usage into the assistant row usage and session-level usage ledger
+- Emits the panel snapshot atomically; incremental `panel_card` SSE events are not part of this public contract
+
+**Error responses:**
+
+| Status | Detail |
+|---|---|
+| `404` | Session not found |
+| `404` | Assistant message not found in this session |
+
+---
+
 ### POST /api/chat/{session_id}/messages/{message_id}/branch
 
-**Branch** the session from an existing **user** message: deletes any messages after that anchor when present; **always** clears `compaction_state` and `usage`, resets deals/vehicles and session-level deal JSON on `DealState` (preserves `buyer_context`); updates the anchor row’s `content` / `image_url`; then runs the same SSE chat + panel stream as `POST .../message`.
+**Branch** the session from an existing **user** message: deletes any messages after that anchor when present; **always** clears `compaction_state` and `usage`, resets deals/vehicles and session-level deal JSON on `DealState` (preserves `buyer_context`); updates the anchor row’s `content` / `image_url`; then runs the same SSE chat stream as `POST .../message`.
 
 **Auth required:** Yes
 
@@ -630,7 +670,7 @@ data: {"message": "AI response failed. Please try again."}
 | `content` | string | Yes | New text for the anchor user message |
 | `image_url` | string | No | Optional image URL |
 
-**Response:** `200 OK` — `text/event-stream` (same SSE event families as `POST .../message`)
+**Response:** `200 OK` — `text/event-stream` (same chat SSE event families as `POST .../message`)
 
 **Side effects (every request):**
 
@@ -695,7 +735,7 @@ Request cancellation for the currently active turn in this session.
 ### POST /api/chat/{session_id}/panel-refresh
 
 Regenerate insights panel cards from the current structured deal state and latest persisted assistant message without creating a new chat turn.
-This is the explicit command path used when `insights_update_mode` is `paused` and is also available on demand in `live` mode.
+This is the explicit command path used when `insights_update_mode` is `paused` and is also available on demand in `live` mode. Internally it reuses the shared linked follow-up pipeline for the latest assistant turn and forces a rerun even if a prior follow-up job already succeeded.
 
 **Auth required:** Yes
 

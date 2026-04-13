@@ -4,17 +4,16 @@ import type {
   ContextPressure,
   Message,
   MessageUsage,
-  QuickAction,
   QuotedCard,
   Session,
   ToolCall,
   VinAssistDecodedVehicle,
   VinAssistItem,
 } from '@/lib/types'
-import { MAX_QUICK_ACTIONS } from '@/lib/constants'
 import { api } from '@/lib/api'
 import { CLIENT_ABORT_ERROR } from '@/lib/apiClient'
 import { useDealStore } from './dealStore'
+import { useUserSettingsStore } from './userSettingsStore'
 
 /** Default values for compaction-related state, shared across all session-reset paths. */
 const COMPACTION_RESET_SLICE = {
@@ -146,8 +145,8 @@ type BuyerTurnStreamInvoker = (callbacks: {
  * Centralizes the stream-consumer bookkeeping that used to be duplicated in
  * ``sendMessage`` and ``sendBranchFromEdit``: handleTextDone/handleToolResult
  * closures, fallback finalize path, post-stream refresh, and error-path row
- * marking. Returns true on success so callers can optionally run extra refresh
- * work only when the stream succeeded.
+ * marking. Returns the finalized assistant message, or ``null`` when the turn
+ * was aborted or failed.
  */
 async function runBuyerTurnStream(params: {
   get: () => ChatState
@@ -158,7 +157,7 @@ async function runBuyerTurnStream(params: {
   onSuccess?: () => Promise<void> | void
   onTextDone?: () => void
   errorLogLabel: string
-}): Promise<boolean> {
+}): Promise<Message | null> {
   const {
     get,
     set,
@@ -295,19 +294,14 @@ async function runBuyerTurnStream(params: {
       onTextDone?.()
     }
 
-    // Deal-driving tool results: apiClient defers callbacks until after the
-    // `done` event so the assistant message finalizes before the insights
-    // sidebar updates. Panel phase arrives after `done` as atomic `panel_done`.
+    // Deal-driving tool results: apiClient defers main-turn callbacks until
+    // after `done` so the assistant message finalizes before the insights
+    // sidebar updates. Detached follow-up can then deliver reconcile updates
+    // and the final atomic panel snapshot.
     const serverUuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
     const handleToolResult = (toolCall: ToolCall) => {
-      if (toolCall.name === 'update_quick_actions') {
-        const actions = (toolCall.args.actions as QuickAction[]) ?? []
-        const validActions = actions
-          .filter((action) => action.label && action.prompt)
-          .slice(0, MAX_QUICK_ACTIONS)
-        set({ quickActions: validActions, quickActionsUpdatedAtResponse: newResponseCount })
-      } else if (toolCall.name === 'update_insights_panel') {
+      if (toolCall.name === 'update_insights_panel') {
         const assistantMessageId = toolCall.args.assistantMessageId as string | undefined
         const snapshot = get().messages
         let lastAssistantIdx = -1
@@ -454,13 +448,56 @@ async function runBuyerTurnStream(params: {
     if (onSuccess) {
       await onSuccess()
     }
+    const shouldStartInsightsFollowup =
+      isServerMessageId(assistantMessage.id) &&
+      useUserSettingsStore.getState().insightsUpdateMode === 'live'
+
+    if (shouldStartInsightsFollowup) {
+      void api
+        .startInsightsFollowup(
+          activeSessionId,
+          assistantMessage.id,
+          handleToolResult,
+          () => {
+            clearInFlightUserStatus()
+            set({ panelInterruptionNotice: null, isPanelAnalyzing: true })
+          },
+          () => {
+            set({ isPanelAnalyzing: false })
+          },
+          (data) =>
+            set({
+              isPanelAnalyzing: false,
+              panelInterruptionNotice: {
+                reason: data.reason,
+                at: new Date().toISOString(),
+              },
+            }),
+          (message) => {
+            console.warn('[chatStore] Non-fatal insights follow-up warning:', message)
+          }
+        )
+        .catch((error) => {
+          console.warn(
+            '[chatStore] Detached insights follow-up failed:',
+            error instanceof Error ? error.message : error
+          )
+          set({
+            isPanelAnalyzing: false,
+            panelInterruptionNotice: {
+              reason: 'error',
+              at: new Date().toISOString(),
+            },
+          })
+        })
+    }
     set({
       suppressContextWarningUntilUsageRefresh: false,
       isCompacting: false,
       activeTurnId: null,
       isStopRequested: false,
     })
-    return true
+    return assistantMessage
   } catch (err) {
     if (err instanceof Error && err.message === CLIENT_ABORT_ERROR) {
       set({
@@ -471,7 +508,7 @@ async function runBuyerTurnStream(params: {
         activeTurnId: null,
         isStopRequested: false,
       })
-      return true
+      return null
     }
     const message = err instanceof Error ? err.message : 'Failed to send message'
     console.error(`[chatStore] ${errorLogLabel} failed:`, message)
@@ -491,11 +528,11 @@ async function runBuyerTurnStream(params: {
       ...COMPACTION_RESET_SLICE,
       sendError: message,
     }))
-    return false
+    return null
   }
 }
 
-type QueueMessageSource = 'typed' | 'quick_action' | 'card_reply' | 'retry'
+type QueueMessageSource = 'typed' | 'card_reply' | 'retry'
 type QueueFailureCategory = 'recoverable' | 'session_blocking' | 'validation_blocking'
 type QueueItemStatus =
   | 'queued'
@@ -587,11 +624,8 @@ interface ChatState {
   isCreatingSession: boolean
   isSending: boolean
   sendError: string | null
-  quickActions: QuickAction[]
   /** Increments on every AI response (including tool-only responses with no text). */
   aiResponseCount: number
-  /** The aiResponseCount when quick actions were last updated. */
-  quickActionsUpdatedAtResponse: number
   /** The accumulated text of the assistant response currently being streamed. */
   streamingText: string
   /** True when the backend is retrying a stalled/failed stream. */
@@ -693,9 +727,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isCreatingSession: false,
   isSending: false,
   sendError: null,
-  quickActions: [],
   aiResponseCount: 0,
-  quickActionsUpdatedAtResponse: 0,
   streamingText: '',
   isRetrying: false,
   isThinking: false,
@@ -770,9 +802,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       streamingText: '',
       vinAssistItems: [],
-      quickActions: [],
       aiResponseCount: 0,
-      quickActionsUpdatedAtResponse: 0,
       insightsPanelCommitGeneration: 0,
       isLoading: true,
       ...TURN_STATE_RESET_SLICE,
@@ -813,9 +843,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId: session.id,
         messages: [],
         vinAssistItems: [],
-        quickActions: [],
         aiResponseCount: 0,
-        quickActionsUpdatedAtResponse: 0,
         insightsPanelCommitGeneration: 0,
         ...TURN_STATE_RESET_SLICE,
         isCreatingSession: false,
@@ -847,9 +875,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionId: isActive ? null : state.activeSessionId,
         messages: isActive ? [] : state.messages,
         vinAssistItems: isActive ? [] : state.vinAssistItems,
-        quickActions: isActive ? [] : state.quickActions,
         aiResponseCount: isActive ? 0 : state.aiResponseCount,
-        quickActionsUpdatedAtResponse: isActive ? 0 : state.quickActionsUpdatedAtResponse,
         insightsPanelCommitGeneration: isActive ? 0 : state.insightsPanelCommitGeneration,
         _pendingSend: isActive ? null : state._pendingSend,
         activeTurnId: isActive ? null : state.activeTurnId,
@@ -1033,7 +1059,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const apiContent = buildMessageContent(content, quotedCard)
-    const success = await runBuyerTurnStream({
+    const assistantMessage = await runBuyerTurnStream({
       get,
       set,
       activeSessionId,
@@ -1061,7 +1087,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
     })
 
-    if (!success) {
+    if (!assistantMessage) {
       const errorMessage = get().sendError ?? 'Failed to send message'
       return {
         outcome: 'failed',
@@ -1130,7 +1156,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const state = get()
     const activeSessionId = state.activeSessionId
     if (!activeSessionId) return
-    if (state.isQueueDispatching || state.isSending || state._pendingSend) return
+    if (
+      state.isQueueDispatching ||
+      state.isSending ||
+      state._pendingSend ||
+      state.isPanelAnalyzing
+    ) {
+      return
+    }
     const queue = state.queueBySession[activeSessionId] ?? []
     const nextItem = queue.find((item) => item.status === 'queued')
     if (!nextItem) return
@@ -1717,6 +1750,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   startEditUserMessage: (messageId) => {
     if (get().isSending) return
+    if (get().isPanelAnalyzing) return
     if (get()._pendingSend) return
     const activeSessionId = get().activeSessionId
     if (activeSessionId) {
@@ -1744,6 +1778,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendBranchFromEdit: async (content, imageUri, quotedCard) => {
     const { activeSessionId, editingUserMessageId, messages } = get()
     if (!activeSessionId || !editingUserMessageId) return
+    if (get().isPanelAnalyzing) {
+      set({
+        sendError:
+          'Wait for the current insights refresh to finish before editing from here.',
+      })
+      return
+    }
     const hasPendingQueue = (get().queueBySession[activeSessionId] ?? []).some(
       (item) =>
         item.status === 'queued' ||
@@ -1774,7 +1815,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const apiContent = buildMessageContent(content, quotedCard)
 
     // Optimistically mirror the backend's reset_session_commerce_state (ADR 0020):
-    // preserve buyerContext, clear deals/vehicles/panels and stale quick actions so
+    // Preserve buyerContext while clearing the structured commerce state tied to the old branch.
     // the user does not see ghost UI between the prepare phase and the next stream emit.
     const currentBuyerContext = useDealStore.getState().dealState?.buyerContext
     useDealStore.getState().resetDealState(activeSessionId, currentBuyerContext)
@@ -1786,8 +1827,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           message.id === anchorId ? { ...message, content, imageUri, quotedCard } : message
         ),
       vinAssistItems: state.vinAssistItems.filter((item) => keptIds.has(item.sourceMessageId)),
-      quickActions: [],
-      quickActionsUpdatedAtResponse: 0,
       isSending: true,
       streamingText: '',
       sendError: null,
@@ -1796,7 +1835,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       editingUserMessageId: null,
     }))
 
-    const success = await runBuyerTurnStream({
+    const assistantMessage = await runBuyerTurnStream({
       get,
       set,
       activeSessionId,
@@ -1833,7 +1872,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           })
       },
     })
-    if (!success) {
+    if (!assistantMessage) {
       let historyRefreshFailed = false
       let dealRefreshFailed = false
       await Promise.all([

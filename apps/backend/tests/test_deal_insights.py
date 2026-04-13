@@ -1105,31 +1105,6 @@ async def test_apply_extraction_numbers_noop_skips_tool_call(adb):
     assert deal.listing_price == 35000
 
 
-# ─── apply_extraction: quick_actions ───
-
-
-async def test_apply_extraction_quick_actions(adb):
-    """Quick actions extraction emits tool call without persisting to DB."""
-    user = await async_create_user(adb)
-    _, deal_state = await async_create_session_with_deal_state(adb, user)
-
-    actions = [
-        {
-            "label": "What's a fair price?",
-            "message": "What's a fair price for this car?",
-        },
-        {"label": "Check APR", "message": "Is my APR competitive?"},
-    ]
-    # execute_tool passes the full tool_input dict as the extraction value
-    applied = await apply_extraction(
-        deal_state, {"quick_actions": {"actions": actions}}, adb
-    )
-
-    tool_call = _find_tool(applied, "update_quick_actions")
-    assert tool_call is not None
-    assert tool_call["args"]["actions"] == actions
-
-
 # ─── apply_extraction: multiple keys at once ───
 
 

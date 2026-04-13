@@ -90,10 +90,13 @@ describe('ApiClient.sendMessage', () => {
     const streamRequest = FakeXMLHttpRequest.instances.at(-1)
     streamRequest?.pushEvent('tool_result', { tool: 'set_vehicle', data: { vehicle_id: 'v1' } })
     streamRequest?.pushEvent('text', { chunk: 'Updated.' })
-    streamRequest?.pushEvent('done', { text: 'Updated.' })
+    streamRequest?.pushEvent('done', {
+      text: 'Updated.',
+      assistant_message_id: 'assistant-msg-1',
+    })
     streamRequest?.complete()
 
-    await sendPromise
+    await expect(sendPromise).resolves.toMatchObject({ id: 'assistant-msg-1' })
     expect(order).toEqual(['done', 'tool'])
   })
 
@@ -482,6 +485,160 @@ describe('ApiClient.sendMessage', () => {
       sessionId: 'session-post-done-malformed',
       content: 'Hello there',
     })
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ApiClient.startInsightsFollowup', () => {
+  const originalXmlHttpRequest = globalThis.XMLHttpRequest
+
+  beforeEach(() => {
+    FakeXMLHttpRequest.instances = []
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest as unknown as typeof XMLHttpRequest
+  })
+
+  afterEach(() => {
+    globalThis.XMLHttpRequest = originalXmlHttpRequest
+  })
+
+  it('applies panel_done as an atomic update on the detached follow-up stream', async () => {
+    const apiClient = new ApiClient()
+    const onToolResult = vi.fn()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+
+    const followupPromise = apiClient.startInsightsFollowup(
+      'session-1',
+      'assistant-msg-uuid',
+      onToolResult,
+      onPanelStarted,
+      onPanelFinished
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    const card = {
+      kind: 'notes',
+      template: 'notes',
+      title: 'What Changed',
+      content: { summary: 'Numbers moved.' },
+      priority: 'high',
+    }
+
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushEvent('panel_done', {
+      cards: [card],
+      assistant_message_id: 'assistant-msg-uuid',
+    })
+    streamRequest?.complete()
+
+    await expect(followupPromise).resolves.toBeUndefined()
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'update_insights_panel',
+        args: { cards: [card], assistantMessageId: 'assistant-msg-uuid' },
+      })
+    )
+  })
+
+  it('forwards detached tool_result events before panel_done', async () => {
+    const apiClient = new ApiClient()
+    const onToolResult = vi.fn()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+
+    const followupPromise = apiClient.startInsightsFollowup(
+      'session-1',
+      'assistant-msg-uuid',
+      onToolResult,
+      onPanelStarted,
+      onPanelFinished
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    const card = {
+      kind: 'notes',
+      template: 'notes',
+      title: 'What Changed',
+      content: { summary: 'Numbers moved.' },
+      priority: 'high',
+    }
+
+    streamRequest?.pushEvent('tool_result', {
+      tool: 'update_negotiation_context',
+      data: { situation: 'at_dealership', stance: 'calm' },
+    })
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushEvent('panel_done', {
+      cards: [card],
+      assistant_message_id: 'assistant-msg-uuid',
+    })
+    streamRequest?.complete()
+
+    await expect(followupPromise).resolves.toBeUndefined()
+    expect(onToolResult).toHaveBeenNthCalledWith(1, {
+      name: 'update_negotiation_context',
+      args: { situation: 'at_dealership', stance: 'calm' },
+    })
+    expect(onToolResult).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        name: 'update_insights_panel',
+        args: { cards: [card], assistantMessageId: 'assistant-msg-uuid' },
+      })
+    )
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects when detached follow-up ends without a terminal panel event', async () => {
+    const apiClient = new ApiClient()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+
+    const followupPromise = apiClient.startInsightsFollowup(
+      'session-1',
+      'assistant-msg-uuid',
+      undefined,
+      onPanelStarted,
+      onPanelFinished
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.complete()
+
+    await expect(followupPromise).rejects.toThrow(
+      'Insights follow-up ended without a terminal event'
+    )
+    expect(onPanelStarted).toHaveBeenCalledTimes(1)
+    expect(onPanelFinished).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects the detached follow-up promise on panel_error', async () => {
+    const apiClient = new ApiClient()
+    const onToolResult = vi.fn()
+    const onPanelStarted = vi.fn()
+    const onPanelFinished = vi.fn()
+
+    const followupPromise = apiClient.startInsightsFollowup(
+      'session-1',
+      'assistant-msg-uuid',
+      onToolResult,
+      onPanelStarted,
+      onPanelFinished
+    )
+
+    const streamRequest = FakeXMLHttpRequest.instances.at(-1)
+    streamRequest?.pushEvent('panel_started', {})
+    streamRequest?.pushEvent('panel_error', { message: 'Insights follow-up failed' })
+    streamRequest?.complete()
+
+    await expect(followupPromise).rejects.toThrow('Insights follow-up failed')
+    expect(onToolResult).not.toHaveBeenCalled()
     expect(onPanelStarted).toHaveBeenCalledTimes(1)
     expect(onPanelFinished).toHaveBeenCalledTimes(1)
   })

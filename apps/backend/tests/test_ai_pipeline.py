@@ -16,7 +16,15 @@ from app.core.security import create_access_token
 from app.main import app
 from app.models.deal import Deal
 from app.models.deal_state import DealState
-from app.models.enums import BuyerContext, InsightsUpdateMode, MessageRole
+from app.models.enums import (
+    BuyerContext,
+    InsightsFollowupKind,
+    InsightsFollowupStatus,
+    InsightsFollowupStepStatus,
+    InsightsUpdateMode,
+    MessageRole,
+)
+from app.models.insights_followup_job import InsightsFollowupJob
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user_settings import UserSettings
@@ -35,6 +43,7 @@ from app.services.claude import (
     build_temporal_hint_line,
     calendar_years_since_model_year,
     chat_tool_choice_for_step,
+    get_buyer_chat_tools,
     merge_usage_summary,
     move_message_cache_breakpoint,
     primary_vehicle_model_year,
@@ -290,6 +299,23 @@ async def async_client():
 
 async def test_chat_tools_schema_snapshot():
     _assert_json_snapshot("chat_tools_schema.json", _tool_schema_contract())
+
+
+def test_get_buyer_chat_tools_paused_mode_only_allows_chat_only_tools():
+    assert [tool["name"] for tool in get_buyer_chat_tools()] == [
+        tool["name"] for tool in CHAT_TOOLS
+    ]
+    assert [
+        tool["name"]
+        for tool in get_buyer_chat_tools(allow_persistence_affecting_tools=False)
+    ] == []
+    assert [
+        tool["name"]
+        for tool in get_buyer_chat_tools(
+            allow_persistence_affecting_tools=True,
+            allow_chat_only_tools=False,
+        )
+    ] == [tool["name"] for tool in CHAT_TOOLS]
 
 
 def test_context_message_includes_current_utc_date():
@@ -1516,17 +1542,17 @@ async def test_stream_chat_loop_synthesizes_tool_error_on_execution_failure(
 
 async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_user):
     _, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
-    messages = [{"role": "user", "content": "Save this quick action."}]
+    messages = [{"role": "user", "content": "Update my checklist."}]
     result = ChatLoopResult()
 
     step_0 = FakeClaudeResponse.malformed_tool_call(
-        tool_id="qa-1",
-        name="update_quick_actions",
-        partial_json='{"actions": [',
-        text_chunks=("I tried to update the quick actions.",),
+        tool_id="check-1",
+        name="update_checklist",
+        partial_json='{"items": [',
+        text_chunks=("I tried to update your checklist.",),
     ).to_items()
     step_1 = FakeClaudeResponse.text(
-        "I hit a formatting issue while updating the quick actions.",
+        "I hit a formatting issue while updating the checklist.",
         stop_reason="end_turn",
     ).to_items()
 
@@ -1560,11 +1586,11 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
     ]
     assert messages[-2]["content"] == snapshot(
         [
-            {"type": "text", "text": "I tried to update the quick actions."},
+            {"type": "text", "text": "I tried to update your checklist."},
             {
                 "type": "tool_use",
-                "id": "qa-1",
-                "name": "update_quick_actions",
+                "id": "check-1",
+                "name": "update_checklist",
                 "input": {},
             },
         ]
@@ -1573,9 +1599,9 @@ async def test_stream_chat_loop_handles_malformed_tool_json(adb, async_buyer_use
         [
             {
                 "type": "tool_result",
-                "tool_use_id": "qa-1",
+                "tool_use_id": "check-1",
                 "is_error": True,
-                "content": "Tool 'update_quick_actions' received malformed JSON input",
+                "content": "Tool 'update_checklist' received malformed JSON input",
             },
             {
                 "type": "text",
@@ -1697,29 +1723,22 @@ async def test_stream_chat_loop_recovers_full_done_when_max_steps_reached(
     step_0 = FakeClaudeResponse.tool_calls(
         [
             {
-                "id": "qa-1",
-                "name": "update_quick_actions",
-                "input": {
-                    "actions": [
-                        {
-                            "label": "Ask OTD",
-                            "prompt": "What is the out-the-door price?",
-                        }
-                    ]
-                },
-            }
-        ],
-        text_chunks=("I updated your quick actions.",),
-    ).to_items()
-    step_1 = FakeClaudeResponse.tool_calls(
-        [
-            {
                 "id": "check-1",
                 "name": "update_checklist",
                 "input": {"items": [{"label": "Ask for OTD", "done": False}]},
             }
         ],
-        text_chunks=("I also updated your checklist.",),
+        text_chunks=("I updated your checklist.",),
+    ).to_items()
+    step_1 = FakeClaudeResponse.tool_calls(
+        [
+            {
+                "id": "context-1",
+                "name": "update_buyer_context",
+                "input": {"buyer_context": "reviewing_deal"},
+            }
+        ],
+        text_chunks=("I also updated your buyer context.",),
     ).to_items()
     recovery = FakeClaudeResponse.text(
         "Ask for the out-the-door price first, then make them itemize every fee before you react.",
@@ -1848,13 +1867,13 @@ async def test_stream_chat_loop_deduplicates_repeated_step_text_after_tools(
     step_0 = FakeClaudeResponse.tool_calls(
         [
             {
-                "id": "qa-1",
-                "name": "update_quick_actions",
+                "id": "check-1",
+                "name": "update_checklist",
                 "input": {
-                    "actions": [
+                    "items": [
                         {
-                            "label": "Set budget",
-                            "prompt": "My budget is around $45,000.",
+                            "label": "Set budget around $45,000",
+                            "done": False,
                         }
                     ]
                 },
@@ -1890,7 +1909,7 @@ async def test_stream_chat_loop_deduplicates_repeated_step_text_after_tools(
     assert result.full_text == duplicated_text
 
 
-async def test_stream_chat_loop_fast_recovers_after_quick_actions_only_step(
+async def test_stream_chat_loop_fast_recovers_after_tool_only_step(
     adb, async_buyer_user
 ):
     _, deal_state = await async_create_session_with_deal_state(adb, async_buyer_user)
@@ -1912,13 +1931,13 @@ async def test_stream_chat_loop_fast_recovers_after_quick_actions_only_step(
     step_1 = FakeClaudeResponse.tool_calls(
         [
             {
-                "id": "qa-1",
-                "name": "update_quick_actions",
+                "id": "check-1",
+                "name": "update_checklist",
                 "input": {
-                    "actions": [
+                    "items": [
                         {
-                            "label": "Share a listing",
-                            "prompt": "Here is a listing I'm considering.",
+                            "label": "Share a listing with mileage and price",
+                            "done": False,
                         }
                     ]
                 },
@@ -2025,7 +2044,7 @@ async def test_stream_chat_loop_continues_after_successful_text_and_structural_t
     assert result.full_text == done_event["text"]
 
 
-async def test_send_message_sse_done_before_panel_updates(
+async def test_send_message_sse_done_before_detached_followup(
     async_client, adb, async_buyer_user
 ):
     session, deal_state = await async_create_session_with_deal_state(
@@ -2035,7 +2054,6 @@ async def test_send_message_sse_done_before_panel_updates(
     await adb.refresh(session)
     await adb.refresh(deal_state)
     token = create_access_token({"sub": async_buyer_user.id})
-    panel_all_messages: list[dict] | None = None
 
     async def fake_stream_chat_loop(*args, **kwargs):
         result = args[4]
@@ -2051,67 +2069,15 @@ async def test_send_message_sse_done_before_panel_updates(
                 )
             ),
         )
-        result.tool_calls.append(
-            {
-                "name": "update_quick_actions",
-                "args": {
-                    "actions": [
-                        {
-                            "label": "Ask OTD",
-                            "prompt": "What is the out-the-door price?",
-                        }
-                    ]
-                },
-            }
-        )
         result.completed = True
         yield (
             "event: text\n"
             'data: {"chunk": "Hold at $28,500 and get the out-the-door total in writing."}\n\n'
         )
-        yield (
-            "event: tool_result\n"
-            'data: {"tool": "update_quick_actions", "data": {"actions": [{"label": "Ask OTD", "prompt": "What is the out-the-door price?"}]}}\n\n'
-        )
-
-    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
-        nonlocal panel_all_messages
-        panel_all_messages = args[2]
-        yield SimpleNamespace(
-            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
-        )
-        yield SimpleNamespace(
-            type="panel_done",
-            data={
-                "cards": [
-                    {
-                        "kind": "next_best_move",
-                        "template": "briefing",
-                        "title": "Next Best Move",
-                        "content": {
-                            "body": "Their latest counter is still above your target."
-                        },
-                        "priority": "high",
-                    }
-                ],
-                "usage_summary": {
-                    "requests": 1,
-                    "input_tokens": 120,
-                    "output_tokens": 40,
-                    "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 60,
-                    "total_tokens": 160,
-                },
-            },
-        )
 
     with (
         patch(
             "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
-        ),
-        patch(
-            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
-            new=fake_stream_panel_cards_with_usage,
         ),
         patch(
             "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
@@ -2126,17 +2092,7 @@ async def test_send_message_sse_done_before_panel_updates(
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
-    # done fires immediately after the step loop so the frontend can
-    # unblock input; panel lifecycle events arrive after done.
-    assert [event_name for event_name, _ in events] == [
-        "turn_started",
-        "text",
-        "tool_result",
-        "done",
-        "panel_started",
-        "panel_done",
-    ]
-    # done carries step-loop-only usage (no panel generation costs)
+    assert [event_name for event_name, _ in events] == ["turn_started", "text", "done"]
     done_event = next(data for name, data in events if name == "done")
     assert (
         done_event["text"]
@@ -2150,16 +2106,7 @@ async def test_send_message_sse_done_before_panel_updates(
         "cacheReadInputTokens": 180,
         "totalTokens": 336,
     }
-    assert panel_all_messages == [
-        {"role": "user", "content": "They came back at 30,200"},
-        {
-            "role": "assistant",
-            "content": "Hold at $28,500 and get the out-the-door total in writing.",
-        },
-    ]
-    panel_done = next(data for name, data in events if name == "panel_done")
-    assert panel_done["cards"][0]["title"] == "Next Best Move"
-    assert "assistant_message_id" in panel_done
+    assert done_event["assistant_message_id"]
 
     async with TestingAsyncSessionLocal() as check_db:
         message_result = await check_db.execute(
@@ -2175,69 +2122,39 @@ async def test_send_message_sse_done_before_panel_updates(
         assert persisted_messages[-1].content == (
             "Hold at $28,500 and get the out-the-door total in writing."
         )
-        assert persisted_messages[-1].id == panel_done["assistant_message_id"]
-        assert persisted_messages[-1].panel_cards == panel_done["cards"]
+        assert persisted_messages[-1].id == done_event["assistant_message_id"]
+        assert persisted_messages[-1].panel_cards is None
         assert persisted_messages[-1].usage == {
-            "requests": 2,
-            "inputTokens": 360,
-            "outputTokens": 136,
+            "requests": 1,
+            "inputTokens": 240,
+            "outputTokens": 96,
             "cacheCreationInputTokens": 0,
-            "cacheReadInputTokens": 240,
-            "totalTokens": 496,
+            "cacheReadInputTokens": 180,
+            "totalTokens": 336,
         }
-        assert _normalize_tool_calls(persisted_messages[-1].tool_calls) == snapshot(
-            [
-                {
-                    "name": "update_quick_actions",
-                    "args": {
-                        "actions": [
-                            {
-                                "label": "Ask OTD",
-                                "prompt": "What is the out-the-door price?",
-                            }
-                        ]
-                    },
-                },
-                {
-                    "name": "update_insights_panel",
-                    "args": {
-                        "cards": [
-                            {
-                                "kind": "next_best_move",
-                                "template": "briefing",
-                                "title": "Next Best Move",
-                                "content": {
-                                    "body": "Their latest counter is still above your target."
-                                },
-                                "priority": "high",
-                            }
-                        ]
-                    },
-                },
-            ]
-        )
+        assert persisted_messages[-1].tool_calls is None
 
         session_result = await check_db.execute(
             select(ChatSession).where(ChatSession.id == session.id)
         )
         persisted_session = session_result.scalar_one()
         assert persisted_session.usage == {
-            "request_count": 2,
-            "input_tokens": 360,
-            "output_tokens": 136,
+            "request_count": 1,
+            "input_tokens": 240,
+            "output_tokens": 96,
             "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 240,
-            "total_tokens": 496,
-            "total_cost_usd": 0.003192,
+            "cache_read_input_tokens": 180,
+            "total_tokens": 336,
+            "total_cost_usd": 0.002214,
             "per_model": {
                 "claude-sonnet-4-6": {
-                    "request_count": 2,
-                    "input_tokens": 360,
-                    "output_tokens": 136,
+                    "request_count": 1,
+                    "input_tokens": 240,
+                    "output_tokens": 96,
                     "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 240,
-                    "total_tokens": 496,
-                    "total_cost_usd": 0.003192,
+                    "cache_read_input_tokens": 180,
+                    "total_tokens": 336,
+                    "total_cost_usd": 0.002214,
                 }
             },
         }
@@ -2256,15 +2173,15 @@ async def test_send_message_sse_done_before_panel_updates(
     assert isinstance(cp["input_budget"], int)
     msgs = history_payload["messages"]
     assert msgs[-1]["usage"] == {
-        "requests": 2,
-        "inputTokens": 360,
-        "outputTokens": 136,
+        "requests": 1,
+        "inputTokens": 240,
+        "outputTokens": 96,
         "cacheCreationInputTokens": 0,
-        "cacheReadInputTokens": 240,
-        "totalTokens": 496,
+        "cacheReadInputTokens": 180,
+        "totalTokens": 336,
     }
-    assert msgs[-1]["id"] == panel_done["assistant_message_id"]
-    assert msgs[-1]["panel_cards"] == panel_done["cards"]
+    assert msgs[-1]["id"] == done_event["assistant_message_id"]
+    assert msgs[-1]["panel_cards"] is None
 
 
 async def test_send_message_runs_compaction_before_chat_when_over_budget(
@@ -2302,34 +2219,8 @@ async def test_send_message_runs_compaction_before_chat_when_over_budget(
                 )
             ),
         )
-        result.tool_calls.append(
-            {
-                "name": "update_quick_actions",
-                "args": {"actions": [{"label": "X", "prompt": "Y"}]},
-            }
-        )
         result.completed = True
         yield ('event: text\ndata: {"chunk": "After compaction assistant text."}\n\n')
-        yield (
-            "event: tool_result\n"
-            'data: {"tool": "update_quick_actions", "data": {"actions": [{"label": "X", "prompt": "Y"}]}}\n\n'
-        )
-
-    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
-        yield SimpleNamespace(
-            type="panel_done",
-            data={
-                "cards": [],
-                "usage_summary": {
-                    "requests": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                    "total_tokens": 0,
-                },
-            },
-        )
 
     with (
         patch(
@@ -2342,10 +2233,6 @@ async def test_send_message_runs_compaction_before_chat_when_over_budget(
         ),
         patch(
             "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
-        ),
-        patch(
-            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
-            new=fake_stream_panel_cards_with_usage,
         ),
         patch(
             "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
@@ -2406,8 +2293,11 @@ async def test_send_message_skips_live_panel_events_when_user_mode_is_paused(
     await adb.refresh(session)
     await adb.refresh(deal_state)
     token = create_access_token({"sub": async_buyer_user.id})
+    offered_tool_names: list[str] = []
 
     async def fake_stream_chat_loop(*args, **kwargs):
+        nonlocal offered_tool_names
+        offered_tool_names = [tool["name"] for tool in args[2]]
         result = args[4]
         result.full_text = "Manual mode response."
         merge_usage_summary(
@@ -2424,22 +2314,9 @@ async def test_send_message_skips_live_panel_events_when_user_mode_is_paused(
         result.completed = True
         yield ('event: text\ndata: {"chunk": "Manual mode response."}\n\n')
 
-    panel_called = False
-
-    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
-        nonlocal panel_called
-        panel_called = True
-        yield SimpleNamespace(
-            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
-        )
-
     with (
         patch(
             "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
-        ),
-        patch(
-            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
-            new=fake_stream_panel_cards_with_usage,
         ),
         patch(
             "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
@@ -2454,11 +2331,110 @@ async def test_send_message_skips_live_panel_events_when_user_mode_is_paused(
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
-    assert [event_name for event_name, _ in events] == ["turn_started", "text", "done"]
-    assert panel_called is False
+        assert [event_name for event_name, _ in events] == [
+            "turn_started",
+            "text",
+            "done",
+        ]
+        assert offered_tool_names == []
+    done_event = next(data for name, data in events if name == "done")
+    assert done_event["assistant_message_id"]
 
 
-async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(
+async def test_insights_followup_skips_all_work_when_user_mode_is_paused(
+    async_client, adb, async_buyer_user
+):
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
+    adb.add(
+        UserSettings(
+            user_id=async_buyer_user.id,
+            insights_update_mode=InsightsUpdateMode.PAUSED.value,
+        )
+    )
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Here is how to hold the line on price.",
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
+    await adb.refresh(assistant)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def should_not_reconcile(*args, **kwargs):
+        raise AssertionError("reconcile should not run in paused mode")
+        if False:
+            yield ""
+
+    async def should_not_stream_panel(*args, **kwargs):
+        raise AssertionError("panel should not run in paused mode")
+        if False:
+            yield None
+
+    with (
+        patch(
+            "app.services.insights_followup.stream_chat_loop",
+            new=should_not_reconcile,
+        ),
+        patch(
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+            new=should_not_stream_panel,
+        ),
+    ):
+        response = await async_client.post(
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": (
+            "Insights follow-up is unavailable while live updates are paused; "
+            "use panel-refresh instead"
+        )
+    }
+
+    job = await adb.scalar(
+        select(InsightsFollowupJob).where(
+            InsightsFollowupJob.session_id == session.id,
+            InsightsFollowupJob.assistant_message_id == assistant.id,
+        )
+    )
+    assert job is None
+
+
+async def test_insights_followup_rejects_assistant_message_from_another_session(
+    async_client, adb, async_buyer_user
+):
+    session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    other_session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    other_assistant = Message(
+        session_id=other_session.id,
+        role=MessageRole.ASSISTANT,
+        content="Assistant reply in another session.",
+    )
+    adb.add(other_assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(other_assistant)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    response = await async_client.post(
+        f"/api/chat/{session.id}/insights-followup",
+        json={"assistant_message_id": other_assistant.id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Assistant message not found for this session"}
+
+
+async def test_insights_followup_persists_empty_panel_results_and_clears_stale_cards(
     async_client, adb, async_buyer_user
 ):
     session, deal_state = await async_create_session_with_deal_state(
@@ -2473,18 +2449,25 @@ async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(
             "priority": "high",
         }
     ]
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Here is the latest read on the deal.",
+        usage={
+            "requests": 1,
+            "inputTokens": 20,
+            "outputTokens": 10,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "totalTokens": 30,
+        },
+    )
+    adb.add(assistant)
     await adb.commit()
     await adb.refresh(session)
     await adb.refresh(deal_state)
+    await adb.refresh(assistant)
     token = create_access_token({"sub": async_buyer_user.id})
-
-    async def fake_stream_chat_loop(*args, **kwargs):
-        result = args[4]
-        result.full_text = "Here is the latest read on the deal."
-        result.completed = True
-        yield (
-            'event: text\ndata: {"chunk": "Here is the latest read on the deal."}\n\n'
-        )
 
     async def fake_stream_panel_cards_with_usage(*args, **kwargs):
         yield SimpleNamespace(
@@ -2505,27 +2488,32 @@ async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(
             },
         )
 
+    async def fake_stream_chat_loop_noop(*args, **kwargs):
+        result = args[4]
+        result.completed = True
+        if False:
+            yield ""
+
     with (
         patch(
-            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+            "app.services.insights_followup.stream_chat_loop",
+            new=fake_stream_chat_loop_noop,
         ),
         patch(
-            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=fake_stream_panel_cards_with_usage,
-        ),
-        patch(
-            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
         ),
     ):
         async with async_client.stream(
             "POST",
-            f"/api/chat/{session.id}/message",
-            json={"content": "Anything new?"},
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
             headers={"Authorization": f"Bearer {token}"},
         ) as response:
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
+    assert [event_name for event_name, _ in events] == ["panel_started", "panel_done"]
     panel_done = next(data for name, data in events if name == "panel_done")
     assert panel_done["cards"] == []
 
@@ -2547,6 +2535,361 @@ async def test_send_message_persists_empty_panel_results_and_clears_stale_cards(
             "args": {"cards": []},
         }
         assert persisted_messages[-1].panel_cards == []
+        assert persisted_messages[-1].usage == {
+            "requests": 2,
+            "inputTokens": 60,
+            "outputTokens": 20,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "totalTokens": 80,
+        }
+
+        job = await check_db.scalar(
+            select(InsightsFollowupJob).where(
+                InsightsFollowupJob.session_id == session.id,
+                InsightsFollowupJob.assistant_message_id == assistant.id,
+            )
+        )
+        assert job is not None
+        assert job.status == InsightsFollowupStatus.SUCCEEDED.value
+
+
+async def test_insights_followup_reconciles_before_panel_and_emits_tool_results(
+    async_client, adb, async_buyer_user
+):
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="You should ask for the out-the-door price before discussing financing.",
+        usage={
+            "requests": 1,
+            "inputTokens": 20,
+            "outputTokens": 10,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "totalTokens": 30,
+        },
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
+    await adb.refresh(assistant)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def fake_stream_chat_loop(*args, **kwargs):
+        turn_context = args[3]
+        result = args[4]
+        turn_context.deal_state.negotiation_context = {
+            "stance": "negotiating",
+            "situation": "Waiting for the dealer's out-the-door quote.",
+        }
+        merge_usage_summary(
+            result.usage_summary,
+            summarize_usage(
+                SimpleNamespace(
+                    input_tokens=12,
+                    output_tokens=8,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                )
+            ),
+        )
+        result.completed = True
+        yield (
+            "event: tool_result\n"
+            'data: {"tool": "update_negotiation_context", '
+            '"data": {"stance": "negotiating", "situation": "Waiting for the dealer\'s out-the-door quote."}}\n\n'
+        )
+
+    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
+        yield SimpleNamespace(
+            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
+        )
+        yield SimpleNamespace(
+            type="panel_done",
+            data={
+                "cards": [
+                    {
+                        "kind": "phase",
+                        "template": "briefing",
+                        "title": "Status",
+                        "content": {
+                            "stance": "negotiating",
+                            "situation": "Waiting for the dealer's out-the-door quote.",
+                        },
+                        "priority": "high",
+                    }
+                ],
+                "usage_summary": {
+                    "requests": 1,
+                    "input_tokens": 40,
+                    "output_tokens": 10,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "total_tokens": 50,
+                },
+            },
+        )
+
+    with (
+        patch(
+            "app.services.insights_followup.stream_chat_loop",
+            new=fake_stream_chat_loop,
+        ),
+        patch(
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+            new=fake_stream_panel_cards_with_usage,
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert [event_name for event_name, _ in events] == [
+        "panel_started",
+        "tool_result",
+        "panel_done",
+    ]
+    assert events[1] == (
+        "tool_result",
+        {
+            "tool": "update_negotiation_context",
+            "data": {
+                "stance": "negotiating",
+                "situation": "Waiting for the dealer's out-the-door quote.",
+            },
+        },
+    )
+    panel_done = events[-1][1]
+    assert panel_done["usage"] == {
+        "requests": 2,
+        "inputTokens": 52,
+        "outputTokens": 18,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+        "totalTokens": 70,
+    }
+
+    async with TestingAsyncSessionLocal() as check_db:
+        persisted_deal_state = await check_db.scalar(
+            select(DealState).where(DealState.session_id == session.id)
+        )
+        assert persisted_deal_state is not None
+        assert persisted_deal_state.negotiation_context == {
+            "stance": "negotiating",
+            "situation": "Waiting for the dealer's out-the-door quote.",
+        }
+
+        persisted_message = await check_db.scalar(
+            select(Message).where(Message.id == assistant.id)
+        )
+        assert persisted_message is not None
+        assert persisted_message.usage == {
+            "requests": 3,
+            "inputTokens": 72,
+            "outputTokens": 28,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "totalTokens": 100,
+        }
+
+        job = await check_db.scalar(
+            select(InsightsFollowupJob).where(
+                InsightsFollowupJob.session_id == session.id,
+                InsightsFollowupJob.assistant_message_id == assistant.id,
+            )
+        )
+        assert job is not None
+        assert job.reconcile_status == InsightsFollowupStepStatus.SUCCEEDED.value
+        assert job.panel_status == InsightsFollowupStepStatus.SUCCEEDED.value
+        assert job.usage == panel_done["usage"]
+
+
+async def test_insights_followup_marks_job_failed_when_panel_generation_errors(
+    async_client, adb, async_buyer_user
+):
+    session, deal_state = await async_create_session_with_deal_state(
+        adb, async_buyer_user
+    )
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="The dealer still has not provided a written out-the-door quote.",
+        panel_cards=[
+            {
+                "kind": "phase",
+                "template": "briefing",
+                "title": "Status",
+                "content": {
+                    "stance": "researching",
+                    "situation": "Waiting on written numbers.",
+                },
+                "priority": "high",
+            }
+        ],
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(deal_state)
+    await adb.refresh(assistant)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def fake_stream_chat_loop(*args, **kwargs):
+        result = args[4]
+        merge_usage_summary(
+            result.usage_summary,
+            summarize_usage(
+                SimpleNamespace(
+                    input_tokens=12,
+                    output_tokens=8,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                )
+            ),
+        )
+        result.completed = True
+        if False:
+            yield ""
+
+    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
+        yield SimpleNamespace(
+            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
+        )
+        yield SimpleNamespace(
+            type="panel_error",
+            data={"message": "Panel generation failed"},
+        )
+
+    with (
+        patch(
+            "app.services.insights_followup.stream_chat_loop",
+            new=fake_stream_chat_loop,
+        ),
+        patch(
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+            new=fake_stream_panel_cards_with_usage,
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert [event_name for event_name, _ in events] == [
+        "panel_started",
+        "panel_error",
+    ]
+    assert events[-1][1] == {"message": "Insights follow-up failed"}
+
+    async with TestingAsyncSessionLocal() as check_db:
+        persisted_message = await check_db.scalar(
+            select(Message).where(Message.id == assistant.id)
+        )
+        assert persisted_message is not None
+        assert persisted_message.panel_cards == assistant.panel_cards
+
+        job = await check_db.scalar(
+            select(InsightsFollowupJob).where(
+                InsightsFollowupJob.session_id == session.id,
+                InsightsFollowupJob.assistant_message_id == assistant.id,
+            )
+        )
+        assert job is not None
+        assert job.status == InsightsFollowupStatus.FAILED.value
+        assert job.reconcile_status == InsightsFollowupStepStatus.SUCCEEDED.value
+        assert job.panel_status == InsightsFollowupStepStatus.FAILED.value
+        assert job.error == "Insights follow-up failed"
+
+
+async def test_insights_followup_returns_cached_panel_done_for_succeeded_job(
+    async_client, adb, async_buyer_user
+):
+    session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Here is the latest read on the deal.",
+        panel_cards=[
+            {
+                "kind": "phase",
+                "template": "briefing",
+                "title": "Status",
+                "content": {
+                    "stance": "researching",
+                    "situation": "Waiting on fees.",
+                },
+                "priority": "high",
+            }
+        ],
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(assistant)
+
+    job = InsightsFollowupJob(
+        session_id=session.id,
+        assistant_message_id=assistant.id,
+        status=InsightsFollowupStatus.SUCCEEDED.value,
+        attempts=1,
+        reconcile_status=InsightsFollowupStepStatus.SKIPPED.value,
+        panel_status=InsightsFollowupStepStatus.SUCCEEDED.value,
+        usage={
+            "requests": 1,
+            "inputTokens": 12,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "totalTokens": 20,
+        },
+    )
+    adb.add(job)
+    await adb.commit()
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def should_not_run_panel(*args, **kwargs):
+        raise AssertionError(
+            "panel stream should not run for succeeded cached follow-up"
+        )
+        yield
+
+    with patch(
+        "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+        new=should_not_run_panel,
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert events == [
+        (
+            "panel_done",
+            {
+                "cards": assistant.panel_cards,
+                "usage": job.usage,
+                "assistant_message_id": assistant.id,
+            },
+        )
+    ]
 
 
 async def test_send_message_stops_after_stream_failure(
@@ -2701,6 +3044,7 @@ async def test_stream_buyer_chat_turn_emits_error_and_removes_orphan_user_when_a
                 deal_state_dict=deal_state_dict,
                 linked_messages=None,
                 system_prompt=[],
+                allow_persistence_affecting_tools=True,
                 turn_state=turn_state,
             )
         )
@@ -2721,19 +3065,20 @@ async def test_stream_buyer_chat_turn_emits_error_and_removes_orphan_user_when_a
     assert message_result.scalars().all() == []
 
 
-async def test_send_message_emits_panel_error_when_panel_stream_crashes_after_start(
+async def test_insights_followup_emits_panel_error_when_panel_stream_crashes_after_start(
     async_client, adb, async_buyer_user
 ):
     session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Use your pre-approval as leverage.",
+    )
+    adb.add(assistant)
     await adb.commit()
     await adb.refresh(session)
+    await adb.refresh(assistant)
     token = create_access_token({"sub": async_buyer_user.id})
-
-    async def fake_stream_chat_loop(*args, **kwargs):
-        result = args[4]
-        result.full_text = "Use your pre-approval as leverage."
-        result.completed = True
-        yield ('event: text\ndata: {"chunk": "Use your pre-approval as leverage."}\n\n')
 
     async def failing_stream_panel_cards_with_usage(*args, **kwargs):
         yield SimpleNamespace(
@@ -2741,35 +3086,256 @@ async def test_send_message_emits_panel_error_when_panel_stream_crashes_after_st
         )
         raise RuntimeError("panel stream crashed")
 
+    async def fake_stream_chat_loop_noop(*args, **kwargs):
+        result = args[4]
+        result.completed = True
+        if False:
+            yield ""
+
     with (
         patch(
-            "app.services.buyer_chat_stream.stream_chat_loop", new=fake_stream_chat_loop
+            "app.services.insights_followup.stream_chat_loop",
+            new=fake_stream_chat_loop_noop,
         ),
         patch(
-            "app.services.buyer_chat_stream.stream_ai_panel_cards_with_usage",
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=failing_stream_panel_cards_with_usage,
-        ),
-        patch(
-            "app.services.buyer_chat_stream.update_session_metadata", new=AsyncMock()
         ),
     ):
         async with async_client.stream(
             "POST",
-            f"/api/chat/{session.id}/message",
-            json={"content": "They are pushing me into financing."},
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
             headers={"Authorization": f"Bearer {token}"},
         ) as response:
             assert response.status_code == 200
             events = await _collect_response_events(response)
 
     assert [event_name for event_name, _ in events] == [
-        "turn_started",
-        "text",
-        "done",
         "panel_started",
         "panel_error",
     ]
-    assert events[-1] == ("panel_error", {"message": "Panel generation failed"})
+    assert events[-1] == ("panel_error", {"message": "Insights follow-up failed"})
+
+
+async def test_insights_followup_treats_panel_error_event_as_terminal_failure(
+    async_client, adb, async_buyer_user
+):
+    session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Use your pre-approval as leverage.",
+        panel_cards=[
+            {
+                "kind": "notes",
+                "template": "notes",
+                "title": "Existing panel",
+                "content": {"summary": "Keep this until a real replacement exists."},
+                "priority": "high",
+            }
+        ],
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(assistant)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def fake_panel_stream_with_error_event(*args, **kwargs):
+        yield SimpleNamespace(
+            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
+        )
+        yield SimpleNamespace(
+            type="panel_error", data={"message": "Panel generation failed"}
+        )
+
+    async def fake_stream_chat_loop_noop(*args, **kwargs):
+        result = args[4]
+        result.completed = True
+        if False:
+            yield ""
+
+    with (
+        patch(
+            "app.services.insights_followup.stream_chat_loop",
+            new=fake_stream_chat_loop_noop,
+        ),
+        patch(
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+            new=fake_panel_stream_with_error_event,
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert [event_name for event_name, _ in events] == [
+        "panel_started",
+        "panel_error",
+    ]
+    assert events[-1] == ("panel_error", {"message": "Insights follow-up failed"})
+
+    assistant_result = await adb.execute(
+        select(Message).where(Message.id == assistant.id)
+    )
+    refreshed_assistant = assistant_result.scalar_one()
+    assert refreshed_assistant.panel_cards == assistant.panel_cards
+
+    job_result = await adb.execute(
+        select(InsightsFollowupJob).where(
+            InsightsFollowupJob.session_id == session.id,
+            InsightsFollowupJob.assistant_message_id == assistant.id,
+            InsightsFollowupJob.kind
+            == InsightsFollowupKind.LINKED_RECONCILE_PANEL.value,
+        )
+    )
+    job = job_result.scalar_one()
+    assert job.status == InsightsFollowupStatus.FAILED.value
+    assert job.reconcile_status == InsightsFollowupStepStatus.SUCCEEDED.value
+    assert job.panel_status == InsightsFollowupStepStatus.FAILED.value
+
+
+async def test_insights_followup_fails_when_panel_stream_ends_without_terminal_event(
+    async_client, adb, async_buyer_user
+):
+    session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Use your pre-approval as leverage.",
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(assistant)
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def fake_panel_stream_without_terminal(*args, **kwargs):
+        yield SimpleNamespace(
+            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
+        )
+
+    async def fake_stream_chat_loop_noop(*args, **kwargs):
+        result = args[4]
+        result.completed = True
+        if False:
+            yield ""
+
+    with (
+        patch(
+            "app.services.insights_followup.stream_chat_loop",
+            new=fake_stream_chat_loop_noop,
+        ),
+        patch(
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+            new=fake_panel_stream_without_terminal,
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert [event_name for event_name, _ in events] == [
+        "panel_started",
+        "panel_error",
+    ]
+    assert events[-1] == ("panel_error", {"message": "Insights follow-up failed"})
+
+    job_result = await adb.execute(
+        select(InsightsFollowupJob).where(
+            InsightsFollowupJob.session_id == session.id,
+            InsightsFollowupJob.assistant_message_id == assistant.id,
+            InsightsFollowupJob.kind
+            == InsightsFollowupKind.LINKED_RECONCILE_PANEL.value,
+        )
+    )
+    job = job_result.scalar_one()
+    assert job.status == InsightsFollowupStatus.FAILED.value
+    assert job.panel_status == InsightsFollowupStepStatus.FAILED.value
+
+
+async def test_insights_followup_rejects_concurrent_run_for_same_message(
+    async_client, adb, async_buyer_user
+):
+    """When a followup job is already RUNNING, the endpoint emits panel_error."""
+    session, _ = await async_create_session_with_deal_state(adb, async_buyer_user)
+    assistant = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="Negotiate on the out-the-door price.",
+    )
+    adb.add(assistant)
+    await adb.commit()
+    await adb.refresh(session)
+    await adb.refresh(assistant)
+
+    running_job = InsightsFollowupJob(
+        session_id=session.id,
+        assistant_message_id=assistant.id,
+        kind=InsightsFollowupKind.LINKED_RECONCILE_PANEL.value,
+        status=InsightsFollowupStatus.RUNNING.value,
+        reconcile_status=InsightsFollowupStepStatus.RUNNING.value,
+        panel_status=InsightsFollowupStepStatus.PENDING.value,
+        attempts=1,
+    )
+    adb.add(running_job)
+    await adb.commit()
+    token = create_access_token({"sub": async_buyer_user.id})
+
+    async def should_not_run_chat_loop(*args, **kwargs):
+        raise AssertionError("chat loop should not run when job is already running")
+        if False:
+            yield ""
+
+    async def should_not_run_panel(*args, **kwargs):
+        raise AssertionError("panel should not run when job is already running")
+        if False:
+            yield None
+
+    with (
+        patch(
+            "app.services.insights_followup.stream_chat_loop",
+            new=should_not_run_chat_loop,
+        ),
+        patch(
+            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
+            new=should_not_run_panel,
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            f"/api/chat/{session.id}/insights-followup",
+            json={"assistant_message_id": assistant.id},
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            assert response.status_code == 200
+            events = await _collect_response_events(response)
+
+    assert events == [
+        ("panel_error", {"message": "Insights follow-up is already running."}),
+    ]
+
+
+def test_get_buyer_chat_tools_both_flags_false_returns_empty():
+    """When both allow_persistence_affecting_tools and allow_chat_only_tools are False, no tools are returned."""
+    assert (
+        get_buyer_chat_tools(
+            allow_persistence_affecting_tools=False,
+            allow_chat_only_tools=False,
+        )
+        == []
+    )
 
 
 @pytest.mark.vcr

@@ -25,7 +25,7 @@ async def execute_tool_batch(
     - On failure, only the failing tool rolls back; other tools' changes persist.
 
     This is intentional — independent tools update disjoint state (e.g.,
-    update_deal_numbers and update_quick_actions). Partial commits on failure
+    update_deal_numbers and update_checklist). Partial commits on failure
     match the pre-concurrency behavior where individual tool errors were already
     reported back to Claude without rolling back other tools.
 

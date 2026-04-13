@@ -1,5 +1,4 @@
 export { InsightsPanel } from './InsightsPanel'
-export { QuickActions } from './QuickActions'
 export { CompactPhaseIndicator } from './CompactPhaseIndicator'
 export { AiCard } from './AiCard'
 export { CardReplyInput } from './CardReplyInput'

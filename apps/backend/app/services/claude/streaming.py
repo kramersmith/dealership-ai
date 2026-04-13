@@ -53,10 +53,10 @@ async def stream_step_with_retry(  # noqa: C901
                 "system": system,
                 "messages": messages,
             }
-            if tools is not None:
+            if tools:
                 stream_kwargs["tools"] = tools
-            if tool_choice is not None:
-                stream_kwargs["tool_choice"] = tool_choice
+                if tool_choice is not None:
+                    stream_kwargs["tool_choice"] = tool_choice
 
             async with client.messages.stream(
                 **stream_kwargs,
@@ -136,10 +136,10 @@ async def stream_step_with_retry(  # noqa: C901
             "system": system,
             "messages": messages,
         }
-        if tools is not None:
+        if tools:
             create_kwargs["tools"] = tools
-        if tool_choice is not None:
-            create_kwargs["tool_choice"] = tool_choice
+            if tool_choice is not None:
+                create_kwargs["tool_choice"] = tool_choice
 
         response = await client.messages.create(  # type: ignore[call-overload]
             **create_kwargs,

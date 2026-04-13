@@ -1,11 +1,4 @@
-import type {
-  BuyerContext,
-  ChecklistItem,
-  DealPhase,
-  HealthStatus,
-  QuickAction,
-  Scorecard,
-} from './types'
+import type { BuyerContext, ChecklistItem, DealPhase, HealthStatus, Scorecard } from './types'
 
 // ─── App ───
 
@@ -17,51 +10,6 @@ export const WEB_FONT_FAMILY = 'Inter, -apple-system, system-ui, sans-serif'
 // ─── Buyer Context ───
 
 export const DEFAULT_BUYER_CONTEXT: BuyerContext = 'researching'
-
-// ─── Quick Actions ───
-
-/** Max quick action buttons shown at once. */
-export const MAX_QUICK_ACTIONS = 3
-
-/** Hide dynamic quick actions after this many AI responses without an update. */
-export const QUICK_ACTIONS_STALENESS_THRESHOLD = 3
-
-/** Hide static fallback actions after this many AI responses (no dynamic ones received yet). */
-export const STATIC_ACTIONS_STALENESS_THRESHOLD = 4
-
-/** Static fallback quick actions shown before Claude generates dynamic ones. */
-export const FALLBACK_QUICK_ACTIONS: Record<BuyerContext, QuickAction[]> = {
-  researching: [
-    {
-      label: 'Compare Prices',
-      prompt: 'Help me compare prices for this car. What should I expect to pay?',
-    },
-    {
-      label: 'New or Used?',
-      prompt: 'Should I buy new or used? What are the pros and cons for my situation?',
-    },
-    {
-      label: "What's My Budget?",
-      prompt: 'Help me figure out what I can afford. What budget should I set?',
-    },
-  ],
-  reviewing_deal: [
-    { label: 'Check This Price', prompt: 'Is this price fair? Break down the numbers for me.' },
-    {
-      label: 'Hidden Fees?',
-      prompt: 'What fees might be hidden in this deal? What should I watch for?',
-    },
-    { label: 'Should I Walk?', prompt: 'Based on the current deal, should I walk away?' },
-  ],
-  at_dealership: [
-    { label: 'What Do I Say?', prompt: 'What should I say right now? Give me a script.' },
-    { label: 'Should I Walk?', prompt: 'Based on the current deal, should I walk away?' },
-    {
-      label: "They're Pressuring Me",
-      prompt: "The dealer is pressuring me. What's happening and how should I respond?",
-    },
-  ],
-}
 
 export const DEAL_PHASES: { key: DealPhase; label: string }[] = [
   { key: 'research', label: 'Research' },

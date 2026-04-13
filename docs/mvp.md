@@ -47,7 +47,7 @@ Define the smallest thing we can ship to prove demand before investing in audio 
 - Vehicle card (specs, price, risk flags, market comparison)
 - Negotiation scorecard (visual progress: their price → current offer → your target)
 - Red/yellow/green deal status indicators (price, rate, terms)
-- Quick action buttons (Analyze photo, What do I say?, Should I walk?)
+- Tactical follow-up guidance surfaced through chat and the insights panel
 - Dealership timer + wait-time awareness cues
 
 **Medium complexity (still no audio):**

@@ -3,7 +3,14 @@
 from unittest.mock import patch
 
 from app.core.security import create_access_token, hash_password
-from app.models.enums import MessageRole, UserRole
+from app.models.enums import (
+    InsightsFollowupKind,
+    InsightsFollowupStatus,
+    InsightsFollowupStepStatus,
+    MessageRole,
+    UserRole,
+)
+from app.models.insights_followup_job import InsightsFollowupJob
 from app.models.message import Message
 from app.models.user import User
 
@@ -186,3 +193,62 @@ def test_branch_success_truncates_tail_and_starts_stream(client, db):
     assert anchor_id in remaining_ids
     assert assistant_reply_id not in remaining_ids
     assert trailing_id not in remaining_ids
+
+
+def test_branch_success_deletes_followup_jobs_for_removed_assistant_messages(
+    client, db
+):
+    user, token = create_user_and_token(db)
+    session, _initial_deal = create_session_with_deal_state(db, user)
+
+    anchor_user_message = Message(
+        session_id=session.id, role=MessageRole.USER, content="one"
+    )
+    assistant_reply = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="answer",
+    )
+    trailing_user_message = Message(
+        session_id=session.id,
+        role=MessageRole.USER,
+        content="two",
+    )
+    db.add_all([anchor_user_message, assistant_reply, trailing_user_message])
+    db.commit()
+    db.refresh(anchor_user_message)
+    db.refresh(assistant_reply)
+
+    followup_job = InsightsFollowupJob(
+        session_id=session.id,
+        assistant_message_id=assistant_reply.id,
+        kind=InsightsFollowupKind.LINKED_RECONCILE_PANEL.value,
+        status=InsightsFollowupStatus.SUCCEEDED.value,
+        reconcile_status=InsightsFollowupStepStatus.SUCCEEDED.value,
+        panel_status=InsightsFollowupStepStatus.SUCCEEDED.value,
+        attempts=1,
+    )
+    db.add(followup_job)
+    db.commit()
+    followup_job_id = followup_job.id
+
+    async def _capture_stream(**_kwargs):
+        yield 'event: done\ndata: {"text": "ok"}\n\n'
+
+    with patch(
+        "app.routes.chat.stream_buyer_chat_turn",
+        side_effect=_capture_stream,
+    ):
+        response = client.post(
+            f"/api/chat/{session.id}/messages/{anchor_user_message.id}/branch",
+            json={"content": "edited one"},
+            headers=auth_header(token),
+        )
+
+    assert response.status_code == 200
+    assert (
+        db.query(InsightsFollowupJob)
+        .filter(InsightsFollowupJob.id == followup_job_id)
+        .one_or_none()
+        is None
+    )

@@ -110,7 +110,7 @@ flowchart TD
     DASHBOARD --> VEHICLE[Vehicle Info]
     DASHBOARD --> CHECKLIST[Checklist]
 
-    CHAT --> |Tap quick action| AI
+    CHAT --> |Reply from insight card| AI
     CHAT --> |Edit earlier user message| BRANCH_CONFIRM[Confirm edit-from-here]
     BRANCH_CONFIRM --> |Continue| AI
     CHAT --> |Back button| CHATS

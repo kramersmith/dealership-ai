@@ -459,6 +459,14 @@ type StreamBuyerChatCallbacks = {
   onCompaction?: (phase: 'started' | 'done' | 'error') => void
 }
 
+type StreamInsightsFollowupCallbacks = {
+  onToolResult?: (toolCall: ToolCall) => void
+  onPanelStarted?: () => void
+  onPanelFinished?: () => void
+  onPanelInterrupted?: (data: { reason: string }) => void
+  onNonFatalError?: (message: string) => void
+}
+
 /** Shared XHR + SSE parser for POST /chat/.../message and .../branch. */
 function streamBuyerChatSse(
   pathRelativeToApi: string,
@@ -491,6 +499,7 @@ function streamBuyerChatSse(
     activeStreamRequests.set(sessionId, streamRequest)
 
     let fullText = ''
+    let assistantMessageId: string | undefined
     let messageUsage: MessageUsage | undefined
     let sessionUsage: SessionUsage | undefined
     const toolCalls: ToolCall[] = []
@@ -553,6 +562,8 @@ function streamBuyerChatSse(
         } else if (eventType === 'done') {
           sawDoneEvent = true
           fullText = data.text ?? fullText
+          assistantMessageId =
+            typeof data.assistant_message_id === 'string' ? data.assistant_message_id : undefined
           messageUsage = data.usage
           sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
           onTextDone?.(fullText, messageUsage, sessionUsage)
@@ -724,7 +735,7 @@ function streamBuyerChatSse(
           finishPanelStream()
         }
         resolve({
-          id: Math.random().toString(36).substring(2),
+          id: assistantMessageId ?? Math.random().toString(36).substring(2),
           sessionId,
           role: 'assistant',
           content: fullText,
@@ -766,6 +777,178 @@ function streamBuyerChatSse(
       if (activeStreamRequests.get(sessionId) === streamRequest) {
         activeStreamRequests.delete(sessionId)
       }
+      finishPanelStream()
+      reject(new Error('Request timed out'))
+    }
+    streamRequest.send(JSON.stringify(body))
+  })
+}
+
+function streamInsightsFollowupSse(
+  pathRelativeToApi: string,
+  body: Record<string, unknown>,
+  callbacks: StreamInsightsFollowupCallbacks
+): Promise<void> {
+  const { onToolResult, onPanelStarted, onPanelFinished, onPanelInterrupted, onNonFatalError } =
+    callbacks
+
+  return new Promise((resolve, reject) => {
+    const streamRequest = new XMLHttpRequest()
+    streamRequest.open('POST', `${API_BASE}/${pathRelativeToApi}`)
+    streamRequest.setRequestHeader('Content-Type', 'application/json')
+    if (authToken) streamRequest.setRequestHeader('Authorization', `Bearer ${authToken}`)
+
+    streamRequest.timeout = 150000
+
+    let processed = 0
+    let buffer = ''
+    let protocolError: string | null = null
+    let sseError: string | null = null
+    let panelStreamActive = false
+    let sawFollowupTerminalEvent = false
+
+    const finishPanelStream = () => {
+      if (!panelStreamActive) return
+      panelStreamActive = false
+      onPanelFinished?.()
+    }
+
+    const processSseMessage = (message: string) => {
+      if (!message.trim()) return
+
+      let eventType = ''
+      const dataLines: string[] = []
+
+      for (const line of message.split('\n')) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim()
+        } else if (line.startsWith('data: ')) {
+          dataLines.push(line.slice(6))
+        }
+      }
+
+      const dataStr = dataLines.join('\n')
+      if (!eventType || !dataStr) return
+
+      try {
+        const data = JSON.parse(dataStr)
+        if (eventType === 'panel_started') {
+          panelStreamActive = true
+          onPanelStarted?.()
+        } else if (eventType === 'tool_result' && data.tool) {
+          onToolResult?.({
+            name: data.tool as ToolCall['name'],
+            args: data.data,
+          })
+        } else if (eventType === 'panel_done') {
+          sawFollowupTerminalEvent = true
+          if (!panelStreamActive) {
+            panelStreamActive = true
+            onPanelStarted?.()
+          }
+          const assistantMessageId =
+            typeof data.assistant_message_id === 'string' ? data.assistant_message_id : undefined
+          onToolResult?.({
+            name: 'update_insights_panel',
+            args: {
+              cards: (data.cards ?? []) as unknown[],
+              ...(assistantMessageId ? { assistantMessageId } : {}),
+            },
+          })
+          finishPanelStream()
+        } else if (eventType === 'panel_interrupted') {
+          sawFollowupTerminalEvent = true
+          finishPanelStream()
+          onPanelInterrupted?.({
+            reason: typeof data.reason === 'string' ? data.reason : 'user_stop',
+          })
+        } else if (eventType === 'panel_error') {
+          sawFollowupTerminalEvent = true
+          const errorMessage =
+            typeof data.message === 'string' && data.message.trim().length > 0
+              ? data.message
+              : 'Insights follow-up failed'
+          sseError = errorMessage
+          finishPanelStream()
+        } else if (eventType === 'error') {
+          const errorMessage =
+            typeof data.message === 'string' && data.message.trim().length > 0
+              ? data.message
+              : 'Insights follow-up failed'
+          onNonFatalError?.(errorMessage)
+        }
+      } catch (parseError) {
+        protocolError = 'Received an invalid response from the insights service'
+        console.error(
+          '[apiClient] Malformed insights follow-up SSE payload',
+          eventType || 'unknown_event',
+          parseError instanceof Error ? parseError.message : parseError
+        )
+        streamRequest.abort()
+      }
+    }
+
+    const processBufferedMessages = (includeTrailingMessage: boolean) => {
+      const messages = buffer.split('\n\n')
+      if (!includeTrailingMessage) {
+        buffer = messages.pop() ?? ''
+      } else {
+        buffer = ''
+      }
+
+      for (const message of messages) {
+        processSseMessage(message)
+        if (protocolError) return
+      }
+    }
+
+    streamRequest.onprogress = () => {
+      const newData = streamRequest.responseText.slice(processed)
+      processed = streamRequest.responseText.length
+      buffer += newData
+      processBufferedMessages(false)
+    }
+
+    streamRequest.onload = () => {
+      if (streamRequest.status >= 200 && streamRequest.status < 300) {
+        const newData = streamRequest.responseText.slice(processed)
+        processed = streamRequest.responseText.length
+        buffer += newData
+        processBufferedMessages(true)
+        if (protocolError) {
+          finishPanelStream()
+          reject(new Error(protocolError))
+          return
+        }
+        if (sseError) {
+          finishPanelStream()
+          reject(new Error(sseError))
+          return
+        }
+        if (!sawFollowupTerminalEvent) {
+          finishPanelStream()
+          reject(new Error('Insights follow-up ended without a terminal event'))
+          return
+        }
+        finishPanelStream()
+        resolve()
+      } else {
+        finishPanelStream()
+        reject(
+          new Error(extractStreamErrorMessage(streamRequest.status, streamRequest.responseText))
+        )
+      }
+    }
+
+    streamRequest.onerror = () => {
+      finishPanelStream()
+      reject(new Error(protocolError ?? 'Network error'))
+    }
+    streamRequest.onabort = () => {
+      finishPanelStream()
+      reject(new Error(protocolError ?? CLIENT_ABORT_ERROR))
+    }
+    streamRequest.ontimeout = () => {
       finishPanelStream()
       reject(new Error('Request timed out'))
     }
@@ -1003,6 +1186,28 @@ class ApiClient implements ApiService {
       turnId: response.turn_id,
       cancelled: response.cancelled,
     }
+  }
+
+  startInsightsFollowup(
+    sessionId: string,
+    assistantMessageId: string,
+    onToolResult?: (toolCall: ToolCall) => void,
+    onPanelStarted?: () => void,
+    onPanelFinished?: () => void,
+    onPanelInterrupted?: (data: { reason: string }) => void,
+    onNonFatalError?: (message: string) => void
+  ) {
+    return streamInsightsFollowupSse(
+      `chat/${sessionId}/insights-followup`,
+      { assistant_message_id: assistantMessageId },
+      {
+        onToolResult,
+        onPanelStarted,
+        onPanelFinished,
+        onPanelInterrupted,
+        onNonFatalError,
+      }
+    )
   }
 
   async refreshInsightsPanel(sessionId: string) {

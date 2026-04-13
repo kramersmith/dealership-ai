@@ -23,10 +23,6 @@ import { MessageSquarePlus, X, ChevronLeft } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
   APP_NAME,
-  DEFAULT_BUYER_CONTEXT,
-  FALLBACK_QUICK_ACTIONS,
-  QUICK_ACTIONS_STALENESS_THRESHOLD,
-  STATIC_ACTIONS_STALENESS_THRESHOLD,
   MOBILE_INSIGHTS_WIDTH_RATIO,
   MOBILE_INSIGHTS_MAX_WIDTH,
   MAX_INSIGHTS_PREVIEW_ITEMS,
@@ -52,7 +48,6 @@ import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { STATUS_LABELS, STATUS_THEMES, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
 import {
   InsightsPanel,
-  QuickActions,
   CompactPhaseIndicator,
   DesktopInsightsDockControl,
 } from '@/components/insights-panel'
@@ -306,9 +301,6 @@ export default function ChatScreen() {
   )
   const createSession = useChatStore((state) => state.createSession)
   const addGreeting = useChatStore((state) => state.addGreeting)
-  const storeQuickActions = useChatStore((state) => state.quickActions)
-  const aiResponseCount = useChatStore((state) => state.aiResponseCount)
-  const quickActionsUpdatedAtResponse = useChatStore((state) => state.quickActionsUpdatedAtResponse)
 
   const { isDesktop } = useScreenWidth()
   const router = useRouter()
@@ -334,7 +326,6 @@ export default function ChatScreen() {
     canBranchEdit,
     send,
     stopGeneration,
-    handleQuickAction,
   } = useChat(activeSessionId)
   const editingUserMessageId = useChatStore((state) => state.editingUserMessageId)
   const startEditUserMessage = useChatStore((state) => state.startEditUserMessage)
@@ -346,7 +337,7 @@ export default function ChatScreen() {
   const [editBranchConfirmOpen, setEditBranchConfirmOpen] = useState(false)
   const editBranchConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
-  /** Hide quick-action chips while a message is paused for VIN decode/confirm (avoids overlap with VIN assist UI). */
+  /** True while a message is paused for VIN decode/confirm (avoids overlap with VIN assist UI). */
   const pendingVinIntercept = useChatStore((state) => state._pendingSend != null)
   const isRetrying = useChatStore((state) => state.isRetrying)
   const contextPressure = useChatStore((state) => state.contextPressure)
@@ -453,9 +444,7 @@ export default function ChatScreen() {
       messages: [],
       streamingText: '',
       vinAssistItems: [],
-      quickActions: [],
       aiResponseCount: 0,
-      quickActionsUpdatedAtResponse: 0,
       activeTurnId: null,
       isStopRequested: false,
       panelInterruptionNotice: null,
@@ -630,9 +619,7 @@ export default function ChatScreen() {
       activeSessionId: null,
       messages: [],
       vinAssistItems: [],
-      quickActions: [],
       aiResponseCount: 0,
-      quickActionsUpdatedAtResponse: 0,
       activeTurnId: null,
       isStopRequested: false,
       panelInterruptionNotice: null,
@@ -646,31 +633,6 @@ export default function ChatScreen() {
     })
   }
 
-  const userMessageCount = messages.filter((message) => message.role === 'user').length
-  const hasRealExchange = userMessageCount >= 1
-  const hasDynamicActions = storeQuickActions.length > 0
-  const isStaleDynamic =
-    hasDynamicActions &&
-    aiResponseCount - quickActionsUpdatedAtResponse >= QUICK_ACTIONS_STALENESS_THRESHOLD
-  const isStaleStatic = !hasDynamicActions && aiResponseCount >= STATIC_ACTIONS_STALENESS_THRESHOLD
-
-  const effectiveQuickActions = useMemo(
-    () =>
-      hasDynamicActions
-        ? isStaleDynamic
-          ? []
-          : storeQuickActions
-        : isStaleStatic
-          ? []
-          : (FALLBACK_QUICK_ACTIONS[dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT] ?? []),
-    [hasDynamicActions, isStaleDynamic, storeQuickActions, isStaleStatic, dealState?.buyerContext]
-  )
-
-  const showQuickActions =
-    !showContextPicker &&
-    hasRealExchange &&
-    effectiveQuickActions.length > 0 &&
-    !pendingVinIntercept
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewItems = getPreviewItems(dealState, dismissedFlagIds)
   const activeDealForPreview = dealState ? getActiveDeal(dealState) : null
@@ -678,20 +640,6 @@ export default function ChatScreen() {
     sendError && editingUserMessageId
       ? `${sendError} Edit the highlighted message and send again.`
       : sendError
-
-  const quickActionsFooter = useMemo(
-    () =>
-      showQuickActions ? (
-        <YStack paddingHorizontal="$4" paddingTop="$2" paddingBottom="$1">
-          <QuickActions
-            actions={effectiveQuickActions}
-            onAction={handleQuickAction}
-            disabled={false}
-          />
-        </YStack>
-      ) : null,
-    [showQuickActions, effectiveQuickActions, handleQuickAction]
-  )
   const queuedItems = useMemo(
     () => pendingQueueItems.filter((item) => item.status === 'queued'),
     [pendingQueueItems]
@@ -788,9 +736,7 @@ export default function ChatScreen() {
           minHeight: 44,
           opacity: pressed ? 0.96 : 1,
           transform: [{ scale: pressed ? 0.995 : 1 }],
-          backgroundColor: 'transparent',
           borderWidth: 0,
-          borderColor: 'transparent',
           ...(Platform.OS === 'web'
             ? {
                 outlineWidth: 0,
@@ -897,7 +843,6 @@ export default function ChatScreen() {
             streamingText={streamingText}
             topPadding={mobileChatTopInset}
             bottomPadding={pendingVinIntercept ? 28 : 12}
-            footer={quickActionsFooter}
             scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
             onStartEditUserMessage={canBranchEdit ? startEditUserMessage : undefined}
             editingUserMessageId={editingUserMessageId}
@@ -1030,7 +975,7 @@ export default function ChatScreen() {
         <ChatInput
           onSend={handleDirectSend}
           disabled={false}
-          isGenerating={isSending || isPanelAnalyzing}
+          isGenerating={isSending}
           isStopRequested={isStopRequested}
           onStop={() => void stopGeneration()}
           placeholder={

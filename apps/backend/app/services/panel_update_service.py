@@ -2,21 +2,17 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.deal_state import DealState
 from app.models.enums import InsightsUpdateMode, MessageRole
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.user import User
 from app.schemas.chat import PanelRefreshResponse
-from app.services.deal_state import deal_state_to_dict
-from app.services.panel import generate_ai_panel_cards_with_usage
-from app.services.usage_tracking import SessionUsageSummary, build_request_usage
+from app.services.insights_followup import run_linked_insights_followup_to_completion
 from app.services.user_settings import get_or_create_user_settings
 
 logger = logging.getLogger(__name__)
@@ -47,10 +43,10 @@ async def refresh_panel_on_demand(
     session: ChatSession,
     session_id: str,
 ) -> PanelRefreshResponse:
-    deal_state = await db.scalar(
-        select(DealState).where(DealState.session_id == session_id)
-    )
-    if deal_state is None:
+    if (
+        await db.scalar(select(DealState.id).where(DealState.session_id == session_id))
+        is None
+    ):
         raise ValueError("Deal state not found")
 
     latest_assistant = await db.scalar(
@@ -65,46 +61,24 @@ async def refresh_panel_on_demand(
     if latest_assistant is None:
         raise RuntimeError("No assistant message available to refresh")
 
-    history_rows = (
-        (
-            await db.execute(
-                select(Message)
-                .where(Message.session_id == session_id)
-                .order_by(Message.created_at, Message.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    model_history = [{"role": row.role, "content": row.content} for row in history_rows]
-
-    cards, usage_summary = await generate_ai_panel_cards_with_usage(
-        await deal_state_to_dict(deal_state, db),
-        latest_assistant.content,
-        model_history,
+    result = await run_linked_insights_followup_to_completion(
+        db=db,
+        session=session,
         session_id=session_id,
+        assistant_message_id=latest_assistant.id,
+        force_rerun=True,
+        followup_enabled=True,
     )
-    deal_state.ai_panel_cards = cards
-    latest_assistant.panel_cards = cards
-
-    session_usage = SessionUsageSummary.from_dict(session.usage)
-    if usage_summary.get("requests", 0) > 0:
-        session_usage.add_request(
-            build_request_usage(
-                model=settings.CLAUDE_MODEL,
-                usage_summary=usage_summary,
-            )
-        )
-    session.usage = session_usage.to_dict()
-    session.updated_at = datetime.now(timezone.utc)
-    await db.commit()
 
     logger.info(
         "Panel refreshed on demand: session_id=%s, cards=%d",
         session_id,
-        len(cards),
+        len(result.cards),
     )
-    return PanelRefreshResponse(cards=cards, assistant_message_id=latest_assistant.id)
+    return PanelRefreshResponse(
+        cards=result.cards,
+        assistant_message_id=result.assistant_message_id,
+    )
 
 
 __all__ = [

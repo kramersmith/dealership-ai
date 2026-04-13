@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
-import type { AiPanelCard, Message, QuickAction, Session, VinAssistItem } from '@/lib/types'
+import type { AiPanelCard, Message, Session, VinAssistItem } from '@/lib/types'
 import { normalizeVinCandidate, normalizeVinCandidates, useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
+import { useUserSettingsStore } from '@/stores/userSettingsStore'
 
 const baseState = {
   activeSessionId: 'session-1',
@@ -13,9 +14,7 @@ const baseState = {
   isCreatingSession: false,
   isSending: false,
   sendError: null,
-  quickActions: [] as QuickAction[],
   aiResponseCount: 0,
-  quickActionsUpdatedAtResponse: 0,
   streamingText: '',
   isRetrying: false,
   isThinking: false,
@@ -77,6 +76,7 @@ describe('normalizeVinCandidate / normalizeVinCandidates', () => {
 
 describe('useChatStore.sendMessage', () => {
   const originalSendMessage = api.sendMessage
+  const originalStartInsightsFollowup = api.startInsightsFollowup
   const originalBranchFromUserMessage = api.branchFromUserMessage
   const originalGetSessions = api.getSessions
   const originalGetMessages = api.getMessages
@@ -87,10 +87,12 @@ describe('useChatStore.sendMessage', () => {
   beforeEach(() => {
     useChatStore.setState(baseState)
     api.getSessions = vi.fn().mockResolvedValue([])
+    api.startInsightsFollowup = vi.fn().mockResolvedValue(undefined)
   })
 
   afterEach(() => {
     api.sendMessage = originalSendMessage
+    api.startInsightsFollowup = originalStartInsightsFollowup
     api.branchFromUserMessage = originalBranchFromUserMessage
     api.getSessions = originalGetSessions
     api.getMessages = originalGetMessages
@@ -98,9 +100,11 @@ describe('useChatStore.sendMessage', () => {
     api.persistUserMessage = originalPersistUserMessage
     api.stopGeneration = originalStopGeneration
     useDealStore.setState({ dealState: null, isLoading: false, dismissedFlagIds: new Set() })
+    useUserSettingsStore.getState().reset()
   })
 
-  it('keeps prior deal AI panel cards visible until panel_done commits', async () => {
+  it('keeps prior deal AI panel cards visible until detached panel_done commits', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'live' })
     useDealStore.setState({
       dealState: {
         sessionId: 'session-1',
@@ -131,31 +135,11 @@ describe('useChatStore.sendMessage', () => {
     let cardsWhenPanelStarted: AiPanelCard[] | undefined
 
     api.sendMessage = vi.fn(
-      async (
-        sessionId,
-        content,
-        imageUri,
-        onChunk,
-        onToolResult,
-        onTextDone,
-        onRetry,
-        onStep,
-        onPanelStarted
-      ) => {
-        void sessionId
-        void content
-        void imageUri
-        void onChunk
-        void onToolResult
-        void onRetry
-        void onStep
-
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
         onTextDone?.('Assistant reply')
-        onPanelStarted?.()
-        cardsWhenPanelStarted = useDealStore.getState().dealState?.aiPanelCards
 
         return {
-          id: 'assistant-1',
+          id: '11111111-2222-4333-8444-555555555555',
           sessionId: 'session-1',
           role: 'assistant',
           content: 'Assistant reply',
@@ -163,6 +147,13 @@ describe('useChatStore.sendMessage', () => {
         }
       }
     ) as typeof api.sendMessage
+
+    api.startInsightsFollowup = vi.fn(
+      async (_sessionId, _assistantMessageId, _onToolResult, onPanelStarted) => {
+        onPanelStarted?.()
+        cardsWhenPanelStarted = useDealStore.getState().dealState?.aiPanelCards
+      }
+    ) as typeof api.startInsightsFollowup
 
     await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
 
@@ -177,7 +168,8 @@ describe('useChatStore.sendMessage', () => {
     ])
   })
 
-  it('panel_done tool result: binds panelCards + assistant id to latest assistant row and bumps commit generation', async () => {
+  it('detached panel_done binds panelCards + assistant id to the latest assistant row and bumps commit generation', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'live' })
     useDealStore.setState({
       dealState: {
         sessionId: 'session-1',
@@ -207,13 +199,8 @@ describe('useChatStore.sendMessage', () => {
     }
 
     api.sendMessage = vi.fn(
-      async (_sessionId, _content, _imageUri, _onChunk, onToolResult, onTextDone) => {
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
         onTextDone?.('Assistant reply')
-        // Simulate panel_done arriving via apiClient's atomic tool_result callback.
-        onToolResult?.({
-          name: 'update_insights_panel',
-          args: { cards: [card], assistantMessageId: serverId },
-        })
         return {
           id: serverId,
           sessionId: 'session-1',
@@ -223,6 +210,13 @@ describe('useChatStore.sendMessage', () => {
         }
       }
     ) as typeof api.sendMessage
+
+    api.startInsightsFollowup = vi.fn(async (_sessionId, _assistantMessageId, onToolResult) => {
+      onToolResult?.({
+        name: 'update_insights_panel',
+        args: { cards: [card], assistantMessageId: serverId },
+      })
+    }) as typeof api.startInsightsFollowup
 
     // Prevent post-stream refresh from clobbering local state. Rejecting is
     // handled by the store's .catch so the in-memory state is preserved.
@@ -241,7 +235,8 @@ describe('useChatStore.sendMessage', () => {
     expect(useDealStore.getState().dealState?.aiPanelCards).toEqual([card])
   })
 
-  it('panel_done stale guard: drops update when latest assistant row is a server UUID that does not match assistantMessageId', async () => {
+  it('detached panel_done stale guard drops updates for a different assistant row', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'live' })
     const existingServerId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     const staleTargetId = '99999999-8888-4777-8666-555555555555'
     const priorCard: AiPanelCard = {
@@ -286,31 +281,12 @@ describe('useChatStore.sendMessage', () => {
       dismissedFlagIds: new Set(),
     })
 
-    // Simulate a late panel_done from a *different* assistant turn arriving via
-    // apiClient's onToolResult callback. No onTextDone is emitted because we are
-    // testing the stale-guard path where the latest row is already a committed
-    // server UUID row that doesn't match.
     api.sendMessage = vi.fn(
-      async (_sessionId, _content, _imageUri, _onChunk, onToolResult, onTextDone) => {
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
         // Empty finalText keeps the seeded assistant row as the latest, without
         // appending a new one, and marks the turn finalized so the fallback
         // finalize path doesn't double the row.
         onTextDone?.('')
-        onToolResult?.({
-          name: 'update_insights_panel',
-          args: {
-            cards: [
-              {
-                kind: 'notes',
-                template: 'briefing',
-                title: 'Stale incoming',
-                content: { body: 'should be dropped' },
-                priority: 'high',
-              },
-            ],
-            assistantMessageId: staleTargetId,
-          },
-        })
         return {
           id: existingServerId,
           sessionId: 'session-1',
@@ -320,6 +296,24 @@ describe('useChatStore.sendMessage', () => {
         }
       }
     ) as typeof api.sendMessage
+
+    api.startInsightsFollowup = vi.fn(async (_sessionId, _assistantMessageId, onToolResult) => {
+      onToolResult?.({
+        name: 'update_insights_panel',
+        args: {
+          cards: [
+            {
+              kind: 'notes',
+              template: 'briefing',
+              title: 'Stale incoming',
+              content: { body: 'should be dropped' },
+              priority: 'high',
+            },
+          ],
+          assistantMessageId: staleTargetId,
+        },
+      })
+    }) as typeof api.startInsightsFollowup
 
     // Prevent post-stream refresh from clobbering local state.
     api.getMessages = vi.fn().mockRejectedValue(new Error('no fetch in test'))
@@ -338,41 +332,14 @@ describe('useChatStore.sendMessage', () => {
     expect(useDealStore.getState().dealState?.aiPanelCards).toEqual([priorCard])
   })
 
-  it('tracks panel analysis while the panel phase is active', async () => {
+  it('tracks panel analysis while the detached follow-up is active', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'live' })
     let finishPanel: (() => void) | undefined
     api.sendMessage = vi.fn(
-      async (
-        sessionId,
-        content,
-        imageUri,
-        onChunk,
-        onToolResult,
-        onTextDone,
-        onRetry,
-        onStep,
-        onPanelStarted,
-        onPanelFinished
-      ) => {
-        void sessionId
-        void content
-        void imageUri
-        void onChunk
-        void onToolResult
-        void onRetry
-        void onStep
-
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
         onTextDone?.('Assistant reply')
-        onPanelStarted?.()
-
-        await new Promise<void>((resolve) => {
-          finishPanel = () => {
-            onPanelFinished?.()
-            resolve()
-          }
-        })
-
         return {
-          id: 'assistant-1',
+          id: '11111111-2222-4333-8444-555555555555',
           sessionId: 'session-1',
           role: 'assistant',
           content: 'Assistant reply',
@@ -381,12 +348,25 @@ describe('useChatStore.sendMessage', () => {
       }
     ) as typeof api.sendMessage
 
+    api.startInsightsFollowup = vi.fn(
+      async (_sessionId, _assistantMessageId, _onToolResult, onPanelStarted, onPanelFinished) => {
+        onPanelStarted?.()
+        await new Promise<void>((resolve) => {
+          finishPanel = () => {
+            onPanelFinished?.()
+            resolve()
+          }
+        })
+      }
+    ) as typeof api.startInsightsFollowup
+
     const sendPromise = useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+    await sendPromise
 
     expect(useChatStore.getState().isPanelAnalyzing).toBe(true)
 
     finishPanel?.()
-    await sendPromise
+    await Promise.resolve()
 
     const state = useChatStore.getState()
     expect(state.isPanelAnalyzing).toBe(false)
@@ -394,39 +374,64 @@ describe('useChatStore.sendMessage', () => {
     expect(state.messages.at(-1)?.content).toBe('Assistant reply')
   })
 
-  it('clears panel analysis state when the send fails after panel start', async () => {
+  it('clears panel analysis state when detached follow-up fails after panel start', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'live' })
     api.sendMessage = vi.fn(
-      async (
-        sessionId,
-        content,
-        imageUri,
-        onChunk,
-        onToolResult,
-        onTextDone,
-        onRetry,
-        onStep,
-        onPanelStarted
-      ) => {
-        void sessionId
-        void content
-        void imageUri
-        void onChunk
-        void onToolResult
-        void onTextDone
-        void onRetry
-        void onStep
-
-        onPanelStarted?.()
-        throw new Error('panel request failed')
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
+        onTextDone?.('Assistant reply')
+        return {
+          id: '11111111-2222-4333-8444-555555555555',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'Assistant reply',
+          createdAt: new Date().toISOString(),
+        }
       }
     ) as typeof api.sendMessage
 
+    api.startInsightsFollowup = vi.fn(
+      async (_sessionId, _assistantMessageId, _onToolResult, onPanelStarted) => {
+        onPanelStarted?.()
+        throw new Error('panel request failed')
+      }
+    ) as typeof api.startInsightsFollowup
+
     await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+    await Promise.resolve()
 
     const state = useChatStore.getState()
     expect(state.isPanelAnalyzing).toBe(false)
     expect(state.isSending).toBe(false)
-    expect(state.sendError).toBe('panel request failed')
+    expect(state.sendError).toBeNull()
+    expect(state.panelInterruptionNotice).toMatchObject({ reason: 'error' })
+  })
+
+  it('skips detached insights follow-up when insights mode is paused', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'paused' })
+
+    api.sendMessage = vi.fn(
+      async (_sessionId, _content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
+        onTextDone?.('Assistant reply')
+        return {
+          id: '11111111-2222-4333-8444-555555555555',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: 'Assistant reply',
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    const startInsightsFollowup = vi.fn().mockResolvedValue(undefined)
+    api.startInsightsFollowup = startInsightsFollowup as typeof api.startInsightsFollowup
+
+    await useChatStore.getState().sendMessage('hello', undefined, undefined, true)
+    await Promise.resolve()
+
+    const state = useChatStore.getState()
+    expect(startInsightsFollowup).not.toHaveBeenCalled()
+    expect(state.isPanelAnalyzing).toBe(false)
+    expect(state.panelInterruptionNotice).toBeNull()
   })
 
   it('sets isCompacting during compaction and clears it after send completes', async () => {
@@ -624,6 +629,18 @@ describe('useChatStore.sendMessage', () => {
     expect(useChatStore.getState().suppressContextWarningUntilUsageRefresh).toBe(false)
   })
 
+  // Detached insights followup trigger/skip/error behavior is already covered
+  // by the existing tests above (panel_done binding, stale guard, analysis
+  // tracking, failure cleanup). Those tests exercise the same code path with
+  // proven mock patterns.
+
+  // Note: detached followup callback behavior (panel_done binding, stale guard,
+  // interruption tracking, analysis state) is covered by the existing tests above:
+  // - "detached panel_done binds panelCards + assistant id..."
+  // - "detached panel_done stale guard drops updates..."
+  // - "tracks panel analysis while the detached follow-up is active"
+  // - "clears panel analysis state when detached follow-up fails..."
+
   it('stopGeneration finalizes partial assistant text as interrupted', async () => {
     let triggerInterrupt: (() => void) | undefined
     api.sendMessage = vi.fn(
@@ -759,7 +776,6 @@ describe('useChatStore.sendMessage', () => {
           createdAt,
         },
       ],
-      quickActions: [{ label: 'Old action', prompt: 'stale' }],
       editingUserMessageId: anchorId,
     })
 
@@ -824,7 +840,6 @@ describe('useChatStore.sendMessage', () => {
     })
 
     let messagesSeenAtApiBoundary: string[] = []
-    let quickActionsSeenAtApiBoundary: QuickAction[] = []
     let dealStateSeenAtApiBoundary = useDealStore.getState().dealState
     api.branchFromUserMessage = vi.fn(
       async (
@@ -839,7 +854,6 @@ describe('useChatStore.sendMessage', () => {
         messagesSeenAtApiBoundary = useChatStore
           .getState()
           .messages.map((message) => message.content)
-        quickActionsSeenAtApiBoundary = useChatStore.getState().quickActions
         dealStateSeenAtApiBoundary = useDealStore.getState().dealState
         expect(anchorUserMessageId).toBe(anchorId)
         expect(content).toBe('Edited question')
@@ -893,7 +907,6 @@ describe('useChatStore.sendMessage', () => {
     await useChatStore.getState().sendBranchFromEdit('Edited question')
 
     expect(messagesSeenAtApiBoundary).toEqual(['Edited question'])
-    expect(quickActionsSeenAtApiBoundary).toEqual([])
     expect(dealStateSeenAtApiBoundary).toMatchObject({
       buyerContext: 'reviewing_deal',
       activeDealId: null,
@@ -1097,7 +1110,6 @@ describe('useChatStore.sendMessage', () => {
         updatedAt: createdAt,
       },
     ]
-    const originalQuickActions: QuickAction[] = [{ label: 'Ask for OTD', prompt: 'ask for OTD' }]
     const originalDealState = {
       sessionId: 'session-1',
       buyerContext: 'researching' as const,
@@ -1152,8 +1164,6 @@ describe('useChatStore.sendMessage', () => {
       ...baseState,
       messages: originalMessages,
       vinAssistItems: originalVinAssistItems,
-      quickActions: originalQuickActions,
-      quickActionsUpdatedAtResponse: 2,
       editingUserMessageId: anchorId,
     })
 
@@ -1360,6 +1370,91 @@ describe('useChatStore.sendMessage', () => {
     }
   })
 
+  it('waits for detached follow-up completion before dispatching the next queued turn', async () => {
+    useUserSettingsStore.setState({ insightsUpdateMode: 'live' })
+
+    const startedContents: string[] = []
+    let releaseFirstFollowup: (() => void) | undefined
+    let followupCalls = 0
+
+    api.sendMessage = vi.fn(
+      async (_sessionId, content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
+        startedContents.push(content)
+        onTextDone?.(`reply:${content}`)
+        return {
+          id:
+            content === 'first'
+              ? '11111111-2222-4333-8444-555555555555'
+              : '66666666-7777-4888-8999-000000000000',
+          sessionId: 'session-1',
+          role: 'assistant',
+          content: `reply:${content}`,
+          createdAt: new Date().toISOString(),
+        }
+      }
+    ) as typeof api.sendMessage
+
+    api.startInsightsFollowup = vi.fn(
+      async (_sessionId, _assistantMessageId, _onToolResult, onPanelStarted, onPanelFinished) => {
+        followupCalls += 1
+        onPanelStarted?.()
+        if (followupCalls === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstFollowup = () => {
+              onPanelFinished?.()
+              resolve()
+            }
+          })
+          return
+        }
+        onPanelFinished?.()
+      }
+    ) as typeof api.startInsightsFollowup
+
+    await useChatStore
+      .getState()
+      .sendMessage('first', undefined, undefined, true, undefined, 'typed')
+    await useChatStore
+      .getState()
+      .sendMessage('second', undefined, undefined, true, undefined, 'typed')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(startedContents).toEqual(['first'])
+    expect(useChatStore.getState().isPanelAnalyzing).toBe(true)
+    expect(
+      (useChatStore.getState().queueBySession['session-1'] ?? []).some(
+        (item) => item.payload.content === 'second' && item.status === 'queued'
+      )
+    ).toBe(true)
+
+    releaseFirstFollowup?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(startedContents).toEqual(['first', 'second'])
+  })
+
+  it('startEditUserMessage refuses while detached insights follow-up is active', () => {
+    const anchorId = '55555555-5555-4555-8555-555555555555'
+    useChatStore.setState({
+      ...baseState,
+      isPanelAnalyzing: true,
+      messages: [
+        {
+          id: anchorId,
+          sessionId: 'session-1',
+          role: 'user',
+          content: 'Original question',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+
+    useChatStore.getState().startEditUserMessage(anchorId)
+
+    expect(useChatStore.getState().editingUserMessageId).toBeNull()
+  })
+
   it('blocks branch edit sends while queue has pending items', async () => {
     const anchorId = '77777777-7777-4777-8777-777777777777'
     const createdAt = new Date().toISOString()
@@ -1398,6 +1493,36 @@ describe('useChatStore.sendMessage', () => {
     expect(branchSpy).not.toHaveBeenCalled()
     expect(useChatStore.getState().sendError).toContain(
       'Clear queued messages before editing from here'
+    )
+  })
+
+  it('blocks branch edit sends while detached insights follow-up is active', async () => {
+    const anchorId = '88888888-8888-4888-8888-888888888888'
+    const createdAt = new Date().toISOString()
+    const branchSpy = vi.fn()
+    api.branchFromUserMessage = branchSpy as typeof api.branchFromUserMessage
+
+    useChatStore.setState({
+      ...baseState,
+      activeSessionId: 'session-1',
+      isPanelAnalyzing: true,
+      editingUserMessageId: anchorId,
+      messages: [
+        {
+          id: anchorId,
+          sessionId: 'session-1',
+          role: 'user',
+          content: 'Original',
+          createdAt,
+        },
+      ],
+    })
+
+    await useChatStore.getState().sendBranchFromEdit('Edited')
+
+    expect(branchSpy).not.toHaveBeenCalled()
+    expect(useChatStore.getState().sendError).toContain(
+      'Wait for the current insights refresh to finish before editing from here.'
     )
   })
 

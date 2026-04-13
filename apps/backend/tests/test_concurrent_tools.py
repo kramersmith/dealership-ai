@@ -67,14 +67,14 @@ def test_build_execution_plan_single_tool():
 def test_build_execution_plan_all_same_priority():
     blocks = [
         _block("update_deal_numbers", "t1"),
-        _block("update_quick_actions", "t2"),
+        _block("update_checklist", "t2"),
         _block("update_deal_health", "t3"),
     ]
     plan = build_execution_plan(blocks)
     assert len(plan) == 2
     assert [b["name"] for b in plan[0]] == [
         "update_deal_numbers",
-        "update_quick_actions",
+        "update_checklist",
     ]
     assert [b["name"] for b in plan[1]] == ["update_deal_health"]
 
@@ -84,7 +84,7 @@ def test_build_execution_plan_mixed_priorities():
         _block("update_deal_numbers", "t1"),  # priority 2
         _block("set_vehicle", "t2"),  # priority 0
         _block("create_deal", "t3"),  # priority 1
-        _block("update_quick_actions", "t4"),  # priority 2
+        _block("update_checklist", "t4"),  # priority 2
     ]
     plan = build_execution_plan(blocks)
     assert len(plan) == 3
@@ -95,13 +95,13 @@ def test_build_execution_plan_mixed_priorities():
     # Priority 2 last, preserving original call order
     assert [b["name"] for b in plan[2]] == [
         "update_deal_numbers",
-        "update_quick_actions",
+        "update_checklist",
     ]
 
 
 def test_build_execution_plan_preserves_order_within_batch():
     blocks = [
-        _block("update_quick_actions", "t1"),
+        _block("update_checklist", "t1"),
         _block("update_deal_health", "t2"),
         _block("update_deal_numbers", "t3"),
     ]
@@ -194,8 +194,8 @@ async def test_execute_tool_batch_multiple_independent_tools(adb):
         },
         {
             "id": "t2",
-            "name": "update_quick_actions",
-            "input": {"actions": [{"label": "Ask", "prompt": "Ask about price"}]},
+            "name": "update_buyer_context",
+            "input": {"buyer_context": "at_dealership"},
         },
         {
             "id": "t3",
@@ -276,7 +276,7 @@ async def test_execute_tool_batch_ordered_yielding(adb):
             "input": {"buyer_context": "at_dealership"},
         },
         {"id": "t2", "name": "update_checklist", "input": {"items": []}},
-        {"id": "t3", "name": "update_quick_actions", "input": {"actions": []}},
+        {"id": "t3", "name": "update_deal_numbers", "input": {"listing_price": 41000}},
     ]
 
     result_ids = []

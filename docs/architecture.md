@@ -57,7 +57,7 @@ dealership-ai/
 │   │   │   │                    # VehicleIntelligencePanel, WarningCard, TipCard,
 │   │   │   │                    # SuccessCard, AiChecklistCard (read-only + progress bar),
 │   │   │   │                    # AiComparisonCard, CompactPhaseIndicator,
-│   │   │   │                    # ThinkingIndicator, PanelMarkdown, QuickActions
+│   │   │   │                    # ThinkingIndicator, PanelMarkdown
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard, ScreenHeader, HeaderIconButton, HoverLiftFrame, ScrambleText
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
@@ -74,7 +74,7 @@ dealership-ai/
 │   │       ├── theme/
 │   │       │   ├── tokens.ts    # Centralized color palette + token colors
 │   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
-│   │       ├── constants.ts     # APP_NAME, WEB_FONT_FAMILY, buyer context defaults, deal phases, fallback quick actions, APR thresholds, TIMER_TIPS, SCORE_DESCRIPTIONS, MAX_INSIGHTS_PREVIEW_ITEMS, animation/layout constants
+│   │       ├── constants.ts     # APP_NAME, WEB_FONT_FAMILY, buyer context defaults, deal phases, APR thresholds, TIMER_TIPS, SCORE_DESCRIPTIONS, MAX_INSIGHTS_PREVIEW_ITEMS, animation/layout constants
 │   │       ├── headerTitles.ts  # Vehicle-aware header title resolution
 │   │       ├── dev/mockPanelUpdates.ts # Dev-only mock panel updates for animation testing
 │   │       ├── dealComputations.ts # Derived deal metrics (savings, computeOfferDelta, getNextActionRecommendation)
@@ -101,13 +101,14 @@ dealership-ai/
 │       │       ├── tool_validation.py  # Semantic validation for chat tool inputs (post-parse, pre-DB)
 │       │       ├── prompt_cache_signature.py  # SHA-256 fingerprinting for prompt cache break detection
 │       │       ├── turn_context.py  # TurnContext dataclass — unified execution context for step loop + tool execution
-│       │       ├── buyer_chat_stream.py  # Shared buyer-turn SSE pipeline for /message and /branch
+│       │       ├── buyer_chat_stream.py  # Shared buyer-turn SSE pipeline for /message and /branch (chat phase only)
+│       │       ├── insights_followup.py  # Detached buyer insights follow-up SSE pipeline + durable job lifecycle
 │       │       ├── chat_harness_log.py  # chat_turn_summary payload builder + verbose harness logging
 │       │       ├── post_chat_processing.py  # Preview + title updates after chat
 │       │       ├── session_branch.py  # Branch prepare/reset semantics for edit-from-here
 │       │       ├── title_generator.py       # Deterministic vehicle titles + LLM fallback
 │       │       ├── vehicle_intelligence.py  # NHTSA vPIC VIN decode, VinAudit history/valuation, confirmation-gated decode promotion
-│       │       ├── panel_update_service.py  # Panel update policy resolution (per-user insights mode) + on-demand refresh
+│       │       ├── panel_update_service.py  # Panel update policy resolution (per-user insights mode) + on-demand refresh via shared follow-up pipeline
 │       │       ├── user_settings.py         # get_or_create_user_settings, settings response builder
 │       │       └── simulation.py # Dealer training AI logic
 │       ├── alembic/             # DB migrations
@@ -130,6 +131,8 @@ dealership-ai/
 **chat_sessions** — (id, user_id, title, auto_title, last_message_preview, session_type [SessionType enum: buyer_chat/dealer_sim], linked_session_ids JSON, usage JSON, compaction_state JSON nullable, timestamps). `usage` stores the cumulative per-session Claude ledger: request counts, token totals, cache token totals, per-model totals, and computed USD cost. `compaction_state` holds rolling summary + verbatim-tail pointer for long-chat projection (ADR 0017). Cascade deletes: deleting a session removes its messages, deal_state, simulation, and vehicles (which cascade to their decodes, history reports, and valuations). The delete route nulls `active_deal_id` before cascade to avoid FK constraint errors.
 
 **messages** — (id, session_id, role [MessageRole enum: user/assistant/system], content, image_url, tool_calls JSON, usage JSON, completion_status [MessageCompletionStatus enum: complete/interrupted/failed], interrupted_at nullable, interrupted_reason nullable, created_at)
+
+**insights_followup_jobs** — durable follow-up job rows keyed by `(session_id, assistant_message_id, kind)` for detached insights work. Tracks overall follow-up `status`, per-step status (`reconcile_status`, `panel_status`), attempts, cancellation/error details, merged usage, and timestamps.
 
 **vehicles** — (id, session_id, role [VehicleRole enum: primary/candidate/trade_in], year, make, model, trim, cab_style, bed_length, vin, mileage, color, engine, identity_confirmation_status [IdentityConfirmationStatus], identity_confirmed_at, identity_confirmation_source, timestamps). Multiple vehicles per session, with role distinguishing committed pick (`primary`), known-but-uncommitted shopping candidate (`candidate`, e.g. inserted by VIN intercept), and trade-in. Deal routing treats `primary` and `candidate` as the unified "shopping" set. Candidate vehicles do NOT steal `active_deal_id` focus on creation (ADR 0018). Canonical identity fields remain user-stated or user-confirmed; VIN decode records stay in `vehicle_decodes` until explicit confirmation promotes them into the main row. Has cascade delete-orphan relationships to vehicle_decodes, vehicle_history_reports, and vehicle_valuations.
 
@@ -187,6 +190,9 @@ All domain values use Python `StrEnum` for type safety:
 | `AiCardKind` | `vehicle`, `numbers`, `phase`, `warning`, `notes`, `comparison`, `checklist`, `success`, `what_changed`, `what_still_needs_confirming`, `dealer_read`, `your_leverage`, `next_best_move`, `if_you_say_yes`, `trade_off`, `savings_so_far` (note: `comparison` and `trade_off` are no longer emitted to the panel — they render as markdown tables in chat per ADR 0018) |
 | `AiCardPriority` | `critical`, `high`, `normal`, `low` |
 | `InsightsUpdateMode` | `live`, `paused` |
+| `InsightsFollowupKind` | `linked_reconcile_panel` |
+| `InsightsFollowupStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
+| `InsightsFollowupStepStatus` | `pending`, `running`, `succeeded`, `failed`, `skipped`, `cancelled` |
 | `IdentityConfirmationStatus` | `unconfirmed`, `confirmed`, `rejected` |
 | `IntelligenceProvider` | `nhtsa_vpic`, `vinaudit` |
 | `IntelligenceStatus` | `success`, `partial` |
@@ -213,8 +219,9 @@ GET    /auth/settings                   # Read persisted user settings (insights
 PATCH  /auth/settings                   # Update persisted user settings
 
 POST   /chat/{session_id}/user-message # Pre-persist user message (no stream) — used by VIN intercept gated flows (ADR 0019)
-POST   /chat/{session_id}/message    # Send message → SSE stream (turn_started/text/tool_result/retry/step/error + terminal done|interrupted + compaction_* + panel_started/panel_done/panel_interrupted/panel_error); accepts optional existing_user_message_id to resume on the latest pre-persisted row
-POST   /chat/{session_id}/messages/{message_id}/branch # Edit-from-here: delete messages after anchor when any; always reset commerce/usage/compaction; then same SSE stream (ADR 0020)
+POST   /chat/{session_id}/message    # Send message → SSE chat stream (turn_started/text/tool_result/retry/step/error + terminal done|interrupted + compaction_*); accepts optional existing_user_message_id to resume on the latest pre-persisted row
+POST   /chat/{session_id}/insights-followup # Detached insights follow-up SSE stream for a persisted assistant turn
+POST   /chat/{session_id}/messages/{message_id}/branch # Edit-from-here: delete messages after anchor when any; always reset commerce/usage/compaction; then same chat SSE stream (ADR 0020)
 POST   /chat/{session_id}/stop       # Cancel active turn (optional turn_id guard)
 POST   /chat/{session_id}/panel-refresh # Regenerate panel cards for latest assistant turn without a new chat turn
 POST   /chat/{session_id}/photo      # Upload deal sheet → Claude vision analysis
@@ -245,12 +252,16 @@ POST   /simulations/{id}/complete     # End + score
 
 ## Core Architecture: Step Loop → AI Panel Cards
 
+**Buyer turn lifecycle (ordered SSE, `done` vs panel, client tool flush):** see [buyer-chat-turn.md](buyer-chat-turn.md).
+
 **Context compaction (buyer chat, long sessions):** Before persisting the new user message on `POST /api/chat/{id}/message`, the stream may run `run_auto_compaction_if_needed()` (`compaction.py`) when heuristic input estimates exceed policy thresholds. That updates `ChatSession.compaction_state`, may insert a `system` notice row, and emits `compaction_*` SSE events. `build_messages()` accepts an optional `compaction_prefix` so the rolling summary participates in the model-facing transcript without deleting DB history (ADR 0017). `GET .../messages` returns `context_pressure` for the same estimate.
 
-**Shared buyer-turn service:** `app/services/buyer_chat_stream.py` owns the shared SSE turn pipeline for both `POST /message` and `POST /messages/{id}/branch`: compaction, user-row insert/update, chat step loop, assistant persistence, panel streaming, usage aggregation, and final metadata updates. The branch route performs its prepare/reset transaction first (`session_branch.py`) and then hands control to the same turn streamer.
+**Shared buyer-turn service:** `app/services/buyer_chat_stream.py` owns the shared chat-phase SSE pipeline for both `POST /message` and `POST /messages/{id}/branch`: compaction, user-row insert/update, chat step loop, assistant persistence, chat-phase usage aggregation, and final metadata updates. The branch route performs its prepare/reset transaction first (`session_branch.py`) and then hands control to the same turn streamer. The route layer resolves the user's insights policy up front so paused turns can withhold persistence-affecting buyer tools.
+
+**Detached insights follow-up:** `app/services/insights_followup.py` owns the follow-up SSE pipeline for `POST /chat/{id}/insights-followup`. It creates or reuses a durable `insights_followup_jobs` row for a persisted assistant message, then runs the current reconcile-and-panel phase and merges that follow-up usage back into the assistant row and session ledger. The explicit `POST /chat/{id}/panel-refresh` path reuses this same pipeline against the latest assistant turn, but forces a rerun instead of short-circuiting on a previously succeeded job.
 
 **Extraction architecture:** The backend uses a two-pass extraction approach with parallel subagents:
-1. **Factual extractor** — extracts structured data (vehicle, deal numbers, scorecard, phase, buyer context, checklist, quick actions) from conversation
+1. **Factual extractor** — extracts structured data (vehicle, deal numbers, scorecard, phase, buyer context, checklist) from conversation
 2. **Analyst subagent** — runs in parallel to generate deal health assessment, red flags, information gaps, and AI panel cards
 3. **Situation assessor** — runs in parallel to maintain the buyer's negotiation context (stance, situation summary, key numbers, scripts, pending actions, leverage). Only updates when the situation meaningfully changes. Uses `auto` tool choice so it can skip updates for tangential exchanges.
 4. Results are merged and applied to the database via `apply_extraction()` in `deal_state.py`. Negotiation context is applied separately and emitted as an `update_negotiation_context` tool_result SSE event.
@@ -268,18 +279,17 @@ POST   /simulations/{id}/complete     # End + score
 5. Each step streams `text` chunks and accumulates `tool_use` blocks. If the transport stalls or the model hits `stop_reason == "max_tokens"`, the backend emits a `retry` SSE event and replays the step with a reset signal for the client.
 6. When a step finishes with tool calls, the backend groups them into priority-ordered batches (structural → context switches → field updates → deal health) and executes each batch concurrently. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction. Results are emitted as `tool_result` SSE events, appended back into the Claude transcript, and the loop continues.
 7. Step-control logic (`chat_tool_choice_for_step` in `claude/tool_policy.py`) bounds tool rounds per buyer message: step 0 uses `auto` tool choice, step 1 conditionally allows tools (only if the previous step had errors or produced no visible text and no dashboard-only tools), and step 2+ forces `none` (text-only). This prevents model self-dialogue loops.
-8. The shared buyer-turn service persists the assistant message before emitting `done`, so the delivered reply already has a durable row when panel streaming begins. If that assistant persistence fails, the service emits a safe `error` event and removes any newly inserted orphan user row.
-9. When the step loop reaches a text-only completion, the backend emits `done` so input can unblock. The panel orchestration service then evaluates per-user `insights_update_mode`.
-10. If `insights_update_mode=live`, asynchronous panel generation runs in the same SSE stream and emits `panel_started` plus terminal `panel_done` (atomic canonical `cards` + `assistant_message_id`) or `panel_error` / `panel_interrupted`. If `insights_update_mode=paused`, normal sends skip panel generation entirely; users trigger `POST /chat/{id}/panel-refresh` explicitly.
+8. The shared buyer-turn service persists the assistant message before emitting `done`, so the delivered reply already has a durable row before the chat stream closes. If that assistant persistence fails, the service emits a safe `error` event and removes any newly inserted orphan user row.
+9. When the step loop reaches a text-only completion, the backend emits `done` with `assistant_message_id` so input can unblock and the client can start detached follow-up if needed.
+10. After `done`, the frontend opens `POST /chat/{id}/insights-followup` for completed buyer replies when `insights_update_mode=live`. That detached stream emits `panel_started`, then terminal `panel_done` (atomic canonical `cards` + `assistant_message_id`) or `panel_error`. If `insights_update_mode=paused`, the client skips the automatic follow-up and users trigger `POST /chat/{id}/panel-refresh` explicitly for reconcile/panel reruns.
 11. Panel `max_tokens` starts at 4096 and escalates to 8192 on bounded truncation retries. The canonical panel contract uses per-kind instance caps (`vehicle` up to 6, all other kinds capped at 1) with identity-based dedupe (VIN for vehicles, `kind` for everything else) — there is no global panel length cap. Panel kinds `comparison` and `trade_off` are filtered out of panel output: side-by-side comparisons render as markdown tables in chat. A `phase` card (negotiation stance + situation) is always first. Panel single-focus enforcement collapses vehicle cards to the active vehicle when there is one shopping vehicle or an explicit focus signal (ADR 0018).
-12. Backend folds chat-phase and panel-phase usage into the session-level usage ledger and updates assistant-message usage/tool-calls after panel completion.
-13. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-14. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.
-15. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events.
-16. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
-17. Frontend `apiClient.ts` uses a shared `streamBuyerChatSse()` parser for both normal sends and branch sends. It preserves structured backend 4xx details, hides raw 5xx/proxy bodies behind generic messages, treats `error` events before `done` as fatal, and treats `error` events after `done` as non-fatal warnings so the delivered reply stays on screen. Tool result callbacks are still deferred until after `done`, and malformed post-`done` SSE payloads are ignored so panel cleanup can finish safely.
-18. On normal-send failure, optimistic user rows are marked failed or rolled back as appropriate. On branch failure, the frontend treats the server as authoritative, refreshes history/deal state, and keeps the branch truncation semantics aligned with the committed prepare step.
-19. **Client-side message queue:** Users can send follow-up messages while the AI is processing. Messages are queued in the Zustand chat store (`queueBySession`) and dispatched FIFO after each turn completes. QueuePreviewCard renders up to 3 pending items above the composer. ChatInput and QuickActions remain always enabled. Branch edit is blocked while the queue has pending items. See ADR 0022.
+12. Backend folds chat-phase usage into the assistant row on send, then merges detached follow-up usage into the same assistant row and session-level usage ledger when follow-up completes.
+13. **Two-pass extraction:** Factual extractor, analyst, and situation assessor subagents run in parallel via Haiku to extract structured data, generate AI panel cards, and maintain negotiation context.
+14. `apply_extraction()` persists results to Vehicle, Deal, and DealState tables and emits `tool_result` SSE events.
+15. **Post-chat processing:** `update_session_metadata()` updates `last_message_preview` and auto-generates a session title (deterministic vehicle title from `set_vehicle`, or LLM fallback via Haiku) when `auto_title` is true.
+16. Frontend `apiClient.ts` uses a shared `streamBuyerChatSse()` parser for both normal sends and branch sends, and a separate `streamInsightsFollowupSse()` parser for detached post-response work. The send parser preserves structured backend 4xx details, hides raw 5xx/proxy bodies behind generic messages, treats `error` events before `done` as fatal, and treats `error` events after `done` as non-fatal warnings so the delivered reply stays on screen. Main-turn tool result callbacks are still deferred until after `done`; detached follow-up can emit reconcile outputs before `panel_done`.
+17. On normal-send failure, optimistic user rows are marked failed or rolled back as appropriate. On branch failure, the frontend treats the server as authoritative, refreshes history/deal state, and keeps the branch truncation semantics aligned with the committed prepare step.
+18. **Client-side message queue:** Users can send follow-up messages while the AI is processing. Messages are queued in the Zustand chat store (`queueBySession`) and dispatched FIFO after each turn completes. QueuePreviewCard renders up to 3 pending items above the composer. ChatInput remains enabled. Branch edit is blocked while the queue has pending items. See ADR 0022.
 
 ---
 
@@ -296,7 +306,7 @@ POST   /simulations/{id}/complete     # End + score
 2. User taps a card (or skips by typing/uploading directly, which defaults to `researching`)
 3. Frontend calls `POST /api/sessions` with the selected `buyer_context`
 4. A hardcoded greeting message (per context) is injected client-side — no LLM call needed
-5. Quick actions, dashboard panel ordering, and system prompt preamble all adapt to the selected context
+5. Dashboard panel ordering and system prompt preamble adapt to the selected context
 6. If the buyer has only one session, the chats screen navigates directly to the chat (single-session fast-path)
 
 **Photo analysis:** Client uploads image → sends URL to backend → Claude vision extracts all numbers/details → calls multiple tools → dashboard populates in one shot.
@@ -310,7 +320,7 @@ POST   /simulations/{id}/complete     # End + score
 - **SSE over WebSockets** — simpler, maps directly to Claude's streaming API, no connection upgrade issues on Railway/Fly
 - **Zustand over Redux** — minimal boilerplate, perfect for this scope
 - **Single mutable deal_states row over event log** — simpler reads for MVP, can add history table later
-- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (quick action generation, session title generation, deal assessment safety net)
+- **Claude Sonnet 4.6** (`claude-sonnet-4-6`) — primary model for chat, with max_tokens: 4096 and history truncated to last 20 messages. **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) — fast model for lightweight tasks (session title generation and deal assessment safety net)
 - **Cost control** — track token usage per user, enforce daily limits
 
 ---
@@ -322,7 +332,7 @@ POST   /simulations/{id}/complete     # End + score
 | 0 | Project scaffolding (Expo, FastAPI, PostgreSQL, env) | 1 |
 | 1 | Auth + session CRUD | 2-3 |
 | 2 | **Core chat loop** — text chat, Claude with tools, SSE streaming, NumbersSummary + DealPhaseIndicator updating live | 4-7 |
-| 3 | Remaining dashboard UI — scorecard, vehicle card, checklist, timer, quick actions, session linking | 8-10 |
+| 3 | Remaining dashboard UI — scorecard, vehicle card, checklist, timer, session linking | 8-10 |
 | 4 | Photo upload (Claude vision) + voice input (expo-speech-recognition) | 11-13 |
 | 5 | Dealer training simulations | 14-16 |
 | 6 | Polish + deploy (error handling, rate limiting, Railway, EAS builds, Vercel) | 17-20 |

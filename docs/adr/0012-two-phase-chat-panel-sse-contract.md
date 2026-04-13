@@ -1,6 +1,6 @@
 # ADR-0012: Two-Phase SSE Contract for Chat-First Panel Streaming
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0025](0025-detached-insights-followup-jobs-and-paused-tool-gating.md)
 **Date:** 2026-04
 **Deciders:** Kramer Smith
 

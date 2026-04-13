@@ -119,10 +119,10 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 ### Journey 2: At the Dealership (Buyer)
 
 1. Buyer arrives at the dealership and opens their existing session (or starts a new session and selects "At the dealership" from the welcome prompts).
-2. Dashboard reorders to prioritize scorecard and numbers. Quick actions show dealership-specific options ("What Do I Say?", "Should I Walk?", "They're Pressuring Me"). Checklist updates with on-site items.
+2. Dashboard reorders to prioritize scorecard and numbers. Checklist updates with on-site items.
 3. Buyer chats with the AI as the deal progresses: "They're offering $34,000" or "The rate they quoted is 7.5%."
 4. AI automatically updates the numbers dashboard, scorecard (green/yellow/red), and checklist via tool calls.
-5. Buyer uses quick actions: "What do I say?", "Should I walk?", or "Analyze this photo."
+5. Buyer asks tactical follow-up questions in chat such as "What do I say?", "Should I walk?", or "Analyze this photo."
 6. If the buyer realizes an earlier message had the wrong numbers or wording, they can use an explicit "Edit from here" action on that earlier user message, confirm the destructive scope, and continue the conversation from that point with later replies removed.
 7. Buyer photographs the deal sheet. AI decodes it, populates all dashboard fields, and flags discrepancies.
 8. Timer tracks time at the dealership. AI alerts if wait time suggests a pressure tactic.
@@ -131,7 +131,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 ### Journey 3: Deal Decoder Photo Upload (Buyer)
 
 1. Buyer is handed a buyer's order, F&I worksheet, or payment breakdown.
-2. Taps "Analyze this photo" quick action and photographs the document.
+2. Taps the photo input and photographs the document.
 3. AI processes the image using multimodal vision, extracts all numbers and terms.
 4. AI explains the deal in plain English: vehicle price, trade-in credit, taxes, fees, add-ons, monthly payment breakdown.
 5. Dashboard updates in one shot: vehicle card, numbers, scorecard, checklist.
@@ -178,10 +178,9 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 - Streams responses in real time via SSE (text chunks + tool results), with two-pass follow-up for tool-only responses
 - Assistant messages render as Markdown (bold, lists, code blocks, links) via `react-native-markdown-display`; user messages render as plain text
 - Automatically calls tools to update the persistent dashboard when deal information changes
-- Server-side quick action generation via Haiku when Claude doesn't suggest them
 - Maintains full conversation history in the database; the model receives a projected window (rolling summary when compaction has run, plus up to the last 20 user/assistant turns). Long sessions can trigger automatic summarization with a visible system notice (ADR 0017).
 - **Context pressure** — the chat screen can surface when estimated context use is approaching limits (from `context_pressure` on the messages API), nudging the user without blocking chat.
-- **Message queue** — users can send multiple messages while the AI is still processing. Messages are queued client-side and dispatched sequentially (FIFO). Preview cards above the composer show pending items; the input and quick actions remain always enabled. See ADR 0022.
+- **Message queue** — users can send multiple messages while the AI is still processing. Messages are queued client-side and dispatched sequentially (FIFO). Preview cards above the composer show pending items, and the input remains enabled. See ADR 0022.
 - **Edit from here** — buyers can revise an earlier user message via an explicit branch action. The app confirms that later replies will be removed, then restarts the conversation from that user turn. Blocked while the message queue has pending items.
 - **Stop generation** — buyers can cancel an in-progress AI response by tapping a stop button in the chat input. Partial text is preserved and the message is marked as interrupted. If the insights panel was still generating, a notice with a "Refresh" button lets the buyer regenerate it on demand.
 - **Late failure handling** — if the assistant reply was already delivered but a later save/update step fails, the UI keeps the delivered reply visible and shows a warning instead of discarding the turn.
@@ -211,7 +210,7 @@ Real-time, in-person, showroom-floor AI. No competitor operates in this space. A
 
 Side-by-side comparisons (formerly the `comparison` panel card) are no longer rendered in the panel — they render as markdown tables inline in chat via a shared `VehicleComparisonTable` component (responsive horizontal scroll with sticky label column). See ADR 0018. Panel enforcement uses per-kind instance caps rather than a global card cap, and single-focus collapse keeps panel vehicle cards limited to the active vehicle unless the buyer is actively comparing multiple shopping vehicles without an explicit choice.
 
-**Supporting components:** AiCard (base card renderer with card reply button), CardReplyInput (slide-in reply drawer), CardTitle (shared uppercase muted label component), SituationBar (negotiation context display with stance badge and situation summary), PanelMarkdown (markdown in cards), CompactPhaseIndicator, QuickActions.
+**Supporting components:** AiCard (base card renderer with card reply button), CardReplyInput (slide-in reply drawer), CardTitle (shared uppercase muted label component), SituationBar (negotiation context display with stance badge and situation summary), PanelMarkdown (markdown in cards), CompactPhaseIndicator.
 
 **Card reply system:** Every insight card has a MessageCircle reply icon. Tapping it opens a slide-in input drawer attached to the card. Submitting sends a chat message with the card context quoted, so the AI can respond with full awareness of what the user is referencing. A QuotedCardPreview renders a compact summary of the referenced card inside the user's chat bubble.
 
@@ -242,7 +241,7 @@ Side-by-side comparisons (formerly the `comparison` panel card) are no longer re
 
 **Description:** Photo upload of dealer paperwork (buyer's orders, F&I worksheets, payment breakdowns) for AI analysis using multimodal vision. The AI extracts all numbers, explains the deal in plain English, and populates the dashboard in one shot.
 
-**Implementation status:** Quick action button built; photo upload endpoint defined in API spec. Claude vision integration planned for backend.
+**Implementation status:** Photo upload entry point is defined in the API spec. Claude vision integration is still planned for the backend.
 
 **Key behaviors:**
 - Snap a photo of any dealer document
@@ -283,7 +282,7 @@ Side-by-side comparisons (formerly the `comparison` panel card) are no longer re
 **Implementation status:** Built. Auth, sessions, chat (SSE streaming), deals, and simulations routes all implemented.
 
 **Key details:**
-- Claude API integration with two models: Sonnet (primary chat, tools, panel generation, deal re-analysis, and context compaction summarization) and Haiku (fast, for quick action generation and session titles)
+- Claude API integration with two models: Sonnet (primary chat, tools, panel generation, deal re-analysis, and context compaction summarization) and Haiku (fast, for session titles and lightweight helper tasks)
 - Two-pass response architecture: tool-only responses trigger a follow-up text generation call
 - SSE streaming: `text` (conversation chunks), `tool_result` (dashboard updates), `followup_done` (two-pass text), `done` events
 - SQLite for local development, PostgreSQL via Docker for production

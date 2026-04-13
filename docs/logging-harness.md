@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-04-09
 
-This document compares our backend harness logging with a common “CLI debug file” style (opt-in, session-scoped text logs) and documents knobs for agents and operators. For field-level PII rules and JSON log shape, see [logging-guidelines.md](logging-guidelines.md).
+This document compares our backend harness logging with a common “CLI debug file” style (opt-in, session-scoped text logs) and documents knobs for agents and operators. For field-level PII rules and JSON log shape, see [logging-guidelines.md](logging-guidelines.md). For when `chat_turn_summary` fires relative to compaction, the step loop, `done`, and panel streaming, see [buyer-chat-turn.md](buyer-chat-turn.md).
 
 ## Reading logs as a coding agent
 

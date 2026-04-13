@@ -308,13 +308,6 @@ export interface DealState {
   negotiationContext: NegotiationContext | null
 }
 
-// ─── Quick Actions ───
-
-export interface QuickAction {
-  label: string
-  prompt: string
-}
-
 // ─── Messages ───
 
 export interface ToolCall {
@@ -328,7 +321,6 @@ export interface ToolCall {
     | 'remove_vehicle'
     | 'update_checklist'
     | 'update_buyer_context'
-    | 'update_quick_actions'
     | 'update_deal_health'
     | 'update_deal_red_flags'
     | 'update_session_red_flags'
@@ -550,6 +542,15 @@ export interface ApiService {
     sessionId: string,
     turnId?: string
   ): Promise<{ status: string; turnId?: string; cancelled: boolean }>
+  startInsightsFollowup(
+    sessionId: string,
+    assistantMessageId: string,
+    onToolResult?: (toolCall: ToolCall) => void,
+    onPanelStarted?: () => void,
+    onPanelFinished?: () => void,
+    onPanelInterrupted?: (data: { reason: string }) => void,
+    onNonFatalError?: (message: string) => void
+  ): Promise<void>
   refreshInsightsPanel(
     sessionId: string
   ): Promise<{ cards: AiPanelCard[]; assistantMessageId: string }>

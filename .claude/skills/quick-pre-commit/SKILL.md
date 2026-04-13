@@ -135,7 +135,7 @@ Run **one at a time, in order**. Each must pass before the next starts.
 Review the diff and the list below. Only read and update docs that are **actually affected** by the changes. Always consider every doc — but don't load ones that clearly aren't relevant.
 
 **Full doc list to consider:**
-`docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/README.md`
+`docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/buyer-chat-turn.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/logging-harness.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/README.md`
 
 **Quick relevance guide:**
 | Change type | Likely affected docs |
@@ -147,6 +147,8 @@ Review the diff and the list below. Only read and update docs that are **actuall
 | Auth/role changes | TRD §3-4, business-rules.md §6 |
 | Env vars / setup | development.md, operational-guidelines.md |
 | Claude API / tool changes | business-rules.md §4/§7, architecture.md |
+| Buyer chat SSE, turn/step, panel timing, client flush | buyer-chat-turn.md, architecture.md |
+| `chat_turn_summary` / NDJSON harness | logging-harness.md, logging-guidelines.md |
 | UI pattern changes | ui-design-principles.md |
 | Logging changes | logging-guidelines.md |
 | New Makefile targets | development.md, CLAUDE.md |

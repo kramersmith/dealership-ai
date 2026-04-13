@@ -2,7 +2,14 @@
 
 import pytest
 from app.models.deal import Deal
-from app.models.enums import BuyerContext, MessageRole
+from app.models.enums import (
+    BuyerContext,
+    InsightsFollowupKind,
+    InsightsFollowupStatus,
+    InsightsFollowupStepStatus,
+    MessageRole,
+)
+from app.models.insights_followup_job import InsightsFollowupJob
 from app.models.message import Message
 from app.models.vehicle import Vehicle
 from app.services.session_branch import (
@@ -105,6 +112,54 @@ async def test_prepare_branch_deletes_tail_and_clears_session_fields(adb):
         select(Vehicle).where(Vehicle.session_id == session.id)
     )
     assert vehicle_result.scalars().first() is None
+
+
+@pytest.mark.asyncio
+async def test_prepare_branch_deletes_followup_jobs_for_deleted_assistant_messages(adb):
+    user = await async_create_user(adb)
+    session, _initial_deal_state = await async_create_session_with_deal_state(adb, user)
+
+    anchor_user_message = Message(
+        session_id=session.id, role=MessageRole.USER, content="one"
+    )
+    assistant_reply = Message(
+        session_id=session.id,
+        role=MessageRole.ASSISTANT,
+        content="two",
+    )
+    trailing_user_message = Message(
+        session_id=session.id,
+        role=MessageRole.USER,
+        content="three",
+    )
+    adb.add_all([anchor_user_message, assistant_reply, trailing_user_message])
+    await adb.commit()
+    await adb.refresh(anchor_user_message)
+    await adb.refresh(assistant_reply)
+
+    followup_job = InsightsFollowupJob(
+        session_id=session.id,
+        assistant_message_id=assistant_reply.id,
+        kind=InsightsFollowupKind.LINKED_RECONCILE_PANEL.value,
+        status=InsightsFollowupStatus.SUCCEEDED.value,
+        reconcile_status=InsightsFollowupStepStatus.SUCCEEDED.value,
+        panel_status=InsightsFollowupStepStatus.SUCCEEDED.value,
+        attempts=1,
+    )
+    adb.add(followup_job)
+    await adb.commit()
+
+    removed = await prepare_session_branch_from_user_message(
+        adb,
+        session,
+        anchor_user_message.id,
+    )
+
+    assert removed == 2
+    remaining_job = await adb.scalar(
+        select(InsightsFollowupJob).where(InsightsFollowupJob.id == followup_job.id)
+    )
+    assert remaining_job is None
 
 
 @pytest.mark.asyncio

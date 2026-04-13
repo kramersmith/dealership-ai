@@ -84,7 +84,7 @@ make dev-frontend
 | `CORS_ORIGINS` | `["http://localhost:8081","http://localhost:19006"]` | Allowed CORS origins |
 | `ANTHROPIC_API_KEY` | `` | Claude API key (required for chat) |
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` | Primary Claude model for chat |
-| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for quick actions, titles, deal assessment |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-4-5-20251001` | Fast model for titles and lightweight deal-assessment tasks |
 | `CLAUDE_MAX_TOKENS` | `4096` | Max tokens per response |
 | `CLAUDE_MAX_HISTORY` | `20` | Messages to include in context |
 | `CLAUDE_COMPACTION_ENABLED` | `true` | Auto-summarize older turns when context estimate exceeds budget |

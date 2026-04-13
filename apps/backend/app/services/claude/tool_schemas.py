@@ -11,6 +11,8 @@ from app.models.enums import (
     VehicleRole,
 )
 
+CHAT_ONLY_TOOL_NAMES: frozenset[str] = frozenset()
+
 # ─── Operational tool schemas for the chat step loop ───
 # Each tool maps 1:1 to what apply_extraction() handles in deal_state.py
 # and what the frontend processes via dealStore.applyToolCall().
@@ -452,31 +454,23 @@ CHAT_TOOLS: list[dict] = [
             "required": ["vehicle_id"],
         },
     },
-    {
-        "name": "update_quick_actions",
-        "description": "Update quick action button suggestions. Always call this with 2-3 contextually relevant suggestions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "label": {
-                                "type": "string",
-                                "description": "2-5 word button text.",
-                            },
-                            "prompt": {
-                                "type": "string",
-                                "description": "Full message sent when tapped.",
-                            },
-                        },
-                        "required": ["label", "prompt"],
-                    },
-                },
-            },
-            "required": ["actions"],
-        },
-    },
 ]
+
+
+def get_buyer_chat_tools(
+    *,
+    allow_persistence_affecting_tools: bool = True,
+    allow_chat_only_tools: bool = True,
+) -> list[dict]:
+    """Return the buyer chat tool set allowed for this turn.
+
+    Paused insights mode blocks tools that persist structured deal or panel-related
+    state, while leaving room for explicitly chat-only tools.
+    """
+    if allow_persistence_affecting_tools and allow_chat_only_tools:
+        return CHAT_TOOLS
+    if allow_persistence_affecting_tools:
+        return [tool for tool in CHAT_TOOLS if tool["name"] not in CHAT_ONLY_TOOL_NAMES]
+    if allow_chat_only_tools:
+        return [tool for tool in CHAT_TOOLS if tool["name"] in CHAT_ONLY_TOOL_NAMES]
+    return []

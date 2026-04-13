@@ -1,4 +1,4 @@
-"""SSE stream for a single buyer chat turn (step loop, done, panel, persistence).
+"""SSE stream for a single buyer chat turn (step loop, done, persistence).
 
 Shared by ``POST /chat/.../message`` and ``POST /chat/.../messages/.../branch``.
 """
@@ -24,40 +24,23 @@ from app.services.chat_harness_log import (
     log_chat_turn_summary,
 )
 from app.services.claude import (
-    CHAT_TOOLS,
     ChatLoopResult,
     build_context_message,
     build_messages,
-    merge_usage_summary,
+    get_buyer_chat_tools,
     stream_chat_loop,
 )
 from app.services.compaction import project_for_model, run_auto_compaction_if_needed
-from app.services.deal_state import deal_state_to_dict
-from app.services.panel import (
-    PanelGenerationInterrupted,
-    stream_ai_panel_cards_with_usage,
-)
-from app.services.panel_update_service import resolve_panel_update_policy
 from app.services.post_chat_processing import update_session_metadata
 from app.services.turn_cancellation import TurnCancellationState
 from app.services.turn_context import TurnContext
 from app.services.usage_tracking import (
     SessionUsageSummary,
     build_request_usage,
+    message_usage_payload,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _message_usage_payload(summary: dict[str, int]) -> dict[str, int]:
-    return {
-        "requests": summary.get("requests", 0),
-        "inputTokens": summary.get("input_tokens", 0),
-        "outputTokens": summary.get("output_tokens", 0),
-        "cacheCreationInputTokens": summary.get("cache_creation_input_tokens", 0),
-        "cacheReadInputTokens": summary.get("cache_read_input_tokens", 0),
-        "totalTokens": summary.get("total_tokens", 0),
-    }
 
 
 def _error_sse(message: str) -> str:
@@ -75,7 +58,7 @@ def _interrupted_sse(
     if assistant_message_id:
         payload["assistant_message_id"] = assistant_message_id
     if usage_summary is not None:
-        payload["usage"] = _message_usage_payload(usage_summary)
+        payload["usage"] = message_usage_payload(usage_summary)
     return f"event: interrupted\ndata: {json.dumps(payload)}\n\n"
 
 
@@ -92,11 +75,16 @@ async def stream_buyer_chat_turn(
     deal_state_dict: dict | None,
     linked_messages: list[dict] | None,
     system_prompt: list[dict[str, Any]],
+    allow_persistence_affecting_tools: bool,
     include_timeline_fork_reminder: bool = False,
     turn_state: TurnCancellationState,
 ) -> AsyncIterator[str]:
-    """Run compaction, user row upsert, chat loop, panel, and final commit; yield SSE chunks."""
+    """Run compaction, user row upsert, chat loop, and chat-phase persistence; yield SSE chunks."""
     result = ChatLoopResult()
+    available_tools = get_buyer_chat_tools(
+        allow_persistence_affecting_tools=allow_persistence_affecting_tools,
+        allow_chat_only_tools=False,
+    )
     session_usage = SessionUsageSummary.from_dict(session.usage)
     turn_context = TurnContext.create(
         session=session,
@@ -218,7 +206,7 @@ async def stream_buyer_chat_turn(
             role=MessageRole.ASSISTANT,
             content=text,
             tool_calls=result.tool_calls if result.tool_calls else None,
-            usage=_message_usage_payload(result.usage_summary),
+            usage=message_usage_payload(result.usage_summary),
             completion_status=MessageCompletionStatus.INTERRUPTED.value,
             interrupted_at=datetime.now(timezone.utc),
             interrupted_reason=reason,
@@ -254,7 +242,7 @@ async def stream_buyer_chat_turn(
         async for sse_event in stream_chat_loop(
             system_prompt,
             messages,
-            CHAT_TOOLS,
+            available_tools,
             turn_context,
             result,
             emit_done_event=False,
@@ -336,24 +324,12 @@ async def stream_buyer_chat_turn(
         },
     )
 
-    updated_state_dict = None
-    final_panel_cards: list[dict] | None = None
-    if deal_state:
-        try:
-            await db.refresh(deal_state)
-            updated_state_dict = await deal_state_to_dict(deal_state, db)
-        except Exception:
-            logger.exception(
-                "Deal state refresh failed before panel generation: session_id=%s",
-                session_id,
-            )
-
     assistant_message = Message(
         session_id=session_id,
         role=MessageRole.ASSISTANT,
         content=result.full_text,
         tool_calls=result.tool_calls if result.tool_calls else None,
-        usage=_message_usage_payload(result.usage_summary),
+        usage=message_usage_payload(result.usage_summary),
     )
     db.add(assistant_message)
 
@@ -368,7 +344,10 @@ async def stream_buyer_chat_turn(
         yield _error_sse("We could not save the assistant response. Please try again.")
         return
 
-    yield f"event: done\ndata: {json.dumps({'text': result.full_text, 'usage': _message_usage_payload(result.usage_summary)})}\n\n"
+    yield (
+        "event: done\n"
+        f"data: {json.dumps({'text': result.full_text, 'usage': message_usage_payload(result.usage_summary), 'assistant_message_id': assistant_message.id})}\n\n"
+    )
     turn_state.done_emitted = True
 
     all_messages = [
@@ -377,109 +356,8 @@ async def stream_buyer_chat_turn(
         if message.role in (MessageRole.USER, MessageRole.ASSISTANT)
     ]
 
-    panel_policy = await resolve_panel_update_policy(db, user_id=session.user_id)
-
-    if (
-        deal_state
-        and updated_state_dict is not None
-        and panel_policy.live_updates_enabled
-    ):
-        logger.debug("Streaming AI panel cards, session_id=%s", session_id)
-        panel_started = False
-        panel_finished = False
-        panel_completed = False
-        turn_state.phase = "panel"
-        try:
-            panel_usage_summary: dict[str, int] | None = None
-            latest_cards: list[dict] = []
-
-            panel_prompt_cache: dict = {
-                "prior": session_usage.prompt_cache_panel_last,
-                "breaks_delta": 0,
-            }
-            async for panel_event in stream_ai_panel_cards_with_usage(
-                updated_state_dict or {},
-                result.full_text,
-                all_messages,
-                session_id=session_id,
-                panel_prompt_cache=panel_prompt_cache,
-                is_cancelled=turn_state.is_cancelled,
-            ):
-                if turn_state.is_cancelled() and panel_started:
-                    panel_finished = True
-                    yield (
-                        "event: panel_interrupted\n"
-                        f"data: {json.dumps({'reason': turn_state.cancel_reason or 'user_stop'})}\n\n"
-                    )
-                    break
-                if panel_event.type == "panel_started":
-                    panel_started = True
-                    turn_state.panel_started = True
-                    yield f"event: panel_started\ndata: {json.dumps(panel_event.data)}\n\n"
-                elif panel_event.type == "panel_done":
-                    panel_finished = True
-                    panel_completed = True
-                    latest_cards = panel_event.data.get("cards", latest_cards)
-                    panel_usage_summary = panel_event.data.get("usage_summary")
-                    payload = {
-                        "cards": latest_cards,
-                        "usage": _message_usage_payload(panel_usage_summary or {}),
-                        "assistant_message_id": assistant_message.id,
-                    }
-                    yield f"event: panel_done\ndata: {json.dumps(payload)}\n\n"
-                elif panel_event.type == "panel_error":
-                    panel_finished = True
-                    yield f"event: panel_error\ndata: {json.dumps(panel_event.data)}\n\n"
-
-            if panel_usage_summary:
-                merge_usage_summary(result.usage_summary, panel_usage_summary)
-
-            session_usage.prompt_cache_panel_last = panel_prompt_cache.get("last")
-            session_usage.prompt_cache_break_count += panel_prompt_cache.get(
-                "breaks_delta", 0
-            )
-
-            if panel_completed:
-                deal_state.ai_panel_cards = latest_cards
-                final_panel_cards = latest_cards
-                assistant_message.panel_cards = latest_cards
-                panel_tool_call = {
-                    "name": "update_insights_panel",
-                    "args": {"cards": latest_cards},
-                }
-                result.tool_calls.append(panel_tool_call)
-                logger.info(
-                    "Persisted %d AI panel cards, session_id=%s",
-                    len(latest_cards),
-                    session_id,
-                )
-                log_chat_harness_verbose_event(
-                    "panel",
-                    {
-                        "session_id": session_id,
-                        "card_count": len(latest_cards),
-                        "kinds": [card.get("kind") for card in latest_cards],
-                    },
-                )
-        except PanelGenerationInterrupted:
-            logger.info("Panel generation interrupted: session_id=%s", session_id)
-            if panel_started and not panel_finished:
-                yield (
-                    "event: panel_interrupted\n"
-                    f"data: {json.dumps({'reason': turn_state.cancel_reason or 'user_stop'})}\n\n"
-                )
-        except Exception:
-            logger.exception("AI panel generation failed: session_id=%s", session_id)
-            if panel_started and not panel_finished:
-                yield 'event: panel_error\ndata: {"message": "Panel generation failed"}\n\n'
-    elif not panel_policy.live_updates_enabled:
-        logger.debug(
-            "Skipping live panel generation (paused mode): session_id=%s",
-            session_id,
-        )
-
     assistant_message.tool_calls = result.tool_calls if result.tool_calls else None
-    assistant_message.usage = _message_usage_payload(result.usage_summary)
+    assistant_message.usage = message_usage_payload(result.usage_summary)
 
     try:
         if result.usage_summary.get("requests", 0) > 0:
@@ -530,7 +408,7 @@ async def stream_buyer_chat_turn(
             user_text=content,
             assistant_text=result.full_text,
             tool_calls=result.tool_calls,
-            final_panel_cards=final_panel_cards,
+            final_panel_cards=None,
         )
     except Exception:
         logger.exception("chat_turn_summary emission failed: session_id=%s", session_id)

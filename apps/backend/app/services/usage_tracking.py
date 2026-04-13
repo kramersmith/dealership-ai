@@ -302,6 +302,18 @@ def log_request_usage(
     )
 
 
+def message_usage_payload(summary: dict[str, int]) -> dict[str, int]:
+    """Convert a snake_case usage summary dict to camelCase for per-message SSE payloads."""
+    return {
+        "requests": summary.get("requests", 0),
+        "inputTokens": summary.get("input_tokens", 0),
+        "outputTokens": summary.get("output_tokens", 0),
+        "cacheCreationInputTokens": summary.get("cache_creation_input_tokens", 0),
+        "cacheReadInputTokens": summary.get("cache_read_input_tokens", 0),
+        "totalTokens": summary.get("total_tokens", 0),
+    }
+
+
 def _usage_summary_to_camel(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "requestCount": data.get("request_count", 0),

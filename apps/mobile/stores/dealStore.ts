@@ -395,11 +395,6 @@ function applyToolCallToState(dealState: DealState, toolCall: ToolCall): DealSta
       }
     }
 
-    case 'update_quick_actions': {
-      // Ephemeral -- handled by chat store
-      return dealState
-    }
-
     default:
       return dealState
   }

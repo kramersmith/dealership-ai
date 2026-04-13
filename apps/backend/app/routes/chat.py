@@ -2,7 +2,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
@@ -16,6 +16,7 @@ from app.schemas.chat import (
     BranchMessageRequest,
     ChatMessageRequest,
     ContextPressureResponse,
+    InsightsFollowupRequest,
     MessageResponse,
     MessagesListResponse,
     PanelRefreshResponse,
@@ -27,7 +28,11 @@ from app.services.buyer_chat_stream import stream_buyer_chat_turn
 from app.services.claude import build_context_message, build_system_prompt
 from app.services.compaction import compute_session_context_pressure
 from app.services.deal_state import deal_state_to_dict
-from app.services.panel_update_service import refresh_panel_on_demand
+from app.services.insights_followup import stream_linked_insights_followup
+from app.services.panel_update_service import (
+    refresh_panel_on_demand,
+    resolve_panel_update_policy,
+)
 from app.services.session_branch import (
     BranchAnchorNotFoundError,
     BranchAnchorNotUserError,
@@ -105,6 +110,7 @@ async def _stream_buyer_turn_response(
     body_image_url: str | None,
     resumed_user_row: Message | None,
     include_timeline_fork_reminder: bool,
+    allow_persistence_affecting_tools: bool,
     user_id: str,
 ) -> StreamingResponse:
     """Build shared chat-turn context and return an SSE StreamingResponse."""
@@ -143,6 +149,7 @@ async def _stream_buyer_turn_response(
                 deal_state_dict=deal_state_dict,
                 linked_messages=linked_messages,
                 system_prompt=system_prompt,
+                allow_persistence_affecting_tools=allow_persistence_affecting_tools,
                 include_timeline_fork_reminder=include_timeline_fork_reminder,
                 turn_state=turn_state,
             ):
@@ -178,6 +185,7 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
 ):
     session = await _load_session_or_404(session_id, user, db)
+    panel_policy = await resolve_panel_update_policy(db, user=user)
     logger.info("Chat message received: session_id=%s, user_id=%s", session_id, user.id)
 
     resumed_user_row: Message | None = None
@@ -214,6 +222,7 @@ async def send_message(
         body_image_url=body.image_url,
         resumed_user_row=resumed_user_row,
         include_timeline_fork_reminder=False,
+        allow_persistence_affecting_tools=panel_policy.live_updates_enabled,
         user_id=user.id,
     )
 
@@ -228,6 +237,7 @@ async def branch_from_user_message(
 ):
     """Truncate timeline after this user message, reset commerce state, stream new reply."""
     session = await _load_session_or_404(session_id, user, db)
+    panel_policy = await resolve_panel_update_policy(db, user=user)
 
     try:
         messages_removed = await prepare_session_branch_from_user_message(
@@ -272,6 +282,7 @@ async def branch_from_user_message(
         body_image_url=body.image_url,
         resumed_user_row=resumed_user_row,
         include_timeline_fork_reminder=True,
+        allow_persistence_affecting_tools=panel_policy.live_updates_enabled,
         user_id=user.id,
     )
 
@@ -300,6 +311,70 @@ async def stop_turn(
         turn_id=result.turn_id,
         cancelled=result.cancelled,
     )
+
+
+@router.post("/{session_id}/insights-followup")
+async def insights_followup(
+    session_id: str,
+    body: InsightsFollowupRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await _load_session_or_404(session_id, user, db)
+    panel_policy = await resolve_panel_update_policy(db, user=user)
+    if not panel_policy.live_updates_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Insights follow-up is unavailable while live updates are paused; "
+                "use panel-refresh instead"
+            ),
+        )
+
+    # Validate assistant_message_id belongs to this session before streaming,
+    # so we can return a proper HTTP error instead of a broken SSE stream.
+    assistant_check = await db.execute(
+        select(Message).where(
+            Message.id == body.assistant_message_id,
+            Message.session_id == session_id,
+            Message.role == MessageRole.ASSISTANT,
+        )
+    )
+    if assistant_check.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Assistant message not found for this session",
+        )
+
+    latest_assistant = await db.scalar(
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.role == MessageRole.ASSISTANT,
+        )
+        .order_by(desc(Message.created_at), desc(Message.id))
+        .limit(1)
+    )
+    if latest_assistant is None or latest_assistant.id != body.assistant_message_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Insights follow-up can only run for the latest assistant message "
+                "in this session"
+            ),
+        )
+
+    async def generate():
+        async for chunk in stream_linked_insights_followup(
+            db=db,
+            session=session,
+            session_id=session_id,
+            assistant_message_id=body.assistant_message_id,
+            followup_enabled=panel_policy.live_updates_enabled,
+        ):
+            yield chunk
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @router.post("/{session_id}/panel-refresh", response_model=PanelRefreshResponse)

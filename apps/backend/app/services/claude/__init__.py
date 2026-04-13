@@ -31,7 +31,7 @@ from app.services.claude.streaming import (
 from app.services.claude.text_dedupe import strip_redundant_continuation_opener
 from app.services.claude.tool_policy import chat_tool_choice_for_step
 from app.services.claude.tool_runner import execute_tool_batch
-from app.services.claude.tool_schemas import CHAT_TOOLS
+from app.services.claude.tool_schemas import CHAT_TOOLS, get_buyer_chat_tools
 from app.services.claude.usage_stats import (
     empty_usage_summary,
     get_escalated_max_tokens,
@@ -56,6 +56,7 @@ __all__ = [
     "chat_tool_choice_for_step",
     "create_anthropic_client",
     "current_utc_date_iso",
+    "get_buyer_chat_tools",
     "empty_usage_summary",
     "execute_tool_batch",
     "get_escalated_max_tokens",

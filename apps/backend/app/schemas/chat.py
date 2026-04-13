@@ -20,6 +20,10 @@ class ChatMessageRequest(BaseModel):
     existing_user_message_id: str | None = None
 
 
+class InsightsFollowupRequest(BaseModel):
+    assistant_message_id: str
+
+
 class BranchMessageRequest(BaseModel):
     """New user text for the branch anchor row; triggers optional tail delete, always commerce reset + stream."""
 

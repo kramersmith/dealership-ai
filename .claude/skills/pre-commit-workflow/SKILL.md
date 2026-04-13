@@ -258,7 +258,7 @@ These run **one at a time, in order**. Each must pass before the next starts.
 
 **Execute** the full update-docs workflow.
 
-1. Read `docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/README.md` and recent changes (`git diff`). Skip files that do not exist.
+1. Read `docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/buyer-chat-turn.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/logging-harness.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/README.md` and recent changes (`git diff`). Skip files that do not exist.
 2. Identify what changed (endpoints, models, flows, setup, env vars, business rules, etc.).
 3. Update each impacted doc per the section mappings in the update-docs skill.
 4. Update "Last updated" and TOCs where edited.

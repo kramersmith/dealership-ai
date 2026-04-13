@@ -50,15 +50,6 @@ export function useChat(sessionId: string | null) {
     [sendMessage, timerStartedAt, startTimer]
   )
 
-  const handleQuickAction = useCallback(
-    (prompt: string) => {
-      if (prompt) {
-        sendMessage(prompt, undefined, undefined, false, undefined, 'quick_action')
-      }
-    },
-    [sendMessage]
-  )
-
   const activeSessionQueue = sessionId ? (queueBySession[sessionId] ?? []) : []
   const pendingQueueItems = activeSessionQueue.filter(
     (item) =>
@@ -70,7 +61,11 @@ export function useChat(sessionId: string | null) {
   const queuedCount = pendingQueueItems.filter((item) => item.status === 'queued').length
   const firstQueuedPreview =
     pendingQueueItems.find((item) => item.status === 'queued')?.payload.content ?? null
-  const canBranchEdit = !isSending && !isPendingVinIntercept && pendingQueueItems.length === 0
+  const canBranchEdit =
+    !isSending &&
+    !isPanelAnalyzing &&
+    !isPendingVinIntercept &&
+    pendingQueueItems.length === 0
 
   return {
     messages,
@@ -88,7 +83,6 @@ export function useChat(sessionId: string | null) {
     canBranchEdit,
     send,
     stopGeneration,
-    handleQuickAction,
     clearQueue,
     recoverQueueStall,
     removeQueuedMessage,

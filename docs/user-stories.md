@@ -41,7 +41,7 @@
 - As a buyer, I want a vehicle card showing the car I'm looking at (specs, price, risk flags, market comparison) so the key facts are always visible.
 - As a buyer, I want a negotiation scorecard (their starting price → current offer → my target) so I can see progress visually.
 - As a buyer, I want red/yellow/green indicators on price, rate, and terms so I can assess the deal at a glance.
-- As a buyer, I want quick action buttons ("Analyze this photo", "What do I say?", "Should I walk?") so I can get help with one tap.
+- As a buyer, I want the chat and insights panel to make the most relevant next step obvious so I can get help quickly without extra UI clutter.
 - As a buyer, I want to see how long I've been at the dealership so I stay aware of time-based pressure tactics.
 - As a buyer, I want a reminder if I've been waiting a long time so I know it might be a deliberate tactic.
 

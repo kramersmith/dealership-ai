@@ -149,7 +149,6 @@ _TOOL_TO_EXTRACTION_KEY: dict[str, str] = {
     "update_session_information_gaps": "session_information_gaps",
     "update_deal_comparison": "deal_comparison",
     "update_checklist": "checklist",
-    "update_quick_actions": "quick_actions",
 }
 
 _SCALAR_TOOLS: dict[str, str] = {
@@ -757,19 +756,6 @@ async def apply_extraction(
                 )
         else:
             logger.warning("update_phase: no active deal found")
-
-    if "quick_actions" in extraction:
-        qa_data = extraction["quick_actions"]
-        applied_tools.append(
-            {
-                "name": "update_quick_actions",
-                "args": qa_data,
-            }
-        )
-        logger.debug(
-            "Updated quick actions: count=%d",
-            len(qa_data.get("actions", [])) if isinstance(qa_data, dict) else 0,
-        )
 
     if "deal_comparison" in extraction:
         next_comparison = extraction["deal_comparison"]

@@ -1,17 +1,17 @@
 ---
 name: update-docs
-description: Updates project documentation to reflect the current codebase. Use when changes affect architecture, APIs, business rules, setup, env vars, UI patterns, or logging. Trigger phrases - "update docs", "update documentation", "sync docs".
+description: Updates project documentation to reflect the current codebase. Use when changes affect architecture, APIs, business rules, setup, env vars, UI patterns, logging, or buyer chat turn/SSE behavior. Keep `docs/buyer-chat-turn.md` aligned with `buyer_chat_stream` and the step loop when those change. Trigger phrases - "update docs", "update documentation", "sync docs".
 ---
 
 # Update Docs
 
-Update `docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/`, and all relevant docs in `docs/` so they accurately reflect the current codebase. Run this when you've made changes that affect architecture, APIs, business rules, data model, integrations, product-facing features, local setup, dev tooling, ops (logging, metrics), or UI patterns.
+Update `docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/buyer-chat-turn.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/logging-harness.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/`, and all relevant docs in `docs/` so they accurately reflect the current codebase. Run this when you've made changes that affect architecture, APIs, business rules, data model, integrations, product-facing features, local setup, dev tooling, ops (logging, metrics), or UI patterns.
 
 Note: Not all changes will affect every doc. Only update docs that are impacted.
 
 ## Steps
 
-1. **Read the current docs** (`docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/README.md`) and your recent changes (e.g. `git diff` or conversation context). Skip files that do not exist.
+1. **Read the current docs** (`docs/TRD.md`, `docs/PRD.md`, `docs/business-rules.md`, `docs/backend-endpoints.md`, `docs/diagrams/site-map-and-flows.md`, `docs/architecture.md`, `docs/buyer-chat-turn.md`, `docs/development.md`, `docs/operational-guidelines.md`, `docs/logging-guidelines.md`, `docs/logging-harness.md`, `docs/ui-design-principles.md`, `docs/backend-plan.md`, `docs/notes.md`, `CLAUDE.md`, `docs/adr/README.md`) and your recent changes (e.g. `git diff` or conversation context). Skip files that do not exist.
 2. **Identify what changed** — endpoints, business logic, models, integrations, auth/roles, user flows, features, local setup, env vars, dev commands, architecture decisions, logging config.
 3. **Edit the TRD** to match reality. Update existing sections in place; preserve structure and style.
 4. **Edit business-rules.md** when deal phases, scoring, AI tools, session rules, simulation rules, or auth rules change.
@@ -85,6 +85,7 @@ Note: Not all changes will affect every doc. Only update docs that are impacted.
 | Auth, roles, permissions | Auth / Security |
 | Tech stack changes | Overview / Stack |
 | Claude API integration changes | Claude Integration |
+| Buyer chat SSE lifecycle, turn vs step, `done`/panel order, client tool flush | Cross-link or align with `docs/buyer-chat-turn.md` |
 
 ## Section mapping — development.md
 
@@ -114,6 +115,23 @@ Note: Not all changes will affect every doc. Only update docs that are impacted.
 | LOG_LEVEL, new env vars | Config section |
 | New log levels, level usage | Log Level Reference |
 | PII rules, redaction policy | PII rules |
+
+## Section mapping — buyer-chat-turn.md
+
+| Change type | buyer-chat-turn.md |
+|-------------|---------------------|
+| `buyer_chat_stream` / branch entry sequencing | Backend orchestration |
+| Step loop, tool policy, max steps | Step loop (Claude) |
+| New SSE events or terminal ordering | SSE events, Mobile client behavior |
+| Panel policy (`live`/`paused`), `panel-refresh` | Insights panel after `done` |
+| `chat_turn_summary` timing / harness fields | Logging and debugging |
+
+## Section mapping — logging-harness.md
+
+| Change type | logging-harness.md |
+|-------------|-------------------|
+| `chat_turn_summary` shape or when it emits | `chat_turn_summary` shapes, Reading logs |
+| NDJSON paths, `backend-log-slice` | Reading logs as a coding agent |
 
 ## Section mapping — ui-design-principles.md
 
@@ -150,6 +168,7 @@ Docs with 100+ lines must have a Table of Contents near the top. TOCs use Markdo
 - `docs/PRD.md`
 - `docs/business-rules.md`
 - `docs/backend-endpoints.md`
+- `docs/buyer-chat-turn.md`
 - `docs/development.md`
 
 ## Output

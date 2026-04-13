@@ -21,6 +21,27 @@ class InsightsUpdateMode(StrEnum):
         return None
 
 
+class InsightsFollowupKind(StrEnum):
+    LINKED_RECONCILE_PANEL = "linked_reconcile_panel"
+
+
+class InsightsFollowupStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class InsightsFollowupStepStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
+
+
 class SessionType(StrEnum):
     BUYER_CHAT = "buyer_chat"
     DEALER_SIM = "dealer_sim"

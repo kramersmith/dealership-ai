@@ -106,15 +106,15 @@ First impressions form within seconds. A polished screen signals professionalism
 |-----------|----------------|
 | **Chunking** | Group related information. The dashboard is chunked: numbers, scorecard, vehicle, checklist are separate cards. |
 | **Progressive disclosure** | The dashboard is collapsible. Show what matters now, hide what doesn't. |
-| **Fewer choices at once** | Quick actions are limited to 3, ordered by relevance (most useful first). The chat is the primary interaction. |
+| **Fewer choices at once** | Keep the chat as the primary interaction. The panel and checklist should clarify the next move without crowding the composer with extra controls. |
 | **Consistent patterns** | Reuse layouts and interaction patterns so users build muscle memory. |
-| **Defaults and shortcuts** | Quick action buttons send pre-written prompts. The AI proactively updates the dashboard. |
+| **Defaults and shortcuts** | The AI should proactively update the dashboard and panel so the user can act without extra setup. |
 | **Clear labels** | Use short, scannable section headers to orient users quickly. |
 
 ### Anti-Patterns to Avoid
 
 - Dense walls of text or data with no grouping
-- Every option given equal weight (no hierarchy). For dynamic suggestions like quick actions, position-based ordering (most relevant first) provides hierarchy without visual noise.
+- Every option given equal weight (no hierarchy). Use layout, grouping, and ordering to make the most important action obvious without adding noisy controls.
 - Ambiguous or redundant labels
 - Asking for information the system already has
 

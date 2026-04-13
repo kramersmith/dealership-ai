@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.deal import Deal
 from app.models.deal_state import DealState
 from app.models.enums import MessageRole
+from app.models.insights_followup_job import InsightsFollowupJob
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.models.vehicle import Vehicle
@@ -90,6 +91,20 @@ async def prepare_session_branch_from_user_message(
     message_ids_to_delete = [message.id for message in tail_messages]
     removed_count = len(message_ids_to_delete)
     if message_ids_to_delete:
+        assistant_message_ids_to_delete = [
+            message.id
+            for message in tail_messages
+            if message.role == MessageRole.ASSISTANT
+        ]
+        if assistant_message_ids_to_delete:
+            await db.execute(
+                delete(InsightsFollowupJob).where(
+                    InsightsFollowupJob.session_id == session.id,
+                    InsightsFollowupJob.assistant_message_id.in_(
+                        assistant_message_ids_to_delete
+                    ),
+                )
+            )
         await db.execute(delete(Message).where(Message.id.in_(message_ids_to_delete)))
 
     session.compaction_state = None

@@ -152,7 +152,7 @@ def test_tool_names_in_order_preserves_order_and_dedupes() -> None:
         {"name": "set_vehicle"},
         {"name": "update_deal_health"},
         {"name": "set_vehicle"},
-        {"name": "update_quick_actions"},
+        {"name": "update_checklist"},
         {"name": None},
         {"name": 123},
         {},
@@ -161,7 +161,7 @@ def test_tool_names_in_order_preserves_order_and_dedupes() -> None:
     assert tool_names_in_order(calls) == [
         "set_vehicle",
         "update_deal_health",
-        "update_quick_actions",
+        "update_checklist",
     ]
 
 

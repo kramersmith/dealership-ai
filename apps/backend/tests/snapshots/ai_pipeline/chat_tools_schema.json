@@ -643,37 +643,5 @@
       "type": "object"
     },
     "name": "remove_vehicle"
-  },
-  {
-    "description": "Update quick action button suggestions. Always call this with 2-3 contextually relevant suggestions.",
-    "input_schema": {
-      "properties": {
-        "actions": {
-          "items": {
-            "properties": {
-              "label": {
-                "description": "2-5 word button text.",
-                "type": "string"
-              },
-              "prompt": {
-                "description": "Full message sent when tapped.",
-                "type": "string"
-              }
-            },
-            "required": [
-              "label",
-              "prompt"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "actions"
-      ],
-      "type": "object"
-    },
-    "name": "update_quick_actions"
   }
 ]

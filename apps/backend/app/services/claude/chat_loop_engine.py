@@ -555,16 +555,21 @@ async def _stream_step_with_retries(
             return
         except anthropic.APIStatusError as exc:
             if is_anthropic_low_credit_error(exc):
-                org = exc.response.headers.get("anthropic-organization-id")
                 logger.error(
                     "Chat loop step %d failed: Anthropic credits/billing "
-                    "(anthropic_organization_id=%s, request_id=%s)",
+                    "(status_code=%s, request_id=%s)",
                     step,
-                    org or "(unknown)",
+                    getattr(exc, "status_code", "(unknown)"),
                     exc.request_id or "(unknown)",
                 )
             else:
-                logger.exception("Chat loop step %d failed", step)
+                logger.error(
+                    "Chat loop step %d failed: Anthropic API status error "
+                    "(status_code=%s, request_id=%s)",
+                    step,
+                    getattr(exc, "status_code", "(unknown)"),
+                    exc.request_id or "(unknown)",
+                )
             result.failed = True
             user_msg = user_visible_message_for_anthropic_error(exc)
             yield f"event: error\ndata: {json.dumps({'message': user_msg})}\n\n"
@@ -777,7 +782,11 @@ async def run_chat_loop_engine(
 ) -> AsyncGenerator[str, None]:
     """Orchestrate multi-step chat/tool loop and emit SSE lifecycle events."""
     # Add cache_control to the last tool so the entire tool list is cached
-    cached_tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
+    cached_tools = (
+        [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
+        if tools
+        else []
+    )
     cache_state = _CacheState(last_chat_cache_snapshot=prompt_cache_prior_chat)
     prev_step = _PrevStepState()
 

@@ -105,22 +105,21 @@ graph TB
     - `event: turn_started` -- turn ID for targeted cancellation via `POST /stop`
     - `event: compaction_started` / `event: compaction_done` / `event: compaction_error` -- optional context compaction lifecycle **before** chat streaming when auto-compaction runs
     - `event: text` -- conversation text chunks
-    - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, quick actions, deal health, red flags, information gaps, negotiation context)
+    - `event: tool_result` -- dashboard state updates (numbers, phase, scorecard, vehicle, checklist, deal health, red flags, information gaps, negotiation context)
     - `event: retry` -- stream recovery or `max_tokens` replay signal, including `reset_text` when the client should discard partial text
     - `event: step` -- step-loop progress for multi-step turns
     - `event: error` -- safe user-visible failure; before `done` it terminates the turn, after `done` it means the reply was delivered but a later persistence/update step failed
     - `event: done` -- chat text completion payload (input can unblock immediately)
     - `event: interrupted` -- partial text + reason when the user cancels the turn (replaces `done`)
-    - `event: panel_started` / `event: panel_done` / `event: panel_error` / `event: panel_interrupted` -- asynchronous panel lifecycle events after `done` (atomic `panel_done` payload; no incremental `panel_card` SSE; `panel_interrupted` when user cancels during panel phase)
+    - `event: panel_started` / `event: panel_done` / `event: panel_error` -- detached insights follow-up lifecycle events on the separate post-`done` SSE request (atomic `panel_done` payload; no incremental `panel_card` SSE)
 8. If the step loop raises an unrecoverable error (e.g. Anthropic billing, authentication), the backend emits an `error` SSE event with a safe user-visible message and deletes the orphan user message to prevent duplicate history on retry. Known API errors are mapped to specific but non-leaking messages.
 9. If a Claude step ends with `stop_reason == "max_tokens"`, the backend retries with a larger bounded token budget before giving up. Step-control logic bounds tool rounds per buyer message (step 0 = auto, step 1 = conditional based on errors/text visibility, step 2+ = text-only) to prevent model self-dialogue loops. Tool inputs undergo semantic validation (`tool_validation.py`) before database application; invalid inputs are returned as `is_error` tool results for model self-correction.
-10. **Server-side quick actions:** If Claude didn't call `update_quick_actions`, the backend generates suggestions via Haiku (`CLAUDE_FAST_MODEL`) and emits them as a `tool_result` SSE event.
-11. The step loop checks the `TurnCancellationState` between iterations. If the user has cancelled via `POST /stop`, the loop exits early and the backend emits `interrupted` (with partial text and reason) instead of `done`. The assistant message is persisted with `completion_status = "interrupted"`.
-12. After the step loop completes normally, the backend emits `done`, then starts a separate panel generation phase that emits `panel_started` and terminal `panel_done` (canonical cards + `assistant_message_id`) or `panel_error`. If the user cancels during the panel phase, `panel_interrupted` is emitted instead. `POST /api/chat/{session_id}/panel-refresh` can regenerate the panel without a new turn.
-13. On stream completion, backend persists the assistant message, including tool calls and aggregated per-turn usage metadata (chat phase + panel phase), applies tool call results to `deal_states`, and folds the turn's usage into the session-level usage ledger.
-14. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
-15. Client Zustand stores update in real time as SSE events arrive. Tool result callbacks are deferred until after the `done` event so the UI finalizes the reply before insights update. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
-16. The `done` event carries chat text and chat-phase usage. Panel-phase usage is emitted on `panel_done` and merged into the persisted assistant usage summary.
+10. The step loop checks the `TurnCancellationState` between iterations. If the user has cancelled via `POST /stop`, the loop exits early and the backend emits `interrupted` (with partial text and reason) instead of `done`. The assistant message is persisted with `completion_status = "interrupted"`.
+11. After the step loop completes normally, the backend emits `done`. When insights are live, the client then starts a separate follow-up request that emits `panel_started` and terminal `panel_done` (canonical cards + `assistant_message_id`) or `panel_error`. `POST /api/chat/{session_id}/panel-refresh` reuses that same detached follow-up pipeline on demand. Detached follow-up currently runs outside the chat turn cancellation registry.
+12. On chat-stream completion, the backend persists the assistant message with chat-phase tool calls and chat-phase usage, applies chat-phase tool call results to `deal_states`, and folds that chat usage into the session-level usage ledger. When detached follow-up succeeds later, panel cards and follow-up usage are merged back into the persisted assistant row and session ledger.
+13. **Post-chat processing:** After tool calls are applied, `update_session_metadata()` updates the session's `last_message_preview` (truncated assistant response) and auto-generates a title when `auto_title` is true — deterministic vehicle title if `set_vehicle` was called, otherwise LLM-generated via Haiku on the first exchange.
+14. Client Zustand stores update in real time as SSE events arrive. Tool result callbacks are deferred until after the `done` event so the UI finalizes the reply before insights update. The frontend `snakeToCamel` utility converts backend snake_case field names to camelCase for Zustand stores.
+15. The `done` event carries chat text and chat-phase usage. Panel-phase usage is emitted on `panel_done` and merged into the persisted assistant usage summary.
 
 ---
 
@@ -255,7 +254,7 @@ event: error
 data: {"message": "AI response failed. Please try again."}
 
 event: done
-data: {"text": "Full response text...", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
+data: {"text": "Full response text...", "assistant_message_id": "uuid-of-assistant-row", "usage": {"requests": 1, "inputTokens": 1240, "outputTokens": 188, "cacheCreationInputTokens": 0, "cacheReadInputTokens": 620, "totalTokens": 1428}}
 
 event: panel_started
 data: {"attempt": 1, "max_tokens": 2048}
@@ -266,11 +265,9 @@ data: {"cards": [{"kind": "phase", "template": "briefing", "title": "Status", "c
 event: interrupted
 data: {"text": "Partial response text so far...", "reason": "user_stop"}
 
-event: panel_interrupted
-data: {"reason": "user_stop"}
 ```
 
-The `turn_started` event is emitted at the beginning of every turn with a unique `turn_id` that the client can use for targeted cancellation via `POST /stop`. The `done` event marks chat text completion only. Panel generation continues in the same SSE stream and is represented by `panel_*` events. An `error` emitted before `done` is fatal for that turn. An `error` emitted after `done` is a non-fatal warning: the user-visible reply was already delivered, but a later save or post-stream update failed. If the user cancels a turn mid-stream, the backend emits `interrupted` (with partial text and reason) instead of `done`; if cancellation occurs during the panel phase, `panel_interrupted` is emitted instead of `panel_done`. The assistant message is persisted with `completion_status = "interrupted"`. The final persisted assistant usage summary includes both chat-phase and panel-phase usage.
+The `turn_started` event is emitted at the beginning of every turn with a unique `turn_id` that the client can use for targeted cancellation via `POST /stop`. The `done` event marks chat text completion only. When insights are live, detached panel follow-up then runs on a second SSE request and is represented by `panel_*` events there. An `error` emitted before `done` is fatal for that turn. An `error` emitted after `done` is a non-fatal warning: the user-visible reply was already delivered, but a later save or post-stream update failed. If the user cancels a turn mid-stream, the backend emits `interrupted` (with partial text and reason) instead of `done`. Detached follow-up currently completes with `panel_done` or `panel_error` rather than a panel-phase interruption event because it runs outside the chat turn cancellation registry. The assistant message is persisted with `completion_status = "interrupted"` only for interrupted chat turns. The final persisted assistant usage summary includes both chat-phase and follow-up usage once follow-up completes.
 
 All HTTP responses may include an `X-Request-ID` header for correlation; chat and panel debugging workflows rely on that value to filter structured backend logs.
 
@@ -311,7 +308,7 @@ Scorecard dimensions: **price**, **financing**, **trade_in**, **fees**, **overal
 
 ### Claude Tool Definitions
 
-The AI advisor uses 10 tools to drive the frontend dashboard and quick actions in real time:
+The AI advisor uses a set of tools to drive the frontend dashboard and structured deal state in real time:
 
 
 | Tool                     | Purpose                                    | Required Fields                  |
@@ -321,7 +318,6 @@ The AI advisor uses 10 tools to drive the frontend dashboard and quick actions i
 | `update_scorecard`       | Set red/yellow/green ratings               | None (all optional)              |
 | `set_vehicle`            | Set or update the vehicle under discussion | `make`, `model`                  |
 | `update_checklist`       | Update buyer's action item checklist       | `items` (array of {label, done}) |
-| `update_quick_actions`   | Suggest 2-3 dynamic quick action buttons   | `actions` (array of {label, prompt}) |
 | `update_buyer_context`   | Change buyer's situational context mid-conversation | `buyer_context` |
 | `update_deal_health`     | Overall deal health assessment (status + summary + recommendation) | `status`, `summary`, `recommendation` |
 | `update_red_flags`       | Surface specific deal problems with severity | `flags` (array of {id, severity, message}) |
@@ -669,7 +665,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Parameter      | Value                  |
 | -------------- | ---------------------- |
 | Primary model  | `claude-sonnet-4-6` (`CLAUDE_MODEL`)    |
-| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — quick action generation and session title generation (not used for context compaction summarization) |
+| Fast model     | `claude-haiku-4-5-20251001` (`CLAUDE_FAST_MODEL`) — session title generation and lightweight helper tasks (not used for context compaction summarization) |
 | Max tokens     | 4096 (configurable via `CLAUDE_MAX_TOKENS`)    |
 | Tool use       | 10 tool definitions (primary model only)   |
 | Streaming      | Yes (messages.stream)  |
@@ -677,7 +673,7 @@ All primary keys are UUIDv4 strings, generated at the application layer via `uui
 | Client library | `anthropic` Python SDK |
 
 
-The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. **Context compaction** (when enabled) uses the same primary model (`CLAUDE_MODEL`) for summarization, separate from the chat step loop, and may precede chat streaming in the same SSE response (ADR 0017). The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness, then AI panel generation runs asynchronously in the same SSE stream via `panel_started` / `panel_done` / `panel_error`. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage aggregates chat and panel phases. Prompt cache break detection (`prompt_cache_signature.py`) fingerprints system prompt, tools, and model via SHA-256 and logs INFO-level cache breaks across turns; break counts and last-known fingerprints are persisted on `SessionUsageSummary`.
+The primary integration uses the Anthropic async client for both streaming and non-streaming calls. Text deltas and tool call results are relayed to the frontend as SSE events in real time. **Context compaction** (when enabled) uses the same primary model (`CLAUDE_MODEL`) for summarization, separate from the chat step loop, and may precede chat streaming in the same SSE response (ADR 0017). The backend uses a bounded multi-step loop: when a step finishes with tool calls, those results are appended back into the transcript and Claude is called again until the turn reaches a text completion or the retry or step budget is exhausted. If a step is truncated at `max_tokens`, the backend retries with an escalated bounded token budget. After the step loop completes, `done` is emitted immediately for chat-first responsiveness; when insights are live, the client then opens detached `POST /api/chat/{session_id}/insights-followup`, which emits `panel_started` and terminal `panel_done` or `panel_error` on that second SSE request. Session title generation uses Haiku. Session-bound re-analysis via `analyze_deal()` uses Sonnet. Persisted assistant usage starts with the chat phase and later merges detached follow-up usage when follow-up completes. Prompt cache break detection (`prompt_cache_signature.py`) fingerprints system prompt, tools, and model via SHA-256 and logs INFO-level cache breaks across turns; break counts and last-known fingerprints are persisted on `SessionUsageSummary`.
 
 ### No Other External Integrations (v1)
 
@@ -737,11 +733,11 @@ All domain string values are defined as Python `StrEnum` types in `app/models/en
 
 - **snake_case to camelCase mapping**: The `snakeToCamel` utility (`lib/utils.ts`) converts backend snake_case keys to frontend camelCase, replacing hand-mapped field assignments in the deal store.
 - **Markdown rendering**: Assistant chat bubbles render content as Markdown via `react-native-markdown-display`, supporting bold, italic, lists, code blocks, blockquotes, and links. User messages render as plain text.
-- **Client-side message queue**: Users can send messages while the AI is still processing — messages are queued client-side (`queueBySession` in chatStore) and dispatched FIFO. `_sendMessageImmediate` handles the actual send; `_recheckQueueDispatch` / `_runQueueItem` drive sequential dispatch. QueuePreviewCard renders up to 3 pending items above the composer. ChatInput and QuickActions remain always enabled. Branch edit is blocked while the queue has pending items. See ADR 0022.
+- **Client-side message queue**: Users can send messages while the AI is still processing — messages are queued client-side (`queueBySession` in chatStore) and dispatched FIFO. `_sendMessageImmediate` handles the actual send; `_recheckQueueDispatch` / `_runQueueItem` drive sequential dispatch. QueuePreviewCard renders up to 3 pending items above the composer. ChatInput remains enabled. Branch edit is blocked while the queue has pending items. See ADR 0022.
 - **Optimistic message rollback**: When sending a chat message, the user message is added to the store optimistically. If the backend request fails, the message is removed from the store.
 - **Duplicate user message prevention**: Message history is loaded before the new user turn is persisted; optional compaction may persist a system notice first, then the user message is saved so the current turn is not duplicated in the constructed Claude context.
-- **Event-based SSE parsing**: The `useChat` hook parses SSE streams, dispatching `turn_started`, `compaction_*`, `text`, `tool_result`, `retry`, `step`, `done`, `interrupted`, `panel_interrupted`, and panel lifecycle events to store handlers. Message list fetches receive `context_pressure` alongside `messages` for UI context warnings.
-- **Stop generation**: ChatInput shows a stop button while the AI is streaming. Pressing it calls `chatStore.stopGeneration()`, which hits `POST /api/chat/{session_id}/stop` with the active `turn_id`. The store tracks `activeTurnId` (set on `turn_started`), `isStopRequested` (optimistic UI), and `panelInterruptionNotice` (set on `panel_interrupted` to show a refresh prompt in the InsightsPanel). On `interrupted`, the partial assistant text is kept and the message is finalized. On `panel_interrupted`, the InsightsPanel shows a notice with a "Refresh" button that calls `POST /api/chat/{session_id}/panel-refresh`. See ADR 0023.
+- **Event-based SSE parsing**: The `useChat` hook parses chat SSE streams (`turn_started`, `compaction_*`, `text`, `tool_result`, `retry`, `step`, `done`, `interrupted`) and the detached panel follow-up SSE lifecycle (`panel_started`, `panel_done`, `panel_error`). The client still tolerates legacy `panel_interrupted` payloads defensively, but the detached follow-up path currently finishes with `panel_done` or `panel_error`. Message list fetches receive `context_pressure` alongside `messages` for UI context warnings.
+- **Stop generation**: ChatInput shows a stop button while the AI is streaming. Pressing it calls `chatStore.stopGeneration()`, which hits `POST /api/chat/{session_id}/stop` with the active `turn_id`. The store tracks `activeTurnId` (set on `turn_started`) and `isStopRequested` (optimistic UI). On `interrupted`, the partial assistant text is kept and the message is finalized. Detached panel follow-up is not currently cancelled by `POST /stop`; when follow-up fails or needs a rerun, the InsightsPanel shows a refresh affordance backed by `POST /api/chat/{session_id}/panel-refresh`. See ADR 0023 and ADR 0025.
 - **Error handling in stores and auth screens**: All Zustand stores and auth screens include try/catch error handling with user-facing error state.
 - **Chats list as buyer home screen**: The `/(app)/chats` screen is the buyer's landing page, showing sessions in Active/Past sections with search, pull-to-refresh, and SessionCard components displaying phase dot, message preview, and deal summary line.
 - **Auto-generated session titles**: Sessions receive automatic titles — deterministic vehicle titles when a vehicle is set, LLM-generated via Haiku as a fallback. Manual renames via PATCH set `auto_title=false`, preventing further auto-updates.

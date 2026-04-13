@@ -322,20 +322,36 @@ export const InsightsPanel = memo(function InsightsPanel({
     () => useChatStore.setState({ panelInterruptionNotice: null }),
     []
   )
+  const panelNoticeText =
+    panelInterruptionNotice?.reason === 'error'
+      ? 'Insights update failed. Refresh to try again.'
+      : 'Insights update stopped.'
   const refreshPanel = useCallback(async () => {
     const activeSessionId = useChatStore.getState().activeSessionId
-    if (!activeSessionId) return
+    if (!activeSessionId || useChatStore.getState().isPanelAnalyzing) return
     setIsRefreshingAfterInterruption(true)
     useChatStore.setState({ isPanelAnalyzing: true })
     try {
       const refreshed = await api.refreshInsightsPanel(activeSessionId)
-      useDealStore.getState().applyToolCall({
-        name: 'update_insights_panel',
-        args: {
-          cards: refreshed.cards,
-          assistantMessageId: refreshed.assistantMessageId,
-        },
-      })
+      let dealStateReloaded = false
+      try {
+        await useDealStore.getState().loadDealState(activeSessionId)
+        dealStateReloaded = true
+      } catch (error) {
+        console.warn(
+          '[InsightsPanel] loadDealState after refresh failed:',
+          error instanceof Error ? error.message : error
+        )
+      }
+      if (!dealStateReloaded) {
+        useDealStore.getState().applyToolCall({
+          name: 'update_insights_panel',
+          args: {
+            cards: refreshed.cards,
+            assistantMessageId: refreshed.assistantMessageId,
+          },
+        })
+      }
       useChatStore.setState((state) => ({
         panelInterruptionNotice: null,
         messages: state.messages.map((message) =>
@@ -349,6 +365,12 @@ export const InsightsPanel = memo(function InsightsPanel({
         '[InsightsPanel] refreshInsightsPanel failed:',
         error instanceof Error ? error.message : error
       )
+      useChatStore.setState({
+        panelInterruptionNotice: {
+          reason: 'error',
+          at: new Date().toISOString(),
+        },
+      })
     } finally {
       setIsRefreshingAfterInterruption(false)
       useChatStore.setState({ isPanelAnalyzing: false })
@@ -404,13 +426,13 @@ export const InsightsPanel = memo(function InsightsPanel({
           paddingHorizontal="$3.5"
           borderRadius="$5"
           borderWidth={1}
-          borderColor={isPausedMode ? '$borderColor' : 'transparent'}
+          borderColor={isPausedMode ? '$borderColor' : '$brand'}
           backgroundColor={isPausedMode ? '$backgroundStrong' : '$brand'}
           onPress={toggleUpdateMode}
           disabled={isSettingsUpdating}
           hoverStyle={{
             backgroundColor: isPausedMode ? '$backgroundHover' : '$brand',
-            borderColor: isPausedMode ? '$borderColor' : 'transparent',
+            borderColor: isPausedMode ? '$borderColor' : '$brand',
           }}
           pressStyle={{ opacity: 0.9 }}
           {...(Platform.OS === 'web'
@@ -438,7 +460,7 @@ export const InsightsPanel = memo(function InsightsPanel({
           borderRadius="$5"
           backgroundColor="$brand"
           onPress={refreshPanel}
-          disabled={isRefreshingAfterInterruption}
+          disabled={isRefreshingAfterInterruption || isPanelAnalyzing}
           pressStyle={{ opacity: 0.85 }}
           {...(Platform.OS === 'web'
             ? ({ 'aria-label': 'Refresh insights now' } as any)
@@ -489,7 +511,7 @@ export const InsightsPanel = memo(function InsightsPanel({
               backgroundColor="$backgroundHover"
             >
               <Text fontSize={12} color="$placeholderColor" flex={1}>
-                Insights update stopped.
+                {panelNoticeText}
               </Text>
               <Button
                 size="$3"
@@ -503,12 +525,12 @@ export const InsightsPanel = memo(function InsightsPanel({
                   ? ({
                       'aria-label': isRefreshingAfterInterruption
                         ? 'Refreshing insights'
-                        : 'Refresh insights after interruption',
+                        : 'Refresh insights',
                     } as any)
                   : {
                       accessibilityLabel: isRefreshingAfterInterruption
                         ? 'Refreshing insights'
-                        : 'Refresh insights after interruption',
+                        : 'Refresh insights',
                     })}
               >
                 <Button.Text fontSize={11}>
@@ -523,8 +545,8 @@ export const InsightsPanel = memo(function InsightsPanel({
                 onPress={dismissPanelInterruptionNotice}
                 pressStyle={{ opacity: 0.85 }}
                 {...(Platform.OS === 'web'
-                  ? ({ 'aria-label': 'Dismiss interruption notice' } as any)
-                  : { accessibilityLabel: 'Dismiss interruption notice' })}
+                  ? ({ 'aria-label': 'Dismiss panel notice' } as any)
+                  : { accessibilityLabel: 'Dismiss panel notice' })}
               >
                 <Button.Text fontSize={11}>Dismiss</Button.Text>
               </Button>

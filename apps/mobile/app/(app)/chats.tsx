@@ -140,7 +140,7 @@ function SearchBar({
           placeholder="Search chats..."
           value={searchQuery}
           onChangeText={onChangeText}
-          backgroundColor="transparent"
+          backgroundColor="$backgroundHover"
           borderWidth={0}
           {...(Platform.OS === 'web' ? { style: { outlineWidth: 0 } } : {})}
         />
@@ -265,9 +265,7 @@ export default function SessionsScreen() {
     useChatStore.setState({
       activeSessionId: null,
       messages: [],
-      quickActions: [],
       aiResponseCount: 0,
-      quickActionsUpdatedAtResponse: 0,
       _sessionJustCreated: false,
     })
     router.push('/(app)/chat')
@@ -302,7 +300,7 @@ export default function SessionsScreen() {
             titleKey={`${APP_NAME}-${isFocused ? 'focused' : 'blurred'}`}
             scrambleActive={isFocused}
             iconTrigger={isFocused}
-            rightIcon={<MessageSquarePlus size={22} color="white" />}
+            rightIcon={<MessageSquarePlus size={22} color="$white" />}
             onRightPress={handleNew}
             rightLabel="Start new chat"
           />
