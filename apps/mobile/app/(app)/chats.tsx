@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { SectionList, RefreshControl, Animated, Platform } from 'react-native'
-import { YStack, XStack, Text, Input } from 'tamagui'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  SectionList,
+  RefreshControl,
+  Animated,
+  Platform,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { YStack, XStack, Text, Input, useTheme, useThemeName } from 'tamagui'
 import {
   ThemedSafeArea,
   LoadingIndicator,
@@ -10,7 +17,7 @@ import {
   ScreenHeader,
 } from '@/components/shared'
 import { useRouter } from 'expo-router'
-import { MessageSquarePlus, Search, Settings } from '@tamagui/lucide-icons'
+import { MessageSquarePlus, Search, Settings, X } from '@tamagui/lucide-icons'
 import { useIsFocused } from '@react-navigation/native'
 import type { Session } from '@/lib/types'
 import { APP_NAME } from '@/lib/constants'
@@ -19,6 +26,18 @@ import { useFocusEffect } from 'expo-router'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { SessionCard } from '@/components/chats'
+import { palette } from '@/lib/theme/tokens'
+
+/** Target width for search + cards (inside horizontal insets). */
+const CHATS_CONTENT_MAX_WIDTH = 480
+/**
+ * Same horizontal inset on the fixed search row and on SectionList *scroll content*.
+ * ScrollViews clip to their bounds — shadows must draw inside this inset, not only on outer YStacks.
+ */
+const CHATS_EDGE_INSET = 24
+const CHATS_SHEET_MAX_WIDTH = CHATS_CONTENT_MAX_WIDTH + 2 * CHATS_EDGE_INSET
+/** Space below the search header (scrolls with the list) before section rows. */
+const CHATS_LIST_BELOW_SEARCH_GAP = 12
 
 // ─── Section builder: active deals above, past deals below ───
 
@@ -104,47 +123,210 @@ function SearchBar({
   onChangeText: (text: string) => void
   isFocused: boolean
 }) {
-  const translateY = useRef(new Animated.Value(-60)).current
+  const theme = useTheme()
+  const themeName = useThemeName()
+  const translateY = useRef(new Animated.Value(-32)).current
+  const opacity = useRef(new Animated.Value(0)).current
+  const [isInputFocused, setIsInputFocused] = useState(false)
+  const hasQuery = searchQuery.trim().length > 0
+  const isDarkTheme = typeof themeName === 'string' && themeName.startsWith('dark')
+  const shellBackgroundColor = (theme.backgroundStrong?.val as string | undefined) ?? palette.white
+  const fieldBackgroundColor = isDarkTheme
+    ? palette.whiteTint10
+    : ((theme.background?.val as string | undefined) ?? palette.white)
+  const iconBackgroundColor = isDarkTheme
+    ? 'rgba(255,255,255,0.06)'
+    : ((theme.backgroundHover?.val as string | undefined) ?? palette.white)
+  const shadowColor = (theme.shadowColor?.val as string | undefined) ?? palette.shadowOverlay
+  const isIconHighlighted = isInputFocused || hasQuery
+  const iconHighlightShadow = isDarkTheme
+    ? `0 10px 24px ${shadowColor}, 0 0 0 1px rgba(45,136,255,0.28)`
+    : `0 10px 24px ${shadowColor}, 0 0 0 1px rgba(45,136,255,0.14)`
+  const inputHighlightShadow = isDarkTheme
+    ? `0 10px 24px ${shadowColor}, 0 0 0 1px rgba(45,136,255,0.36)`
+    : `0 10px 24px ${shadowColor}, 0 0 0 1px rgba(45,136,255,0.16)`
+  const shellBoxShadow = isDarkTheme
+    ? `0 1px 3px ${shadowColor}, 0 1px 2px ${shadowColor}`
+    : '0 10px 24px rgba(28,30,33,0.08), 0 2px 8px rgba(28,30,33,0.04)'
 
   useEffect(() => {
     if (!isFocused) return
-    translateY.setValue(-60)
-    Animated.timing(translateY, {
-      toValue: 0,
-      duration: 280,
-      useNativeDriver: USE_NATIVE_DRIVER,
-    }).start()
-  }, [translateY, isFocused])
+    translateY.setValue(-32)
+    opacity.setValue(0)
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 280,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start()
+  }, [opacity, translateY, isFocused])
 
   return (
     <Animated.View
       style={{
         transform: [{ translateY }],
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 0,
+        opacity,
+        position: 'relative',
+        zIndex: 1,
+        paddingTop: 14,
+        paddingBottom: 6,
       }}
     >
-      <XStack
-        alignItems="center"
-        gap="$2"
-        backgroundColor="$backgroundHover"
-        borderRadius="$3"
-        paddingHorizontal="$3"
-        minHeight={44}
-      >
-        <Search size={16} color="$placeholderColor" />
-        <Input
-          flex={1}
-          size="$3"
-          placeholder="Search chats..."
-          value={searchQuery}
-          onChangeText={onChangeText}
-          backgroundColor="$backgroundHover"
-          borderWidth={0}
-          {...(Platform.OS === 'web' ? { style: { outlineWidth: 0 } } : {})}
-        />
-      </XStack>
+      <YStack width="100%" gap="$2">
+        <Text
+          fontSize={11}
+          fontWeight="700"
+          textTransform="uppercase"
+          letterSpacing={1.2}
+          color="$placeholderColor"
+        >
+          Conversations
+        </Text>
+
+        <XStack
+          width="100%"
+          minHeight={58}
+          alignItems="center"
+          gap={10}
+          padding={6}
+          borderRadius={18}
+          borderWidth={1}
+          borderColor="$borderColor"
+          backgroundColor={shellBackgroundColor}
+          shadowColor={shadowColor}
+          shadowOffset={{ width: 0, height: 4 }}
+          shadowOpacity={isDarkTheme ? 0.16 : 0.08}
+          shadowRadius={isDarkTheme ? 10 : 16}
+          elevation={Platform.OS === 'android' ? 3 : 0}
+          {...(Platform.OS === 'web'
+            ? {
+                style: {
+                  boxShadow: shellBoxShadow,
+                },
+              }
+            : null)}
+        >
+          <XStack
+            width={44}
+            height={44}
+            borderRadius={999}
+            alignItems="center"
+            justifyContent="center"
+            backgroundColor={isIconHighlighted ? '$borderColorHover' : iconBackgroundColor}
+            borderWidth={1}
+            borderColor={isIconHighlighted ? '$borderColorHover' : 'transparent'}
+            shadowColor={shadowColor}
+            shadowOffset={{ width: 0, height: 8 }}
+            shadowOpacity={isIconHighlighted ? 0.16 : 0}
+            shadowRadius={16}
+            elevation={Platform.OS === 'android' && isIconHighlighted ? 3 : 0}
+            {...(Platform.OS === 'web'
+              ? {
+                  style: {
+                    boxShadow: isIconHighlighted ? iconHighlightShadow : 'none',
+                  },
+                }
+              : null)}
+            flexShrink={0}
+          >
+            <Search size={16} color={isIconHighlighted ? '$white' : '$placeholderColor'} />
+          </XStack>
+
+          <XStack
+            flex={1}
+            minHeight={46}
+            alignItems="center"
+            borderRadius={16}
+            paddingHorizontal={14}
+            backgroundColor={fieldBackgroundColor}
+            borderWidth={1}
+            borderColor={isInputFocused ? '$borderColorHover' : 'transparent'}
+            shadowColor={shadowColor}
+            shadowOffset={{ width: 0, height: 8 }}
+            shadowOpacity={isInputFocused ? 0.16 : 0}
+            shadowRadius={16}
+            elevation={Platform.OS === 'android' && isInputFocused ? 3 : 0}
+            {...(Platform.OS === 'web'
+              ? {
+                  style: {
+                    boxShadow: isInputFocused ? inputHighlightShadow : 'none',
+                  },
+                }
+              : null)}
+          >
+            <Input
+              flex={1}
+              size="$4"
+              placeholder="Search your chats"
+              placeholderTextColor="$placeholderColor"
+              value={searchQuery}
+              onChangeText={onChangeText}
+              backgroundColor="transparent"
+              borderWidth={0}
+              borderColor="transparent"
+              color="$color"
+              paddingHorizontal={0}
+              paddingVertical={0}
+              focusStyle={{
+                borderColor: 'transparent',
+                outlineColor: 'transparent',
+                outlineStyle: 'none',
+                outlineWidth: 0,
+              }}
+              focusVisibleStyle={{
+                borderColor: 'transparent',
+                outlineColor: 'transparent',
+                outlineStyle: 'none',
+                outlineWidth: 0,
+              }}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
+              {...(Platform.OS === 'web'
+                ? {
+                    style: {
+                      outlineWidth: 0,
+                      outlineStyle: 'none',
+                      boxShadow: 'none',
+                    },
+                  }
+                : {})}
+            />
+          </XStack>
+
+          {hasQuery ? (
+            <TouchableOpacity
+              onPress={() => onChangeText('')}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              style={{
+                width: 44,
+                height: 44,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <XStack
+                width={36}
+                height={36}
+                borderRadius={999}
+                alignItems="center"
+                justifyContent="center"
+                backgroundColor="$backgroundHover"
+              >
+                <X size={14} color="$placeholderColor" />
+              </XStack>
+            </TouchableOpacity>
+          ) : null}
+        </XStack>
+      </YStack>
     </Animated.View>
   )
 }
@@ -158,6 +340,7 @@ let didAutoNavigate = false
 export default function SessionsScreen() {
   const router = useRouter()
   const isFocused = useIsFocused()
+  const theme = useTheme()
   const sessions = useChatStore((state) => state.sessions)
   const isLoading = useChatStore((state) => state.isLoading)
   const loadSessions = useChatStore((state) => state.loadSessions)
@@ -283,6 +466,30 @@ export default function SessionsScreen() {
 
   const displaySessions = searchResults ?? sessions
   const sections = buildSections(displaySessions)
+
+  const searchBarRow = useMemo(() => {
+    if (sessions.length === 0) return null
+    return (
+      <View style={{ width: '100%', alignItems: 'center' }}>
+        <View
+          style={{
+            width: '100%',
+            maxWidth: CHATS_SHEET_MAX_WIDTH,
+            paddingHorizontal: CHATS_EDGE_INSET,
+          }}
+        >
+          <YStack width="100%" paddingBottom={CHATS_LIST_BELOW_SEARCH_GAP}>
+            <SearchBar
+              searchQuery={searchQuery}
+              onChangeText={handleSearchChange}
+              isFocused={isFocused}
+            />
+          </YStack>
+        </View>
+      </View>
+    )
+  }, [sessions.length, searchQuery, handleSearchChange, isFocused])
+
   const showEmptyState = !isLoading && !loadError && sessions.length === 0 && !searchQuery
   const showEmptySearch =
     searchQuery.trim() && !isSearching && !searchError && displaySessions.length === 0
@@ -290,7 +497,7 @@ export default function SessionsScreen() {
 
   return (
     <RoleGuard role="buyer">
-      <ThemedSafeArea edges={['top']}>
+      <ThemedSafeArea edges={['top']} style={{ overflow: 'visible' }}>
         <YStack flex={1} backgroundColor="$background">
           <ScreenHeader
             leftIcon={<Settings size={22} color="$color" />}
@@ -300,74 +507,113 @@ export default function SessionsScreen() {
             titleKey={`${APP_NAME}-${isFocused ? 'focused' : 'blurred'}`}
             scrambleActive={isFocused}
             iconTrigger={isFocused}
-            rightIcon={<MessageSquarePlus size={22} color="$white" />}
+            rightIcon={<MessageSquarePlus size={22} color="$color" />}
             onRightPress={handleNew}
             rightLabel="Start new chat"
           />
 
-          <YStack flex={1} overflow="hidden">
-            {/* Search bar (only show when there are sessions) */}
-            {sessions.length > 0 && (
-              <SearchBar
-                searchQuery={searchQuery}
-                onChangeText={handleSearchChange}
-                isFocused={isFocused}
-              />
-            )}
-
+          <YStack flex={1} overflow="visible">
             {/* Content */}
             {isLoading && sessions.length === 0 ? (
               <LoadingIndicator message="Loading your chats..." />
             ) : loadError ? (
               <ErrorState onRetry={loadSessionsWithError} />
-            ) : showEmptyState ? (
-              <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
-            ) : showSearchError ? (
-              <ErrorState onRetry={() => handleSearchChange(searchQuery)} />
-            ) : showEmptySearch ? (
-              <EmptySearchState query={searchQuery} />
             ) : (
-              <SectionList
-                sections={sections}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{
-                  paddingTop: 12,
-                  paddingHorizontal: 16,
-                  paddingBottom: 16,
-                  maxWidth: 480,
-                  width: '100%',
-                  alignSelf: 'center',
-                }}
-                ItemSeparatorComponent={() => <YStack height={12} />}
-                renderSectionHeader={({ section }) =>
-                  sections.length > 1 ? (
-                    <Text
-                      fontSize={12}
-                      fontWeight="600"
-                      color="$placeholderColor"
-                      textTransform="uppercase"
-                      letterSpacing={0.5}
-                      marginBottom="$2"
-                      marginTop="$3"
-                    >
-                      {section.title}
-                    </Text>
-                  ) : null
-                }
-                renderItem={({ item, index }) => (
-                  <SessionCard
-                    session={item}
-                    index={index}
-                    onSelect={handleSelect}
-                    onDelete={setDeleteTarget}
-                    isFocused={isFocused}
-                  />
+              <YStack flex={1} width="100%" backgroundColor="transparent" overflow="visible">
+                {searchBarRow}
+                {showSearchError ? (
+                  <ErrorState onRetry={() => handleSearchChange(searchQuery)} />
+                ) : showEmptySearch ? (
+                  <EmptySearchState query={searchQuery} />
+                ) : showEmptyState ? (
+                  <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
+                ) : (
+                  <YStack
+                    flex={1}
+                    width="100%"
+                    minHeight={0}
+                    backgroundColor="transparent"
+                    overflow="visible"
+                  >
+                    <SectionList
+                      sections={sections}
+                      keyExtractor={(item) => item.id}
+                      removeClippedSubviews={false}
+                      style={
+                        Platform.OS === 'web'
+                          ? ({
+                              flex: 1,
+                              minHeight: 0,
+                              width: '100%',
+                              backgroundColor: 'transparent',
+                              scrollbarWidth: 'thin',
+                              scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
+                            } as any)
+                          : {
+                              flex: 1,
+                              minHeight: 0,
+                              width: '100%',
+                              backgroundColor: 'transparent',
+                            }
+                      }
+                      contentContainerStyle={{
+                        flexGrow: 1,
+                        backgroundColor: 'transparent',
+                        paddingBottom: 16,
+                      }}
+                      ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+                      renderSectionHeader={({ section }) =>
+                        sections.length > 1 ? (
+                          <View style={{ width: '100%', alignItems: 'center' }}>
+                            <View
+                              style={{
+                                width: '100%',
+                                maxWidth: CHATS_SHEET_MAX_WIDTH,
+                                paddingHorizontal: CHATS_EDGE_INSET,
+                              }}
+                            >
+                              <Text
+                                fontSize={12}
+                                fontWeight="600"
+                                color="$placeholderColor"
+                                textTransform="uppercase"
+                                letterSpacing={0.5}
+                                marginBottom="$2"
+                                marginTop="$3"
+                              >
+                                {section.title}
+                              </Text>
+                            </View>
+                          </View>
+                        ) : null
+                      }
+                      renderItem={({ item, index }) => (
+                        <View style={{ width: '100%', alignItems: 'center' }}>
+                          <View
+                            style={{
+                              width: '100%',
+                              maxWidth: CHATS_SHEET_MAX_WIDTH,
+                              paddingHorizontal: CHATS_EDGE_INSET,
+                            }}
+                          >
+                            <SessionCard
+                              session={item}
+                              index={index}
+                              onSelect={handleSelect}
+                              onDelete={setDeleteTarget}
+                              isFocused={isFocused}
+                            />
+                          </View>
+                        </View>
+                      )}
+                      refreshControl={
+                        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+                      }
+                      stickySectionHeadersEnabled={false}
+                    />
+                  </YStack>
                 )}
-                refreshControl={
-                  <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-                }
-                stickySectionHeadersEnabled={false}
-              />
+              </YStack>
             )}
           </YStack>
         </YStack>

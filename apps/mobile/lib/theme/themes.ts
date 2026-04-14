@@ -5,6 +5,8 @@
  * Wrap any subtree with `<Theme name="danger">` to activate a sub-theme.
  */
 
+import { palette } from './tokens'
+
 // ─── Base Themes ───
 
 export const lightTheme = {
@@ -24,6 +26,8 @@ export const lightTheme = {
   placeholderColor: '#8A8D91',
   shadowColor: 'rgba(0,0,0,0.08)',
   shadowColorHover: 'rgba(0,0,0,0.12)',
+  /** Icon wells (e.g. ContextPicker); token default is too dark on light surfaces. */
+  brandSubtle: 'rgba(45, 136, 255, 0.12)',
 } as const
 
 export const darkTheme = {
@@ -56,6 +60,7 @@ export const darkTheme = {
   color10: '#1877F2',
   color11: '#C8CCD1',
   color12: '#E4E6EB',
+  brandSubtle: palette.brandSubtle,
 } as const
 
 // ─── Semantic Sub-Themes ───

@@ -25,8 +25,8 @@ import {
   MOBILE_INSIGHTS_WIDTH_RATIO,
   MOBILE_INSIGHTS_MAX_WIDTH,
   MAX_INSIGHTS_PREVIEW_ITEMS,
-  WEB_FONT_FAMILY,
 } from '@/lib/constants'
+import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
 import {
   CHAT_SCREEN_LAYOUT,
   getChatBottomPadding,
@@ -732,7 +732,7 @@ export default function ChatScreen() {
       onLeftPress={handleBack}
       leftLabel="Back to chats"
       title={headerTitle}
-      rightIcon={<MessageSquarePlus size={22} color="$white" />}
+      rightIcon={<MessageSquarePlus size={22} color="$color" />}
       onRightPress={handleNewSession}
       rightLabel="Start new chat"
     />
@@ -1132,9 +1132,9 @@ export default function ChatScreen() {
                           headerAccessory={
                             <Button
                               size="$3"
-                              width={36}
-                              minWidth={36}
-                              minHeight={36}
+                              width={44}
+                              minWidth={44}
+                              minHeight={44}
                               paddingHorizontal="$0"
                               borderRadius="$5"
                               backgroundColor="$backgroundHover"
@@ -1142,8 +1142,8 @@ export default function ChatScreen() {
                               borderColor="$borderColor"
                               onPress={handleDesktopCollapsePress}
                               hoverStyle={{
-                                backgroundColor: '$danger',
-                                borderColor: '$danger',
+                                backgroundColor: '$backgroundPress',
+                                borderColor: '$borderColorHover',
                               }}
                               pressStyle={{ opacity: 0.85 }}
                               {...(Platform.OS === 'web'
@@ -1156,7 +1156,7 @@ export default function ChatScreen() {
                                   transform: [{ rotate: desktopPanelCollapseEntrance.rotate }],
                                 }}
                               >
-                                <X size={16} color="$white" />
+                                <X size={18} color="$color" />
                               </Animated.View>
                             </Button>
                           }
@@ -1208,7 +1208,7 @@ export default function ChatScreen() {
             )
           }
         >
-          <View style={{ flex: 1, fontFamily: WEB_FONT_FAMILY } as any}>
+          <View style={{ flex: 1, ...modalWebFontFamilyStyle() } as any}>
             {Platform.OS === 'web' ? (
               <View
                 {...({
@@ -1295,8 +1295,8 @@ export default function ChatScreen() {
                               borderColor="$borderColor"
                               onPress={() => setIsInsightsOpen(false)}
                               hoverStyle={{
-                                backgroundColor: '$danger',
-                                borderColor: '$danger',
+                                backgroundColor: '$backgroundPress',
+                                borderColor: '$borderColorHover',
                               }}
                               pressStyle={{ opacity: 0.85 }}
                               {...(Platform.OS === 'web'
@@ -1306,7 +1306,7 @@ export default function ChatScreen() {
                                   } as any)
                                 : { accessibilityLabel: 'Close insights' })}
                             >
-                              <X size={16} color="$white" />
+                              <X size={18} color="$color" />
                             </Button>
                           }
                         />

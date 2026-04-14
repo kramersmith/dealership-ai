@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react'
 import { Modal, TouchableOpacity, Animated, Platform, View } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
+import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
 import { palette } from '@/lib/theme/tokens'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
@@ -81,6 +82,7 @@ export function ConfirmModal({
           justifyContent: 'center',
           alignItems: 'center',
           paddingHorizontal: 16,
+          ...modalWebFontFamilyStyle(),
         }}
         activeOpacity={1}
         onPress={onCancel}
@@ -110,8 +112,8 @@ export function ConfirmModal({
               <XStack gap="$3" justifyContent="flex-end">
                 <AppButton
                   variant="ghost"
+                  compact
                   onPress={onCancel}
-                  minHeight={44}
                   minWidth={80}
                   {...(Platform.OS === 'web' ? ({ id: webCancelDomId } as any) : {})}
                 >
@@ -119,8 +121,8 @@ export function ConfirmModal({
                 </AppButton>
                 <AppButton
                   variant={confirmVariant === 'primary' ? 'primary' : 'danger'}
+                  compact
                   onPress={onConfirm}
-                  minHeight={44}
                   minWidth={80}
                 >
                   {confirmLabel}

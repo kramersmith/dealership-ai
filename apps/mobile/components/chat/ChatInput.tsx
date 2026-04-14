@@ -21,7 +21,6 @@ const MAX_INPUT_HEIGHT = 118
 const INPUT_HEIGHT_TRANSITION_MS = 140
 const EDIT_MODE_BANNER_TRANSITION_MS = 220
 const EDIT_MODE_BANNER_MAX_HEIGHT = 88
-
 interface ChatInputProps {
   onSend: (content: string, imageUri?: string) => void
   onStop?: () => void
@@ -29,7 +28,6 @@ interface ChatInputProps {
   isGenerating?: boolean
   isStopRequested?: boolean
   placeholder?: string
-  visible?: boolean
   /** When set with ``onControlledTextChange``, the field is controlled (branch edit). */
   controlledText?: string | null
   onControlledTextChange?: (text: string) => void
@@ -48,7 +46,6 @@ export function ChatInput({
   isGenerating = false,
   isStopRequested = false,
   placeholder,
-  visible = true,
   controlledText,
   onControlledTextChange,
   editModeBanner,
@@ -62,12 +59,6 @@ export function ChatInput({
   const inputRef = useRef<TextInput>(null)
   const theme = useTheme()
   const focusAnim = useRef(new Animated.Value(0)).current
-  const { opacity: visibilityOpacity, translateY: visibilityTranslateY } = useVisibilityTransition({
-    visible,
-    duration: 240,
-    hiddenOffsetY: 20,
-    animateOnMount: true,
-  })
   const animatedInputHeight = useAnimatedNumber(inputHeight, INPUT_HEIGHT_TRANSITION_MS)
   const showEditModeBanner = !!editModeBanner
   const bannerMaxHeight = useAnimatedNumber(
@@ -205,9 +196,7 @@ export function ChatInput({
   const usesFloatingSurface = surfaceVariant === 'floating'
 
   return (
-    <Animated.View
-      style={{ opacity: visibilityOpacity, transform: [{ translateY: visibilityTranslateY }] }}
-    >
+    <YStack width="100%">
       {activeEditModeBanner ? (
         <Animated.View
           style={{
@@ -383,6 +372,6 @@ export function ChatInput({
           <VoiceButton onPress={handleVoice} />
         )}
       </XStack>
-    </Animated.View>
+    </YStack>
   )
 }

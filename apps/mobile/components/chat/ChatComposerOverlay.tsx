@@ -1,6 +1,12 @@
 import type { ReactNode } from 'react'
-import { View, type LayoutChangeEvent } from 'react-native'
+import { Animated, View, type LayoutChangeEvent } from 'react-native'
 import { YStack } from 'tamagui'
+import { useSlideIn } from '@/hooks/useAnimatedValue'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+
+/** Floating tray (rounded dock): mount slide-up + fade — not the inner input row. */
+const COMPOSER_TRAY_ENTRANCE_MS = 360
+const COMPOSER_TRAY_ENTRANCE_OFFSET_Y = 72
 
 interface ChatComposerOverlayProps {
   isDesktop: boolean
@@ -23,6 +29,14 @@ export function ChatComposerOverlay({
   composer,
   onDesktopComposerTrayHeightChange,
 }: ChatComposerOverlayProps) {
+  const prefersReducedMotion = usePrefersReducedMotion()
+  const traySlideMs = prefersReducedMotion ? 0 : COMPOSER_TRAY_ENTRANCE_MS
+  const { opacity: trayOpacity, translateY: trayTranslateY } = useSlideIn(
+    traySlideMs,
+    0,
+    COMPOSER_TRAY_ENTRANCE_OFFSET_Y
+  )
+
   const handleDesktopComposerTrayLayout = (layoutEvent: LayoutChangeEvent) => {
     if (!onDesktopComposerTrayHeightChange) return
     const nextHeight = Math.ceil(layoutEvent.nativeEvent.layout.height)
@@ -45,9 +59,15 @@ export function ChatComposerOverlay({
           {notices}
           <View style={{ position: 'relative' }}>
             {queuePreview}
-            <YStack onLayout={handleDesktopComposerTrayLayout} style={composerTrayStyle}>
+            <Animated.View
+              onLayout={handleDesktopComposerTrayLayout}
+              style={[
+                composerTrayStyle,
+                { opacity: trayOpacity, transform: [{ translateY: trayTranslateY }] },
+              ]}
+            >
               {composer}
-            </YStack>
+            </Animated.View>
           </View>
         </YStack>
       </View>
@@ -59,7 +79,14 @@ export function ChatComposerOverlay({
       {notices}
       <View style={{ position: 'relative' }}>
         {queuePreview}
-        <YStack style={composerTrayStyle}>{composer}</YStack>
+        <Animated.View
+          style={[
+            composerTrayStyle,
+            { opacity: trayOpacity, transform: [{ translateY: trayTranslateY }] },
+          ]}
+        >
+          {composer}
+        </Animated.View>
       </View>
     </>
   )

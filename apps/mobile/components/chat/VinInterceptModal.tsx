@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Modal, TouchableOpacity, Animated, Platform, View } from 'react-native'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
+import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
 import { palette } from '@/lib/theme/tokens'
 import { AppButton } from '@/components/shared'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
@@ -150,6 +151,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
           justifyContent: 'center',
           alignItems: 'center',
           paddingHorizontal: 16,
+          ...modalWebFontFamilyStyle(),
         }}
         activeOpacity={1}
         onPress={() => {
@@ -225,7 +227,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
               {phase === 'prompt' ? (
                 <YStack gap="$2">
                   <AppButton
-                    minHeight={44}
+                    compact
                     onPress={handleDecode}
                     {...(Platform.OS === 'web'
                       ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
@@ -233,7 +235,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
                   >
                     Decode VIN
                   </AppButton>
-                  <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
+                  <AppButton compact variant="outline" onPress={handleSkip}>
                     Continue without decoding
                   </AppButton>
                 </YStack>
@@ -242,7 +244,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
               {phase === 'decoded' ? (
                 <YStack gap="$2">
                   <AppButton
-                    minHeight={44}
+                    compact
                     onPress={handleConfirm}
                     {...(Platform.OS === 'web'
                       ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
@@ -250,7 +252,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
                   >
                     Yes, use this vehicle
                   </AppButton>
-                  <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
+                  <AppButton compact variant="outline" onPress={handleSkip}>
                     No, continue without decoding
                   </AppButton>
                 </YStack>
@@ -259,7 +261,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
               {phase === 'failed' ? (
                 <YStack gap="$2">
                   <AppButton
-                    minHeight={44}
+                    compact
                     onPress={handleDecode}
                     {...(Platform.OS === 'web'
                       ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
@@ -267,7 +269,7 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
                   >
                     Retry Decode
                   </AppButton>
-                  <AppButton minHeight={44} variant="outline" onPress={handleSkip}>
+                  <AppButton compact variant="outline" onPress={handleSkip}>
                     Continue without decoding
                   </AppButton>
                 </YStack>

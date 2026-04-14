@@ -72,10 +72,10 @@ export function useVisibilityTransition({
 }
 
 /** Fade + slide up on mount. Pass duration=0 to start fully visible (no animation). */
-export function useSlideIn(duration = 300, delay = 0) {
+export function useSlideIn(duration = 300, delay = 0, offsetY = 12) {
   const skip = duration === 0
   const opacity = useRef(new Animated.Value(skip ? 1 : 0)).current
-  const translateY = useRef(new Animated.Value(skip ? 0 : 12)).current
+  const translateY = useRef(new Animated.Value(skip ? 0 : offsetY)).current
 
   useEffect(() => {
     if (skip) return
@@ -93,7 +93,7 @@ export function useSlideIn(duration = 300, delay = 0) {
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start()
-  }, [opacity, translateY, duration, delay, skip])
+  }, [opacity, translateY, duration, delay, skip, offsetY])
 
   return { opacity, translateY }
 }

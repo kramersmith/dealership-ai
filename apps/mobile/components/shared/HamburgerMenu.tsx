@@ -4,6 +4,7 @@ import { YStack, XStack, Text, useTheme } from 'tamagui'
 import { Menu, X, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
 import { palette } from '@/lib/theme/tokens'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { useAuthStore } from '@/stores/authStore'
@@ -110,7 +111,14 @@ export function HamburgerMenu() {
             }}
           />
         ) : null}
-        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setIsOpen(false)}>
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            ...modalWebFontFamilyStyle(),
+          }}
+          activeOpacity={1}
+          onPress={() => setIsOpen(false)}
+        >
           {/* Rotated square behind dropdown — peeks out as arrow nub */}
           <View
             style={{
@@ -152,6 +160,7 @@ export function HamburgerMenu() {
             {...(Platform.OS === 'web'
               ? {
                   style: {
+                    ...modalWebFontFamilyStyle(),
                     boxShadow: `0 4px 16px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
                   },
                 }
@@ -172,9 +181,9 @@ export function HamburgerMenu() {
                   : {})}
                 onPress={() => navigate(item.route)}
                 activeOpacity={0.6}
-                style={{ minHeight: 44 }}
+                style={{ height: 44, maxHeight: 44 }}
               >
-                <XStack gap="$3" alignItems="center" paddingVertical="$3" paddingHorizontal="$4">
+                <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal="$4">
                   <item.Icon size={18} color="$color" />
                   <Text fontSize={15} color="$color" fontWeight="500">
                     {item.label}
@@ -199,8 +208,12 @@ export function HamburgerMenu() {
             </XStack>
 
             {/* Logout */}
-            <TouchableOpacity onPress={handleLogout} activeOpacity={0.6} style={{ minHeight: 44 }}>
-              <XStack gap="$3" alignItems="center" paddingVertical="$3" paddingHorizontal="$4">
+            <TouchableOpacity
+              onPress={handleLogout}
+              activeOpacity={0.6}
+              style={{ height: 44, maxHeight: 44 }}
+            >
+              <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal="$4">
                 <LogOut size={18} color="$danger" />
                 <Text fontSize={15} color="$danger" fontWeight="500">
                   Sign Out

@@ -4,6 +4,8 @@ import type { ReactNode } from 'react'
 
 interface AppButtonProps extends Omit<ButtonProps, 'variant'> {
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger'
+  /** Modal / dense rows: caps height at 44px (still meets touch target). */
+  compact?: boolean
   children?: ReactNode
 }
 
@@ -50,14 +52,23 @@ const variantStyles = {
   },
 }
 
-export function AppButton({ variant = 'primary', children, ...props }: AppButtonProps) {
+export function AppButton({ variant = 'primary', compact, children, ...props }: AppButtonProps) {
   const styles = variantStyles[variant]
-  const { accessibilityLabel, ...buttonProps } = props
+  const { accessibilityLabel, size: sizeProp, ...buttonProps } = props
+  const size = sizeProp ?? (compact ? '$3' : '$5')
+  const compactChrome = compact
+    ? ({
+        height: 44,
+        maxHeight: 44,
+        paddingVertical: '$1',
+      } as const)
+    : {}
   return (
     <Button
-      size="$5"
+      size={size}
       borderRadius="$2"
       {...styles.button}
+      {...compactChrome}
       {...buttonProps}
       {...(accessibilityLabel
         ? Platform.OS === 'web'
@@ -65,7 +76,12 @@ export function AppButton({ variant = 'primary', children, ...props }: AppButton
           : { accessibilityLabel }
         : null)}
     >
-      <Button.Text {...styles.text}>{children}</Button.Text>
+      <Button.Text
+        {...styles.text}
+        {...(compact ? ({ fontSize: 14, lineHeight: 18 } as const) : {})}
+      >
+        {children}
+      </Button.Text>
     </Button>
   )
 }
