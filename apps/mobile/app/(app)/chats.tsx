@@ -38,6 +38,8 @@ const CHATS_EDGE_INSET = 24
 const CHATS_SHEET_MAX_WIDTH = CHATS_CONTENT_MAX_WIDTH + 2 * CHATS_EDGE_INSET
 /** Space below the search header (scrolls with the list) before section rows. */
 const CHATS_LIST_BELOW_SEARCH_GAP = 12
+/** Web: top padding inside the list scroll so HoverLiftFrame (-2px) + shadow are not clipped by the scroll port. */
+const CHATS_WEB_LIST_CONTENT_TOP_PAD = 20
 
 // ─── Section builder: active deals above, past deals below ───
 
@@ -470,12 +472,19 @@ export default function SessionsScreen() {
   const searchBarRow = useMemo(() => {
     if (sessions.length === 0) return null
     return (
-      <View style={{ width: '100%', alignItems: 'center' }}>
+      <View
+        style={{
+          width: '100%',
+          alignItems: 'center',
+          ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
+        }}
+      >
         <View
           style={{
             width: '100%',
             maxWidth: CHATS_SHEET_MAX_WIDTH,
             paddingHorizontal: CHATS_EDGE_INSET,
+            ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
           }}
         >
           <YStack width="100%" paddingBottom={CHATS_LIST_BELOW_SEARCH_GAP}>
@@ -560,6 +569,9 @@ export default function SessionsScreen() {
                         flexGrow: 1,
                         backgroundColor: 'transparent',
                         paddingBottom: 16,
+                        ...(Platform.OS === 'web'
+                          ? { paddingTop: CHATS_WEB_LIST_CONTENT_TOP_PAD }
+                          : {}),
                       }}
                       ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
                       renderSectionHeader={({ section }) =>
@@ -588,12 +600,19 @@ export default function SessionsScreen() {
                         ) : null
                       }
                       renderItem={({ item, index }) => (
-                        <View style={{ width: '100%', alignItems: 'center' }}>
+                        <View
+                          style={{
+                            width: '100%',
+                            alignItems: 'center',
+                            ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
+                          }}
+                        >
                           <View
                             style={{
                               width: '100%',
                               maxWidth: CHATS_SHEET_MAX_WIDTH,
                               paddingHorizontal: CHATS_EDGE_INSET,
+                              ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
                             }}
                           >
                             <SessionCard
