@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Platform, View, type ViewStyle } from 'react-native'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 
 interface HoverLiftFrameProps {
   children: ReactNode
@@ -19,19 +20,23 @@ export function HoverLiftFrame({
 }: HoverLiftFrameProps) {
   const HoverView = View as any
   const [isHovered, setIsHovered] = useState(false)
+  const prefersReducedMotion = usePrefersReducedMotion()
 
   if (Platform.OS !== 'web') {
     return <>{children}</>
   }
 
+  const allowHoverMotion = interactive && !prefersReducedMotion
   const style = {
     borderRadius,
     ...(layoutStyle ?? {}),
     boxShadow: isHovered
       ? `0 4px 12px ${shadowColor}, 0 2px 6px ${shadowColor}`
       : `0 1px 3px ${shadowColor}, 0 1px 2px ${shadowColor}`,
-    transform: [{ translateY: interactive && isHovered ? -2 : 0 }],
-    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+    transform: [{ translateY: allowHoverMotion && isHovered ? -2 : 0 }],
+    transition: prefersReducedMotion
+      ? 'none'
+      : 'transform 0.2s ease, box-shadow 0.2s ease',
     cursor: interactive ? 'pointer' : 'default',
   } as any
 

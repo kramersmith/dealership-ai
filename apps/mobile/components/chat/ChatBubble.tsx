@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Animated,
   Platform,
@@ -7,6 +7,7 @@ import {
   type NativeSyntheticEvent,
   type TextInputContentSizeChangeEventData,
   type TextInputKeyPressEventData,
+  type ViewStyle,
 } from 'react-native'
 import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
 import { Pencil, RefreshCw, Undo2 } from '@tamagui/lucide-icons'
@@ -18,7 +19,9 @@ import {
   DESKTOP_ASSISTANT_BUBBLE_MAX_WIDTH,
 } from '@/lib/constants'
 import { useIconEntrance, useSlideIn } from '@/hooks/useAnimatedValue'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
+import { HoverLiftFrame } from '@/components/shared/HoverLiftFrame'
 import { useChatStore } from '@/stores/chatStore'
 import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
 import { ChatMarkdown } from './markdownRenderer'
@@ -293,7 +296,10 @@ export const ChatBubble = memo(function ChatBubble({
   const userVisibleBody =
     isUser && typeof editedBodyText === 'string' ? editedBodyText : message.content
   const isSystem = message.role === 'system'
-  const { opacity, translateY } = useSlideIn(skipAnimation ? 0 : 250)
+  const prefersReducedMotion = usePrefersReducedMotion()
+  const { opacity, translateY } = useSlideIn(
+    skipAnimation || prefersReducedMotion ? 0 : 250
+  )
   const theme = useTheme()
   const { isDesktop } = useScreenWidth()
   const useInlineAssistantLayout = !isUser && !isSystem && !isDesktop
@@ -321,6 +327,42 @@ export const ChatBubble = memo(function ChatBubble({
     : null
   const canPressBubbleToEdit = isUser && !!onStartEdit && !isEditTarget
   const userMetaColor = theme.placeholderColor?.val as string
+  const shadow = (theme.shadowColor?.val as string) ?? palette.overlay
+  const bubbleNativeElevation: ViewStyle =
+    Platform.OS !== 'web'
+      ? {
+          shadowColor: shadow,
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 1,
+          shadowRadius: 3,
+          elevation: 2,
+        }
+      : {}
+  const bubbleWebSubtleShadow: ViewStyle =
+    Platform.OS === 'web' && !isDesktop
+      ? ({
+          boxShadow: `0 1px 3px ${shadow}, 0 1px 2px ${shadow}`,
+        } as ViewStyle)
+      : {}
+
+  const wrapDesktopWebFrame = (
+    node: ReactNode,
+    options: { borderRadius: number; interactive?: boolean; layoutStyle?: ViewStyle }
+  ) => {
+    if (Platform.OS !== 'web' || !isDesktop) {
+      return node
+    }
+    return (
+      <HoverLiftFrame
+        shadowColor={shadow}
+        borderRadius={options.borderRadius}
+        interactive={options.interactive ?? false}
+        layoutStyle={options.layoutStyle}
+      >
+        {node}
+      </HoverLiftFrame>
+    )
+  }
 
   useEffect(() => {
     if (!isUser || !isEditTarget || !onEditDraftChange) return
@@ -361,6 +403,12 @@ export const ChatBubble = memo(function ChatBubble({
   const hiddenSenderLabel = <HiddenSenderLabel role={message.role} createdAt={message.createdAt} />
   const attachmentPreview = message.imageUri ? <BubbleAttachmentPreview isUser={isUser} /> : null
 
+  const userBubbleSurfaceStyle: ViewStyle = {
+    borderColor: palette.whiteTint22,
+    ...(Platform.OS === 'web' && !isDesktop ? bubbleWebSubtleShadow : {}),
+    ...(Platform.OS !== 'web' ? bubbleNativeElevation : {}),
+  }
+
   const userBubbleShell = isUser ? (
     <YStack
       position="relative"
@@ -368,10 +416,25 @@ export const ChatBubble = memo(function ChatBubble({
       borderRadius={useInlineAssistantLayout ? 0 : '$4'}
       borderBottomRightRadius="$1"
       borderBottomLeftRadius="$4"
+      borderWidth={useInlineAssistantLayout ? 0 : 1}
       paddingLeft={useInlineAssistantLayout ? '$0' : '$4'}
       paddingRight={useInlineAssistantLayout ? '$0' : '$4'}
-      paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
+      paddingVertical={useInlineAssistantLayout ? '$2' : '$3.5'}
+      style={useInlineAssistantLayout ? undefined : userBubbleSurfaceStyle}
     >
+      {useInlineAssistantLayout ? null : (
+        <YStack
+          pointerEvents="none"
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          height={1}
+          borderTopLeftRadius="$4"
+          borderTopRightRadius="$4"
+          backgroundColor={palette.whiteTint20}
+        />
+      )}
       {isEditTarget ? (
         <YStack
           position="absolute"
@@ -405,16 +468,26 @@ export const ChatBubble = memo(function ChatBubble({
     </YStack>
   ) : null
 
-  const assistantBubbleShell = !isUser ? (
+  const assistantBubbleSurfaceStyle: ViewStyle = {
+    ...(!useInlineAssistantLayout && Platform.OS === 'web' && !isDesktop
+      ? bubbleWebSubtleShadow
+      : {}),
+    ...(Platform.OS !== 'web' && !useInlineAssistantLayout ? bubbleNativeElevation : {}),
+  }
+
+  const assistantBubbleInner = !isUser ? (
     <YStack
       width="100%"
       backgroundColor={useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'}
       borderRadius={useInlineAssistantLayout ? 0 : '$4'}
       borderBottomRightRadius="$4"
       borderBottomLeftRadius={useInlineAssistantLayout ? 0 : '$1'}
+      borderWidth={useInlineAssistantLayout ? 0 : 1}
+      borderColor={useInlineAssistantLayout ? undefined : '$borderColor'}
       paddingLeft={useInlineAssistantLayout ? '$0' : '$4'}
       paddingRight={useInlineAssistantLayout ? '$0' : '$4'}
-      paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
+      paddingVertical={useInlineAssistantLayout ? '$2.5' : '$3.5'}
+      style={useInlineAssistantLayout ? undefined : assistantBubbleSurfaceStyle}
     >
       {hiddenSenderLabel}
       {attachmentPreview}
@@ -423,6 +496,16 @@ export const ChatBubble = memo(function ChatBubble({
       </YStack>
     </YStack>
   ) : null
+
+  const assistantBubbleShell =
+    assistantBubbleInner == null
+      ? null
+      : useInlineAssistantLayout
+        ? assistantBubbleInner
+        : wrapDesktopWebFrame(assistantBubbleInner, {
+            borderRadius: 12,
+            layoutStyle: { width: '100%', alignSelf: 'stretch' },
+          })
 
   if (isSystem) {
     return (
@@ -464,7 +547,7 @@ export const ChatBubble = memo(function ChatBubble({
       <XStack
         justifyContent={isUser ? 'flex-end' : 'flex-start'}
         paddingHorizontal={railHorizontalPadding}
-        paddingVertical={isUser ? '$1' : '$0.5'}
+        paddingVertical={isUser ? '$1.5' : '$0.5'}
         alignItems={isUser ? 'flex-end' : 'flex-start'}
         gap="$1"
       >
@@ -475,33 +558,41 @@ export const ChatBubble = memo(function ChatBubble({
           width={isUser ? undefined : '100%'}
         >
           {isUser ? (
-            canPressBubbleToEdit ? (
-              <Pressable
-                onPress={onStartEdit}
-                style={({ pressed }) =>
-                  ({
-                    opacity: pressed ? 0.96 : 1,
-                    ...(Platform.OS === 'web'
-                      ? {
-                          cursor: 'pointer',
-                        }
-                      : null),
-                  }) as any
-                }
-                {...(Platform.OS === 'web'
-                  ? ({
-                      'aria-label':
-                        'Revert to this message and continue the conversation from here',
-                    } as any)
-                  : {
-                      accessibilityLabel:
-                        'Revert to this message and continue the conversation from here',
-                    })}
-              >
-                {userBubbleShell}
-              </Pressable>
-            ) : (
-              userBubbleShell
+            wrapDesktopWebFrame(
+              canPressBubbleToEdit ? (
+                <Pressable
+                  onPress={onStartEdit}
+                  style={({ pressed }) =>
+                    ({
+                      opacity: pressed ? 0.96 : 1,
+                      transform: [{ scale: pressed ? 0.985 : 1 }],
+                      ...(Platform.OS === 'web'
+                        ? {
+                            cursor: 'pointer',
+                          }
+                        : null),
+                    }) as any
+                  }
+                  {...(Platform.OS === 'web'
+                    ? ({
+                        'aria-label':
+                          'Revert to this message and continue the conversation from here',
+                      } as any)
+                    : {
+                        accessibilityLabel:
+                          'Revert to this message and continue the conversation from here',
+                      })}
+                >
+                  {userBubbleShell}
+                </Pressable>
+              ) : (
+                userBubbleShell
+              ),
+              {
+                borderRadius: 12,
+                interactive: canPressBubbleToEdit,
+                layoutStyle: { alignSelf: 'flex-end' },
+              }
             )
           ) : (
             assistantBubbleShell
@@ -515,7 +606,12 @@ export const ChatBubble = memo(function ChatBubble({
               gap="$1.5"
               flexWrap="wrap"
             >
-              <Text fontSize={10} color="$placeholderColor">
+              <Text
+                fontSize={10}
+                color="$placeholderColor"
+                letterSpacing={0.25}
+                opacity={0.92}
+              >
                 {assistantMessageMetaLabel}
               </Text>
               {message.completionStatus === 'interrupted' ? <StatusBadge label="Stopped" /> : null}
@@ -530,7 +626,13 @@ export const ChatBubble = memo(function ChatBubble({
               flexWrap="wrap"
               gap="$1.5"
             >
-              <Text fontSize={10} lineHeight={16} color="$placeholderColor">
+              <Text
+                fontSize={10}
+                lineHeight={16}
+                color="$placeholderColor"
+                letterSpacing={0.25}
+                opacity={0.92}
+              >
                 {new Date(message.createdAt).toLocaleTimeString([], {
                   hour: 'numeric',
                   minute: '2-digit',
