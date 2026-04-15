@@ -45,9 +45,7 @@ export function HoverLiftFrame({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       style={style}
-    >
-      {children}
-    </HoverView>
+    >{children}</HoverView>
   ) : (
     <View style={style}>{children}</View>
   )

@@ -51,18 +51,13 @@ export function ScreenHeader({
       borderBottomWidth={1}
       borderBottomColor="$borderColor"
       backgroundColor="$backgroundStrong"
-    >
-      <HeaderIconButton onPress={onLeftPress} accessibilityLabel={leftLabel}>
-        <Animated.View
+    >{[
+      <HeaderIconButton key="hdr-left" onPress={onLeftPress} accessibilityLabel={leftLabel}><Animated.View
           style={{
             opacity: iconAnim.opacity,
             transform: [{ rotate: iconAnim.rotate }],
           }}
-        >
-          {leftIcon}
-        </Animated.View>
-      </HeaderIconButton>
-
+        >{leftIcon}</Animated.View></HeaderIconButton>,
       <ScrambleText
         key={titleKey ?? title}
         text={title}
@@ -73,15 +68,12 @@ export function ScreenHeader({
         color="$color"
         textAlign="center"
         numberOfLines={1}
-      />
-
-      {rightIcon && onRightPress ? (
-        <HeaderIconButton onPress={onRightPress} accessibilityLabel={rightLabel ?? 'Action'}>
-          {rightIcon}
-        </HeaderIconButton>
+      />,
+      rightIcon && onRightPress ? (
+        <HeaderIconButton key="hdr-right" onPress={onRightPress} accessibilityLabel={rightLabel ?? 'Action'}>{rightIcon}</HeaderIconButton>
       ) : (
-        <XStack width={44} />
-      )}
-    </XStack>
+        <XStack key="hdr-spacer" width={44} />
+      ),
+    ]}</XStack>
   )
 }

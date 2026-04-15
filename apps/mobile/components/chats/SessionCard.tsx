@@ -1,7 +1,14 @@
 import { useRef, useEffect, useCallback } from 'react'
-import { Animated, Pressable, TouchableOpacity, Platform, View } from 'react-native'
+import {
+  Animated,
+  Pressable,
+  TouchableOpacity,
+  Platform,
+  View,
+  Text as RNText,
+} from 'react-native'
 import { Trash2 } from '@tamagui/lucide-icons'
-import { XStack, YStack, Text, useTheme } from 'tamagui'
+import { useTheme } from 'tamagui'
 import type { DealPhase, DealSummary, Session } from '@/lib/types'
 import { DEAL_PHASES } from '@/lib/constants'
 import { formatCurrency, stripMarkdown } from '@/lib/utils'
@@ -10,19 +17,34 @@ import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { palette } from '@/lib/theme/tokens'
 import { darkTheme } from '@/lib/theme/themes'
 
-// ─── Phase card styling ───
+// NOTE: Layout uses RN View/Text only (no Tamagui YStack/XStack/Text). Tamagui web + VirtualizedList
+// can JSON.stringify theme context during class serialization (circular Provider graph).
 
-const PHASE_STYLE: Record<DealPhase, { accentToken: string }> = {
-  research: { accentToken: '$placeholderColor' },
-  initial_contact: { accentToken: '$brand' },
-  test_drive: { accentToken: '$brand' },
-  negotiation: { accentToken: '$warning' },
-  financing: { accentToken: '$warning' },
-  closing: { accentToken: '$positive' },
-}
+// ─── Phase styling ───
 
 function phaseLabel(phase: DealPhase): string {
   return DEAL_PHASES.find((p) => p.key === phase)?.label ?? phase.replace(/_/g, ' ')
+}
+
+function phaseAccentColor(theme: ReturnType<typeof useTheme>, phase: DealPhase): string {
+  const placeholder = (theme.placeholderColor?.val as string | undefined) ?? '#888'
+  const brand = (theme.brand?.val as string | undefined) ?? palette.brand
+  const warning = (theme.warning?.val as string | undefined) ?? palette.warning
+  const positive = (theme.positive?.val as string | undefined) ?? palette.positive
+  switch (phase) {
+    case 'research':
+      return placeholder
+    case 'initial_contact':
+    case 'test_drive':
+      return brand
+    case 'negotiation':
+    case 'financing':
+      return warning
+    case 'closing':
+      return positive
+    default:
+      return placeholder
+  }
 }
 
 // ─── Relative time formatter ───
@@ -138,12 +160,17 @@ export function SessionCard({
   }, [pressScale])
 
   const phase = session.dealSummary?.phase ?? 'research'
-  const phaseStyle = PHASE_STYLE[phase] ?? PHASE_STYLE.research
+  const phaseAccent = phaseAccentColor(theme, phase)
   const summaryLine = buildSummaryLine(session.dealSummary)
   const previewText = session.lastMessagePreview ? stripMarkdown(session.lastMessagePreview) : null
   const shadow = theme.shadowColor?.val ?? palette.overlay
   const isDarkTheme = theme.background?.val === darkTheme.background
   const dividerColor = isDarkTheme ? 'rgba(255,255,255,0.08)' : 'rgba(28,30,33,0.08)'
+  const placeholderVal = (theme.placeholderColor?.val as string | undefined) ?? '#888'
+  const colorVal = (theme.color?.val as string | undefined) ?? '#1C1E21'
+  const bgStrong = (theme.backgroundStrong?.val as string | undefined) ?? '#fff'
+  const borderCol = (theme.borderColor?.val as string | undefined) ?? 'rgba(0,0,0,0.08)'
+
   const accessibilityText = [
     session.title,
     session.dealSummary?.phase ? phaseLabel(session.dealSummary.phase) : null,
@@ -153,45 +180,57 @@ export function SessionCard({
     .join(', ')
 
   const dealSnapshotColumn = (
-    <YStack flex={1} minWidth={0} gap="$1" alignItems="flex-start">
-      <Text
-        fontSize={10}
-        fontWeight="700"
-        color={phaseStyle.accentToken}
-        textTransform="uppercase"
-        letterSpacing={0.9}
-        textAlign="left"
+    <View style={{ flex: 1, minWidth: 0, gap: 4, alignItems: 'flex-start' }}>{[
+      <RNText
+        key="ds-label"
+        style={{
+          fontSize: 10,
+          fontWeight: '700',
+          color: phaseAccent,
+          textTransform: 'uppercase',
+          letterSpacing: 0.9,
+          textAlign: 'left',
+        }}
       >
         Deal snapshot
-      </Text>
-
-      <Text fontSize={12} color="$placeholderColor" opacity={0.88} textAlign="left" width="100%">
+      </RNText>,
+      <RNText
+        key="ds-body"
+        style={{
+          fontSize: 12,
+          color: placeholderVal,
+          opacity: 0.88,
+          textAlign: 'left',
+          width: '100%',
+        }}
+      >
         {summaryLine ?? 'Continue the conversation'}
-      </Text>
-    </YStack>
+      </RNText>,
+    ]}</View>
   )
 
+  const cardStyle = {
+    width: '100%' as const,
+    backgroundColor: bgStrong,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: borderCol,
+    overflow: 'hidden' as const,
+    ...(Platform.OS !== 'web'
+      ? {
+          shadowColor: (shadow as string) ?? palette.overlay,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.16,
+          shadowRadius: 10,
+          elevation: 3,
+        }
+      : {}),
+  }
+
   const card = (
-    <YStack
-      width="100%"
-      backgroundColor="$backgroundStrong"
-      borderRadius={18}
-      borderWidth={1}
-      borderColor="$borderColor"
-      overflow="hidden"
-      {...(Platform.OS !== 'web'
-        ? {
-            shadowColor: (shadow as string) ?? palette.overlay,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.16,
-            shadowRadius: 10,
-            elevation: 3,
-          }
-        : {})}
-    >
-      {/* Card body — tappable to open session, long-press to delete on native.
-          Web: deal row + delete share a row outside this <button> (Pressable + button) so DOM is valid. */}
+    <View style={cardStyle}>{[
       <TouchableOpacity
+        key="open"
         onPress={() => onSelect(session.id)}
         onLongPress={Platform.OS !== 'web' ? () => onDelete(session.id) : undefined}
         onPressIn={handlePressIn}
@@ -207,99 +246,121 @@ export function SessionCard({
           paddingBottom: Platform.OS === 'web' ? 12 : 20,
           ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {}),
         }}
-      >
-        <YStack gap="$3.5" width="100%" alignItems="flex-start">
-          <YStack gap="$2.5" width="100%" alignItems="flex-start">
-            <XStack width="100%" justifyContent="space-between" alignItems="center" gap="$3">
-              <XStack alignItems="center" gap="$2.5" flex={1} minWidth={0}>
-                <YStack
-                  width={8}
-                  height={8}
-                  borderRadius={999}
-                  backgroundColor={phaseStyle.accentToken}
-                  flexShrink={0}
-                />
-
-                <Text
-                  fontSize={11}
-                  fontWeight="700"
-                  color="$placeholderColor"
-                  textTransform="uppercase"
-                  letterSpacing={1}
-                  lineHeight={14}
+      ><View style={{ width: '100%', gap: 14, alignItems: 'flex-start' }}>{[
+          <View key="top" style={{ width: '100%', gap: 10, alignItems: 'flex-start' }}>{[
+            <View
+              key="hdr"
+              style={{
+                width: '100%',
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >{[
+              <View
+                key="hdr-l"
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}
+              >{[
+                <View
+                  key="dot"
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    backgroundColor: phaseAccent,
+                    flexShrink: 0,
+                  }}
+                />,
+                <RNText
+                  key="phase"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: placeholderVal,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1,
+                    lineHeight: 14,
+                    flexShrink: 1,
+                    textAlign: 'left',
+                  }}
                   numberOfLines={1}
-                  textAlign="left"
                 >
                   {phaseLabel(phase)}
-                </Text>
-              </XStack>
-
-              <XStack alignItems="center" gap="$2" flexShrink={0}>
-                <Text fontSize={11} fontWeight="600" color="$placeholderColor" lineHeight={14}>
+                </RNText>,
+              ]}</View>,
+              <View key="hdr-r" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <RNText style={{ fontSize: 11, fontWeight: '600', color: placeholderVal, lineHeight: 14 }}>
                   {formatRelativeTime(session.updatedAt)}
-                </Text>
-              </XStack>
-            </XStack>
-
-            <Text
-              fontSize={17}
-              fontWeight="800"
-              color="$color"
-              letterSpacing={-0.2}
-              textAlign="left"
-              width="100%"
+                </RNText>
+              </View>,
+            ]}</View>,
+            <RNText
+              key="title"
+              style={{
+                fontSize: 17,
+                fontWeight: '800',
+                color: colorVal,
+                letterSpacing: -0.2,
+                textAlign: 'left',
+                width: '100%',
+              }}
             >
               {session.title}
-            </Text>
-
-            {previewText ? (
-              <Text
-                fontSize={14}
-                color="$color"
-                lineHeight={20}
-                opacity={0.72}
-                textAlign="left"
-                width="100%"
+            </RNText>,
+            previewText ? (
+              <RNText
+                key="prev"
+                style={{
+                  fontSize: 14,
+                  color: colorVal,
+                  lineHeight: 20,
+                  opacity: 0.72,
+                  textAlign: 'left',
+                  width: '100%',
+                }}
               >
                 {previewText}
-              </Text>
+              </RNText>
             ) : (
-              <Text
-                fontSize={13}
-                color="$placeholderColor"
-                lineHeight={19}
-                textAlign="left"
-                width="100%"
+              <RNText
+                key="prev-empty"
+                style={{
+                  fontSize: 13,
+                  color: placeholderVal,
+                  lineHeight: 19,
+                  textAlign: 'left',
+                  width: '100%',
+                }}
               >
                 Open this conversation to continue the deal.
-              </Text>
-            )}
-          </YStack>
-
-          <YStack gap="$2" width="100%" alignItems="flex-start">
-            <YStack height={1} backgroundColor={dividerColor} />
-
-            {Platform.OS !== 'web' ? (
-              <XStack width="100%" alignItems="flex-start">
-                {dealSnapshotColumn}
-              </XStack>
-            ) : null}
-          </YStack>
-        </YStack>
-      </TouchableOpacity>
-
-      {Platform.OS === 'web' ? (
-        <XStack
-          width="100%"
-          paddingHorizontal={18}
-          paddingTop={10}
-          paddingBottom={12}
-          alignItems="flex-start"
-          justifyContent="space-between"
-          gap="$3"
-          backgroundColor="$backgroundStrong"
-        >
+              </RNText>
+            ),
+          ]}</View>,
+          <View key="divider-block" style={{ width: '100%', gap: 8, alignItems: 'flex-start' }}>{[
+            <View key="rule" style={{ height: 1, width: '100%', backgroundColor: dividerColor }} />,
+            Platform.OS !== 'web' ? (
+              <View key="snap-n" style={{ width: '100%', flexDirection: 'row', alignItems: 'flex-start' }}>{dealSnapshotColumn}</View>
+            ) : null,
+          ]}</View>,
+        ]}</View></TouchableOpacity>,
+      Platform.OS === 'web' ? (
+        <View
+          key="web-actions"
+          style={{
+            width: '100%',
+            paddingHorizontal: 18,
+            paddingTop: 10,
+            paddingBottom: 12,
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 12,
+            backgroundColor: bgStrong,
+          }}
+        >{[
           <Pressable
+            key="snap-press"
             accessibilityRole="button"
             accessibilityLabel={accessibilityText}
             onPress={() => onSelect(session.id)}
@@ -309,10 +370,9 @@ export function SessionCard({
               cursor: 'pointer' as const,
               opacity: pressed ? 0.85 : 1,
             })}
-          >
-            {dealSnapshotColumn}
-          </Pressable>
+          >{dealSnapshotColumn}</Pressable>,
           <TouchableOpacity
+            key="del"
             onPress={() => onDelete(session.id)}
             activeOpacity={0.65}
             accessibilityRole="button"
@@ -330,23 +390,19 @@ export function SessionCard({
                 boxShadow: 'none',
               } as unknown as import('react-native').ViewStyle
             }
-          >
-            <Trash2 size={18} color="$placeholderColor" />
-          </TouchableOpacity>
-        </XStack>
-      ) : null}
-    </YStack>
+          ><Trash2 size={18} color={placeholderVal} /></TouchableOpacity>,
+        ]}</View>
+      ) : null,
+    ]}</View>
   )
 
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }, { scale: pressScale }] }}>
-      {Platform.OS === 'web' ? (
-        <HoverLiftFrame shadowColor={shadow as string} borderRadius={18}>
-          {card}
-        </HoverLiftFrame>
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale: pressScale }] }}>{[
+      Platform.OS === 'web' ? (
+        <HoverLiftFrame key="lift" shadowColor={shadow as string} borderRadius={18}>{card}</HoverLiftFrame>
       ) : (
-        <View>{card}</View>
-      )}
-    </Animated.View>
+        <View key="wrap">{card}</View>
+      ),
+    ]}</Animated.View>
   )
 }

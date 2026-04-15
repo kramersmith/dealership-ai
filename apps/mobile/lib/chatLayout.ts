@@ -15,7 +15,7 @@ export const CHAT_SCREEN_LAYOUT = {
   desktopDockRightOffsetPx: 12,
   mobileInsightsSheetInsetPx: 0,
   mobileInsightsSheetRadiusPx: 16,
-  mobileComposerTrayInsetPx: 12,
+  mobileComposerTrayInsetPx: 0,
   mobileComposerTrayBottomPx: 12,
   mobileComposerTrayRadiusPx: 18,
   desktopComposerReserveGapPx: 8,
