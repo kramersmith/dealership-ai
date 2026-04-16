@@ -422,19 +422,6 @@ export const ChatBubble = memo(function ChatBubble({
       paddingVertical={useInlineAssistantLayout ? '$2' : '$3.5'}
       style={useInlineAssistantLayout ? undefined : userBubbleSurfaceStyle}
     >
-      {useInlineAssistantLayout ? null : (
-        <YStack
-          pointerEvents="none"
-          position="absolute"
-          top={0}
-          left={0}
-          right={0}
-          height={1}
-          borderTopLeftRadius="$4"
-          borderTopRightRadius="$4"
-          backgroundColor={palette.whiteTint20}
-        />
-      )}
       {isEditTarget ? (
         <YStack
           position="absolute"
