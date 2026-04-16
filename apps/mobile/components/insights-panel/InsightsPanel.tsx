@@ -9,6 +9,7 @@ import { WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { palette } from '@/lib/theme/tokens'
 import type { AiPanelCard, DealState, QuotedCard, Vehicle } from '@/lib/types'
+import { orderedVisibleInsightCards } from '@/lib/insightsPanelCardOrder'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useUserSettingsStore } from '@/stores/userSettingsStore'
@@ -32,15 +33,6 @@ function stableCardSignature(card: AiPanelCard): string {
 }
 
 const SHOPPING_ROLES = new Set<Vehicle['role']>(['primary', 'candidate'])
-
-function orderedInsightCards(aiPanelCards: AiPanelCard[]): AiPanelCard[] {
-  const visibleCards = aiPanelCards.filter(
-    (card) => card.kind !== 'comparison' && card.kind !== 'trade_off'
-  )
-  const phaseCards = visibleCards.filter((card) => card.kind === 'phase')
-  const nonPhaseCards = visibleCards.filter((card) => card.kind !== 'phase')
-  return [...phaseCards, ...nonPhaseCards]
-}
 
 /** Aligns with backend `panel_cards._panel_card_dedupe_identity` for vehicle cards (VIN else role+YMM+mileage+color). */
 function shoppingVehiclePanelFingerprint(vehicle: Vehicle): string {
@@ -204,7 +196,7 @@ export const InsightsPanel = memo(function InsightsPanel({
     [dealState]
   )
   const cards = useMemo(
-    () => orderedInsightCards(dealState?.aiPanelCards ?? []),
+    () => orderedVisibleInsightCards(dealState?.aiPanelCards ?? []),
     [dealState?.aiPanelCards]
   )
   const panelVehicleFingerprints = useMemo(() => {

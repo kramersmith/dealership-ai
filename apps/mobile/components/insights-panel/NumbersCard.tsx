@@ -2,6 +2,12 @@ import { useRef, useEffect, useState } from 'react'
 import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
 import { AppCard } from '@/components/shared'
+import {
+  insightCardBodyProps,
+  insightCardRowLabelProps,
+  insightCardSecondaryProps,
+  insightCardSectionLabelProps,
+} from '@/lib/insightsPanelTypography'
 import { CardTitle } from './CardTitle'
 
 // ─── Types ───
@@ -193,14 +199,14 @@ function NumberRowItem({ row }: { row: NumberRow }) {
 
   return (
     <XStack justifyContent="space-between" alignItems="center" paddingVertical="$1.5">
-      <Text fontSize={isSecondary ? 12 : 13} color="$placeholderColor" fontWeight="500">
+      <Text {...(isSecondary ? insightCardSecondaryProps : insightCardRowLabelProps)}>
         {row.label}
       </Text>
       <AnimatedNumberValue
         value={row.value}
         color={valueColor}
-        fontSize={isSecondary ? 12 : 14}
-        fontWeight={isSecondary ? '500' : '700'}
+        fontSize={isSecondary ? 12 : insightCardBodyProps.fontSize}
+        fontWeight={isSecondary ? '600' : '700'}
       />
     </XStack>
   )
@@ -222,11 +228,7 @@ export function NumbersCard({ title, content }: NumbersCardProps) {
     <AppCard compact>
       <YStack gap="$3">
         <CardTitle>{title}</CardTitle>
-        {summary ? (
-          <Text fontSize={13} color="$color" lineHeight={20}>
-            {summary}
-          </Text>
-        ) : null}
+        {summary ? <Text {...insightCardBodyProps}>{summary}</Text> : null}
 
         {allGroups.map((group, gi) => {
           const groupLabel = formatGroupLabel(group.key)
@@ -234,14 +236,7 @@ export function NumbersCard({ title, content }: NumbersCardProps) {
             <YStack key={group.key}>
               {gi > 0 && <YStack height={1} backgroundColor="$borderColor" marginVertical="$2" />}
               {groupLabel ? (
-                <Text
-                  fontSize={12}
-                  fontWeight="600"
-                  color="$placeholderColor"
-                  textTransform="uppercase"
-                  letterSpacing={0.4}
-                  paddingBottom="$1"
-                >
+                <Text {...insightCardSectionLabelProps} paddingBottom="$1">
                   {groupLabel}
                 </Text>
               ) : null}

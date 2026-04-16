@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef } from 'react'
-import { TouchableOpacity, Animated } from 'react-native'
-import { YStack } from 'tamagui'
-import { MessageCircle } from '@tamagui/lucide-icons'
+import { Animated, Platform, Pressable } from 'react-native'
+import { YStack, useTheme } from 'tamagui'
+import { AppCard } from '@/components/shared'
+import { HoverLiftFrame } from '@/components/shared/HoverLiftFrame'
+import { palette } from '@/lib/theme/tokens'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import type { AiPanelCard, NegotiationContext, NegotiationStance, QuotedCard } from '@/lib/types'
 import { BriefingCard } from './BriefingCard'
@@ -54,7 +56,15 @@ function renderCardContent(card: AiPanelCard): React.ReactNode {
       return null
     }
     const context: NegotiationContext = { stance, situation }
-    return <SituationBar context={context} />
+    return (
+      <AppCard compact interactive={false}>
+        <SituationBar
+          context={context}
+          layout="insightCard"
+          cardTitle={card.title?.trim() || 'Status'}
+        />
+      </AppCard>
+    )
   }
   switch (card.template) {
     case 'briefing':
@@ -81,6 +91,8 @@ function renderCardContent(card: AiPanelCard): React.ReactNode {
 }
 
 export function AiCard({ card, onSendReply }: AiCardProps) {
+  const theme = useTheme()
+  const shadowColor = theme.shadowColor?.val ?? palette.shadowOverlay
   const [replyOpen, setReplyOpen] = useState(false)
   const [replyVisible, setReplyVisible] = useState(false)
   const slideAnim = useRef(new Animated.Value(0)).current
@@ -122,43 +134,78 @@ export function AiCard({ card, onSendReply }: AiCardProps) {
     })
   }, [slideAnim])
 
+  const cardBody = (
+    <YStack
+      width="100%"
+      position="relative"
+      zIndex={1}
+      {...(replyVisible
+        ? {
+            borderBottomLeftRadius: 0,
+            borderBottomRightRadius: 0,
+          }
+        : {})}
+    >
+      {renderCardContent(card)}
+    </YStack>
+  )
+
+  const tappableBody =
+    onSendReply != null ? (
+      <Pressable
+        onPress={toggleReply}
+        {...(Platform.OS === 'web'
+          ? {}
+          : {
+              accessibilityRole: 'button' as const,
+            })}
+        accessibilityLabel={replyOpen ? 'Close card reply' : 'Reply to insight card'}
+        accessibilityState={{ expanded: replyOpen }}
+        accessible
+        style={({ pressed }) => ({
+          alignSelf: 'stretch',
+          width: '100%',
+          padding: 0,
+          margin: 0,
+          opacity: pressed ? 0.97 : 1,
+          ...(Platform.OS === 'web'
+            ? ({
+                cursor: 'pointer',
+                alignItems: 'stretch',
+                textAlign: 'left',
+              } as const)
+            : null),
+        })}
+      >
+        {cardBody}
+      </Pressable>
+    ) : (
+      cardBody
+    )
+
+  const liftedBody =
+    onSendReply != null && Platform.OS === 'web' ? (
+      <HoverLiftFrame
+        shadowColor={shadowColor}
+        borderRadius={12}
+        interactive
+        layoutStyle={{ width: '100%' }}
+      >
+        {tappableBody}
+      </HoverLiftFrame>
+    ) : (
+      tappableBody
+    )
+
   return (
     <YStack>
-      <YStack
-        position="relative"
-        zIndex={1}
-        {...(replyVisible
-          ? {
-              borderBottomLeftRadius: 0,
-              borderBottomRightRadius: 0,
-            }
-          : {})}
-      >
-        {renderCardContent(card)}
-        {onSendReply && (
-          <TouchableOpacity
-            onPress={toggleReply}
-            activeOpacity={0.6}
-            accessibilityRole="button"
-            accessibilityLabel={replyOpen ? 'Close card reply' : 'Reply to insight card'}
-            accessibilityState={{ expanded: replyOpen }}
-            style={{
-              position: 'absolute',
-              top: 4,
-              right: 4,
-              width: 44,
-              height: 44,
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}
-          >
-            <MessageCircle size={14} color="$placeholderColor" opacity={0.6} />
-          </TouchableOpacity>
-        )}
+      <YStack position="relative" zIndex={2}>
+        {liftedBody}
       </YStack>
       {replyOpen && onSendReply && (
         <Animated.View
           style={{
+            zIndex: 0,
             opacity: slideAnim,
             transform: [
               {

@@ -2,6 +2,11 @@ import { useCallback, useMemo } from 'react'
 import { YStack, Text, Theme } from 'tamagui'
 import type { ComparisonTable as ComparisonTableType, DealComparison } from '@/lib/types'
 import { AppCard, ComparisonTable } from '@/components/shared'
+import {
+  insightCardBodyProps,
+  insightCardEmphasisProps,
+  insightCardSecondaryProps,
+} from '@/lib/insightsPanelTypography'
 import { CardTitle } from './CardTitle'
 import { useDealStore } from '@/stores/dealStore'
 
@@ -76,18 +81,14 @@ export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
     <AppCard compact gap="$2">
       <CardTitle>{title}</CardTitle>
 
-      {summary ? (
-        <Text fontSize={13} color="$color" lineHeight={20}>
-          {summary}
-        </Text>
-      ) : null}
+      {summary ? <Text {...insightCardBodyProps}>{summary}</Text> : null}
 
       <ComparisonTable table={table} embedded />
 
       {notes.length > 0 ? (
         <YStack gap="$1.5">
           {notes.map((note) => (
-            <Text key={note} fontSize={12} color="$placeholderColor" lineHeight={18}>
+            <Text key={note} {...insightCardSecondaryProps}>
               {note}
             </Text>
           ))}
@@ -97,9 +98,7 @@ export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
       {recommendation ? (
         <Theme name="success">
           <YStack borderTopWidth={1} borderTopColor="$borderColor" paddingTop="$2.5" marginTop="$1">
-            <Text fontSize={13} fontWeight="600" color="$color" lineHeight={20}>
-              {recommendation}
-            </Text>
+            <Text {...insightCardEmphasisProps}>{recommendation}</Text>
           </YStack>
         </Theme>
       ) : null}

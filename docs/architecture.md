@@ -56,13 +56,15 @@ dealership-ai/
 │   │   │   │                    # AiVehicleCard (expandable, Specs/Title Check/Market Value),
 │   │   │   │                    # VehicleIntelligencePanel, WarningCard, TipCard,
 │   │   │   │                    # SuccessCard, AiChecklistCard (read-only + progress bar),
-│   │   │   │                    # AiComparisonCard, CompactPhaseIndicator,
-│   │   │   │                    # ThinkingIndicator, PanelMarkdown
+│   │   │   │                    # AiComparisonCard, ThinkingIndicator, PanelMarkdown,
+│   │   │   │                    # InsightPanelPreviewIcons + InsightsPreviewItemChip
+│   │   │   │                    # (collapsed strip / dock preview)
 │   │   │   └── shared/          # Button, Card, Modal, AuthGuard, RoleGuard, ScreenHeader, HeaderIconButton, HoverLiftFrame, ScrambleText
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE streaming + state (event-based parsing)
 │   │   │   ├── useEditableField.ts # Inline editing with debounced backend sync
 │   │   │   ├── useAnimatedValue.ts # useIconEntrance (animated icon transitions), useSlideIn
+│   │   │   ├── useInsightsAnimations.ts # Shared analyzing-pulse, signature-entrance, and finish-flash hooks
 │   │   │   ├── useDesktopChatTransition.ts # Desktop animated chat/insights panel transitions
 │   │   │   ├── useDesktopInsightsShell.ts # Desktop panel shell state machine (expanded/collapsed/hidden)
 │   │   │   ├── useDesktopPanelPreference.ts # Client-local localStorage for desktop panel collapsed state

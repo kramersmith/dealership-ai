@@ -6,10 +6,22 @@
  * Usage from console or a dev button:
  *   import { runMockPanelUpdates } from '@/lib/dev/mockPanelUpdates'
  *   runMockPanelUpdates()
+ *
+ * Desktop collapsed dock (icon → preview → collapse):
+ *   reviewDesktopDockAnimations()
+ *   reviewDesktopDockAnimations({ analyzingMs: 4000 })
  */
+import { Platform } from 'react-native'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
 import type { AiCardKind, AiCardTemplate, AiPanelCard } from '@/lib/types'
+
+/**
+ * Custom event used so {@link reviewDesktopDockAnimations} can request the same-tab
+ * chat shell to collapse the desktop insights rail (React state is not in a global store).
+ */
+export const DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT =
+  'dealership-ai:dev-collapse-desktop-insights' as const
 
 type LegacyMockCard = Omit<AiPanelCard, 'kind' | 'template'> & { type: AiCardTemplate }
 
@@ -511,8 +523,68 @@ export function clearMockPanel() {
   console.log('[devMock] Panel cleared')
 }
 
+export interface ReviewDesktopDockAnimationsOptions {
+  /** How long the dock shows the pulsing “updating” icon before completing (default 2800). */
+  analyzingMs?: number
+  /** When false, skip dispatching the event that collapses the desktop insights rail (default true on web). */
+  collapseDesktopPanel?: boolean
+}
+
+/**
+ * Drive the real desktop collapsed-dock sequence (updating icon → wide preview grow → hold →
+ * collapse → finish) without sending chat messages.
+ *
+ * Prerequisites (web, __DEV__):
+ * - Buyer chat screen with an active session (not the empty ContextPicker).
+ * - Desktop breakpoint (≥768px) so the dock is mounted.
+ * - With default options, the insights rail is collapsed via a same-tab custom event handled in
+ *   {@link ChatScreen}.
+ *
+ * @returns cancel function — clears the completion timer and forces `isPanelAnalyzing` false.
+ */
+export function reviewDesktopDockAnimations(options?: ReviewDesktopDockAnimationsOptions) {
+  if (!__DEV__) {
+    console.warn('[reviewDesktopDockAnimations] Available only when __DEV__ is true.')
+    return () => {}
+  }
+
+  const analyzingMs = Math.max(600, options?.analyzingMs ?? 2800)
+  const collapseDesktopPanel = options?.collapseDesktopPanel !== false
+
+  const dealStore = useDealStore.getState()
+  if (!dealStore.dealState) {
+    dealStore.resetDealState('dock-review', 'researching')
+  }
+
+  bumpInsightsPanelCommitGeneration()
+  applyMockPanelCards(MOCK_STEPS[0])
+
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && collapseDesktopPanel) {
+    window.dispatchEvent(new CustomEvent(DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT))
+  }
+
+  setMockPanelAnalyzing(true)
+  console.info(
+    `[reviewDesktopDockAnimations] isPanelAnalyzing=true for ${analyzingMs}ms — use desktop buyer chat with panel collapsed. Call the returned function to cancel.`
+  )
+
+  const finishTimeoutId = setTimeout(() => {
+    setMockPanelAnalyzing(false)
+    console.info(
+      '[reviewDesktopDockAnimations] isPanelAnalyzing=false — dock should run preview + collapse.'
+    )
+  }, analyzingMs)
+
+  return function cancelReviewDesktopDockAnimations() {
+    clearTimeout(finishTimeoutId)
+    setMockPanelAnalyzing(false)
+    console.info('[reviewDesktopDockAnimations] Cancelled.')
+  }
+}
+
 // Expose globally in dev for console access
 if (__DEV__) {
   ;(globalThis as any).mockPanel = runMockPanelUpdates
   ;(globalThis as any).clearPanel = clearMockPanel
+  ;(globalThis as any).reviewDesktopDockAnimations = reviewDesktopDockAnimations
 }

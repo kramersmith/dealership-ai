@@ -1,6 +1,7 @@
 import { XStack, YStack, Text } from 'tamagui'
 import { Bookmark } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
+import { insightCardBodyProps } from '@/lib/insightsPanelTypography'
 import { CardTitle } from './CardTitle'
 
 interface NotesItem {
@@ -33,10 +34,8 @@ export function NotesCard({ title, content }: NotesCardProps) {
         <YStack gap="$2.5">
           {items.map((item, index) => (
             <XStack key={`${item}-${index}`} alignItems="flex-start" gap="$2">
-              <Text fontSize={12} lineHeight={19} color="$color">
-                {'\u2022'}
-              </Text>
-              <Text flex={1} fontSize={12} lineHeight={19} color="$color">
+              <Text {...insightCardBodyProps}>{'\u2022'}</Text>
+              <Text flex={1} {...insightCardBodyProps}>
                 {item}
               </Text>
             </XStack>

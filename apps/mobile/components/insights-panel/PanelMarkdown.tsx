@@ -1,6 +1,10 @@
 import { StyleSheet } from 'react-native'
 import { useTheme } from 'tamagui'
 import Markdown from 'react-native-markdown-display'
+import {
+  INSIGHT_PANEL_MARKDOWN_FONT_SIZE,
+  insightMarkdownLineHeightFor,
+} from '@/lib/insightsPanelTypography'
 import { palette } from '@/lib/theme/tokens'
 
 interface PanelMarkdownProps {
@@ -10,15 +14,20 @@ interface PanelMarkdownProps {
 }
 
 /** Lightweight markdown renderer for insights panel card text. */
-export function PanelMarkdown({ children, fontSize = 13, color }: PanelMarkdownProps) {
+export function PanelMarkdown({
+  children,
+  fontSize = INSIGHT_PANEL_MARKDOWN_FONT_SIZE,
+  color,
+}: PanelMarkdownProps) {
   const theme = useTheme()
   const textColor = color ?? (theme.color?.val as string) ?? '#E4E6EB'
   const headingColor = (theme.color?.val as string) ?? '#E4E6EB'
   const codeBg = (theme.backgroundHover?.val as string) ?? '#3A3B3C'
   const borderColor = (theme.borderColor?.val as string) ?? '#3E4042'
+  const bodyLineHeight = insightMarkdownLineHeightFor(fontSize)
 
   const styles = StyleSheet.create({
-    body: { color: textColor, fontSize, lineHeight: fontSize * 1.54 },
+    body: { color: textColor, fontSize, lineHeight: bodyLineHeight },
     text: { color: textColor },
     paragraph: { color: textColor, marginTop: 0, marginBottom: 6 },
     heading1: {
@@ -41,8 +50,8 @@ export function PanelMarkdown({ children, fontSize = 13, color }: PanelMarkdownP
     bullet_list: { marginBottom: 6 },
     ordered_list: { marginBottom: 6 },
     list_item: { flexDirection: 'row', marginBottom: 3 },
-    bullet_list_icon: { color: textColor, fontSize, lineHeight: fontSize * 1.54, marginRight: 6 },
-    ordered_list_icon: { color: textColor, fontSize, lineHeight: fontSize * 1.54, marginRight: 6 },
+    bullet_list_icon: { color: textColor, fontSize, lineHeight: bodyLineHeight, marginRight: 6 },
+    ordered_list_icon: { color: textColor, fontSize, lineHeight: bodyLineHeight, marginRight: 6 },
     bullet_list_content: { flex: 1 },
     ordered_list_content: { flex: 1 },
     blockquote: {

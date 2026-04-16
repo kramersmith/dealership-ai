@@ -94,6 +94,9 @@ export const MOBILE_INSIGHTS_MAX_WIDTH = 420
 /** Maximum number of preview items shown in the compact insights bar. */
 export const MAX_INSIGHTS_PREVIEW_ITEMS = 3
 
+/** Collapsed chat strip / desktop dock while the detached insights panel stream is active. */
+export const INSIGHTS_COLLAPSED_PREVIEW_UPDATING = 'Updating insights...'
+
 /** Maximum width in pixels for chat bubbles (keeps text readable on wide screens). */
 export const CHAT_BUBBLE_MAX_WIDTH = 600
 

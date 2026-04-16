@@ -2,6 +2,7 @@ import { XStack, YStack, Text } from 'tamagui'
 import { AlertTriangle, AlertCircle } from '@tamagui/lucide-icons'
 import type { AiCardPriority } from '@/lib/types'
 import { AppCard } from '@/components/shared'
+import { insightCardBodyProps, insightCardEmphasisProps } from '@/lib/insightsPanelTypography'
 import { PanelMarkdown } from './PanelMarkdown'
 
 interface WarningCardProps {
@@ -25,7 +26,7 @@ export function WarningCard({ title, content, priority }: WarningCardProps) {
         {/* Title row */}
         <XStack gap="$2" alignItems="center">
           <Icon size={14} color={accentColor} />
-          <Text fontSize={14} fontWeight="700" color={accentColor} flex={1}>
+          <Text {...insightCardEmphasisProps} fontWeight="700" color={accentColor} flex={1}>
             {title}
           </Text>
         </XStack>
@@ -44,7 +45,7 @@ export function WarningCard({ title, content, priority }: WarningCardProps) {
             paddingLeft="$2.5"
             paddingRight="$3"
           >
-            <Text fontSize={13} fontWeight="500" color="$placeholderColor" flex={1} lineHeight={20}>
+            <Text {...insightCardBodyProps} fontWeight="500" color="$placeholderColor" flex={1}>
               {action}
             </Text>
           </XStack>

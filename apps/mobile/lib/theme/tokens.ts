@@ -13,6 +13,11 @@ export const palette = {
   brandPressed: '#1877F2',
   brandLight: '#4599FF',
   brandSubtle: '#263240',
+  /** Light-mode equivalent of brandSubtle — used for insights strip brand wash. */
+  brandSubtleLight: '#E5EEF8',
+  /** Brighter finish-flash peaks for the insights strip emphasis interpolation. */
+  brandFinishPeakDark: '#364E6B',
+  brandFinishPeakLight: '#C8DDF8',
 
   positive: '#22C55E',
   warning: '#EAB308',

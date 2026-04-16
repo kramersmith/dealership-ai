@@ -2,6 +2,7 @@ import { Animated } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Check } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
+import { insightCardBodyProps } from '@/lib/insightsPanelTypography'
 import { CardTitle } from './CardTitle'
 import { useAnimatedNumber } from '@/hooks/useAnimatedValue'
 
@@ -19,21 +20,20 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
   return (
     <XStack gap="$2.5" alignItems="center" paddingVertical="$1.5">
       <XStack
-        width={18}
-        height={18}
-        borderRadius={9}
+        width={14}
+        height={14}
+        borderRadius={7}
         borderWidth={2}
         borderColor={item.done ? '$positive' : '$borderColor'}
         backgroundColor={item.done ? '$positive' : 'transparent'}
         alignItems="center"
         justifyContent="center"
       >
-        {item.done && <Check size={10} color="$white" strokeWidth={3} />}
+        {item.done && <Check size={8} color="$white" strokeWidth={2.5} />}
       </XStack>
       <Text
         flex={1}
-        fontSize={12}
-        lineHeight={16}
+        {...insightCardBodyProps}
         color={item.done ? '$placeholderColor' : '$color'}
         textDecorationLine={item.done ? 'line-through' : 'none'}
       >

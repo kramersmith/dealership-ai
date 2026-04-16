@@ -3,9 +3,18 @@ import { Animated } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import type { NegotiationContext, NegotiationStance } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { insightCardBodyProps } from '@/lib/insightsPanelTypography'
+import { CardTitle } from './CardTitle'
 
 interface SituationBarProps {
   context: NegotiationContext
+  /**
+   * `panel` — standalone strip (insights header / legacy).
+   * `insightCard` — same typography rhythm as other AiCards: CardTitle row + body.
+   */
+  layout?: 'panel' | 'insightCard'
+  /** Uppercase title row when `layout="insightCard"` (e.g. backend phase card title). */
+  cardTitle?: string
 }
 
 const STANCE_COLORS: Record<NegotiationStance, string> = {
@@ -37,7 +46,11 @@ const STANCE_LABELS: Record<NegotiationStance, string> = {
 const CROSSFADE_DURATION = 300
 const SLIDE_DISTANCE = 20
 
-export function SituationBar({ context }: SituationBarProps) {
+export function SituationBar({
+  context,
+  layout = 'panel',
+  cardTitle = 'Status',
+}: SituationBarProps) {
   const color = STANCE_COLORS[context.stance] ?? '$placeholderColor'
   const label = STANCE_LABELS[context.stance] ?? context.stance
   const fadeAnim = useRef(new Animated.Value(0)).current
@@ -83,6 +96,33 @@ export function SituationBar({ context }: SituationBarProps) {
     Animated.parallel(animations).start()
   }, [context.stance, context.situation, fadeAnim, slideX])
 
+  const stancePill = (
+    <XStack
+      backgroundColor={color}
+      borderRadius={6}
+      paddingHorizontal="$2.5"
+      paddingVertical="$1"
+      flexShrink={0}
+    >
+      <Text fontSize={10} fontWeight="700" color="$white" textTransform="uppercase">
+        {label}
+      </Text>
+    </XStack>
+  )
+
+  if (layout === 'insightCard') {
+    return (
+      <Animated.View style={{ opacity: fadeAnim }}>
+        <YStack gap="$2">
+          <CardTitle right={stancePill}>{cardTitle}</CardTitle>
+          <Animated.View style={{ transform: [{ translateX: slideX }] }}>
+            <Text {...insightCardBodyProps}>{context.situation}</Text>
+          </Animated.View>
+        </YStack>
+      </Animated.View>
+    )
+  }
+
   return (
     <Animated.View style={{ opacity: fadeAnim }}>
       <YStack
@@ -92,22 +132,9 @@ export function SituationBar({ context }: SituationBarProps) {
         paddingVertical="$2.5"
         gap="$1.5"
       >
-        <XStack>
-          <XStack
-            backgroundColor={color}
-            borderRadius={4}
-            paddingHorizontal="$1.5"
-            paddingVertical="$0.5"
-          >
-            <Text fontSize={10} fontWeight="700" color="$white" textTransform="uppercase">
-              {label}
-            </Text>
-          </XStack>
-        </XStack>
+        <XStack>{stancePill}</XStack>
         <Animated.View style={{ transform: [{ translateX: slideX }] }}>
-          <Text fontSize={12} color="$color" lineHeight={18}>
-            {context.situation}
-          </Text>
+          <Text {...insightCardBodyProps}>{context.situation}</Text>
         </Animated.View>
       </YStack>
     </Animated.View>

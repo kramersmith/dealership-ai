@@ -1,5 +1,4 @@
 export { InsightsPanel } from './InsightsPanel'
-export { CompactPhaseIndicator } from './CompactPhaseIndicator'
 export { AiCard } from './AiCard'
 export { CardReplyInput } from './CardReplyInput'
 export { CardTitle } from './CardTitle'
@@ -15,3 +14,9 @@ export { NotesCard } from './NotesCard'
 export { AiChecklistCard } from './AiChecklistCard'
 export { SuccessCard } from './SuccessCard'
 export { DesktopInsightsDockControl } from './DesktopInsightsDockControl'
+export {
+  InsightPanelPreviewIcons,
+  MAX_PANEL_PREVIEW_ICONS,
+  describePanelIconKindsForA11y,
+} from './InsightPanelPreviewIcons'
+export { InsightsPreviewItemChip } from './InsightsPreviewItemChip'

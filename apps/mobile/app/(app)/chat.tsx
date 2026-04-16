@@ -9,8 +9,10 @@ import {
   View,
   Animated,
   Dimensions,
+  Easing,
+  StyleSheet,
 } from 'react-native'
-import { YStack, XStack, Text, Theme, useTheme, Button } from 'tamagui'
+import { YStack, XStack, Text, Theme, useTheme, useThemeName, Button } from 'tamagui'
 import {
   ConfirmModal,
   ThemedSafeArea,
@@ -18,15 +20,30 @@ import {
   RoleGuard,
   ScreenHeader,
 } from '@/components/shared'
-import { MessageSquarePlus, X, ChevronLeft } from '@tamagui/lucide-icons'
+import {
+  MessageSquarePlus,
+  Pause,
+  Sparkles,
+  X,
+  ChevronLeft,
+  ChevronRight,
+} from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
   APP_NAME,
+  DEFAULT_BUYER_CONTEXT,
+  INSIGHTS_COLLAPSED_PREVIEW_UPDATING,
   MOBILE_INSIGHTS_WIDTH_RATIO,
   MOBILE_INSIGHTS_MAX_WIDTH,
   MAX_INSIGHTS_PREVIEW_ITEMS,
 } from '@/lib/constants'
+import {
+  getCollapsedPrimaryHeadline,
+  getDedupedPanelIconKinds,
+  getInsightsPreviewItems,
+} from '@/lib/insightsCollapsedPreview'
 import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
+import { DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT } from '@/lib/dev/mockPanelUpdates'
 import {
   CHAT_SCREEN_LAYOUT,
   getChatBottomPadding,
@@ -34,16 +51,7 @@ import {
   getDesktopChatRailStyle,
   getWebQueuePreviewRightInsetPx,
 } from '@/lib/chatLayout'
-import type {
-  AiPanelCard,
-  BuyerContext,
-  DealState,
-  HealthStatus,
-  Message,
-  VinAssistItem,
-} from '@/lib/types'
-import { formatCurrency, getActiveDeal } from '@/lib/utils'
-import { computeBasicHealth, computeSavings } from '@/lib/dealComputations'
+import type { BuyerContext, Message, VinAssistItem } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { getVehicleAwareHeaderTitleInfo } from '@/lib/headerTitles'
@@ -53,16 +61,23 @@ import { useDealStore } from '@/stores/dealStore'
 import { useUserSettingsStore } from '@/stores/userSettingsStore'
 import { useChat } from '@/hooks/useChat'
 import { useIconEntrance, useSlideIn } from '@/hooks/useAnimatedValue'
+import {
+  createFinishFlashSequence,
+  scheduleFinishFlashHaptic,
+  useBreathingPulseOverlay,
+  useSignatureEntranceAnimation,
+} from '@/hooks/useInsightsAnimations'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
 import { useDesktopInsightsShell } from '@/hooks/useDesktopInsightsShell'
 import { useDesktopPanelPreference } from '@/hooks/useDesktopPanelPreference'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { STATUS_LABELS, STATUS_THEMES } from '@/lib/constants'
 import {
   InsightsPanel,
-  CompactPhaseIndicator,
   DesktopInsightsDockControl,
+  InsightPanelPreviewIcons,
+  InsightsPreviewItemChip,
+  describePanelIconKindsForA11y,
 } from '@/components/insights-panel'
 import { ChatComposerOverlay, ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
 
@@ -82,109 +97,6 @@ function useMobileInsightsWidth() {
   }, [])
 
   return width
-}
-
-/** Build prioritized preview items from deal state. Shows the most important signals first. */
-function getPreviewItems(
-  dealState: DealState | null,
-  dismissedFlagIds: Set<string>
-): PreviewItem[] {
-  if (!dealState) return [{ type: 'text', label: 'Tap to view insights' }]
-
-  const activeDeal = getActiveDeal(dealState)
-  const items: PreviewItem[] = []
-
-  // 0. Multi-deal indicator
-  if (dealState.deals.length >= 2) {
-    items.push({ type: 'text', label: `${dealState.deals.length} deals` })
-  }
-
-  // Merge deal-level + session-level red flags
-  const allFlags = [...(activeDeal?.redFlags ?? []), ...dealState.redFlags]
-
-  // 1. Critical red flag — highest priority
-  const criticalFlag = allFlags.find(
-    (flag) => flag.severity === 'critical' && !dismissedFlagIds.has(flag.id)
-  )
-  if (criticalFlag) {
-    items.push({ type: 'flag', label: criticalFlag.message })
-  }
-
-  // 2. Deal health (from active deal)
-  const numbers = activeDeal?.numbers
-  const healthStatus = activeDeal?.health?.status ?? (numbers ? computeBasicHealth(numbers) : null)
-  if (healthStatus) {
-    items.push({ type: 'health', status: healthStatus })
-  }
-
-  // 3. Current offer or listing price (from active deal)
-  if (numbers?.currentOffer != null) {
-    items.push({ type: 'text', label: formatCurrency(numbers.currentOffer) })
-  } else if (numbers?.listingPrice != null) {
-    items.push({ type: 'text', label: `List ${formatCurrency(numbers.listingPrice)}` })
-  }
-
-  // 4. Savings (from active deal)
-  if (activeDeal) {
-    const savings =
-      activeDeal.savingsEstimate ??
-      computeSavings(activeDeal.firstOffer, activeDeal.numbers.currentOffer)
-    if (savings != null && savings > 0) {
-      items.push({ type: 'savings', label: `Saved ${formatCurrency(savings)}` })
-    }
-  }
-
-  // 5. Warning flag count (non-critical)
-  const warningCount = allFlags.filter(
-    (flag) => flag.severity === 'warning' && !dismissedFlagIds.has(flag.id)
-  ).length
-  if (warningCount > 0 && !criticalFlag) {
-    items.push({ type: 'flagCount', count: warningCount })
-  }
-
-  // 6. Timer
-  if (dealState.timerStartedAt) {
-    items.push({ type: 'text', label: 'Timer running' })
-  }
-
-  // Fallback
-  if (items.length === 0) {
-    items.push({ type: 'text', label: 'Tap to view insights' })
-  }
-
-  return items
-}
-
-type PreviewItem =
-  | { type: 'health'; status: HealthStatus }
-  | { type: 'text'; label: string }
-  | { type: 'flag'; label: string }
-  | { type: 'savings'; label: string }
-  | { type: 'flagCount'; count: number }
-
-function getCollapsedInsightsPreview(cards: AiPanelCard[]): string {
-  for (const card of cards) {
-    if (!card) continue
-    const { content } = card
-    if (!content || typeof content !== 'object') continue
-    const candidateKeys = [
-      'summary',
-      'headline',
-      'message',
-      'recommendation',
-      'label',
-      'value',
-      'status',
-      'title',
-    ] as const
-    for (const key of candidateKeys) {
-      const value = (content as Record<string, unknown>)[key]
-      if (typeof value === 'string' && value.trim()) {
-        return value.trim()
-      }
-    }
-  }
-  return ''
 }
 
 function getUserVisibleErrorMessage(error: unknown, fallback: string): string {
@@ -336,6 +248,8 @@ export default function ChatScreen() {
   const router = useRouter()
   const isCreating = useRef(false)
   const theme = useTheme()
+  const themeName = useThemeName()
+  const isDarkTheme = typeof themeName === 'string' && themeName.startsWith('dark')
   const mobileInsightsWidth = useMobileInsightsWidth()
   const [isInsightsOpen, setIsInsightsOpen] = useState(false)
 
@@ -378,6 +292,139 @@ export default function ChatScreen() {
   const prefersReducedMotion = usePrefersReducedMotion()
   const insightsUpdateMode = useUserSettingsStore((state) => state.insightsUpdateMode)
   const { desktopInsightsCollapsed, setDesktopInsightsCollapsed } = useDesktopPanelPreference()
+
+  useEffect(() => {
+    if (!__DEV__ || Platform.OS !== 'web' || typeof window === 'undefined') {
+      return
+    }
+    const onDevCollapseDesktopInsights = () => {
+      setDesktopInsightsCollapsed(true)
+    }
+    window.addEventListener(DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT, onDevCollapseDesktopInsights)
+    return () => {
+      window.removeEventListener(DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT, onDevCollapseDesktopInsights)
+    }
+  }, [setDesktopInsightsCollapsed])
+
+  useEffect(() => {
+    if (!__DEV__) {
+      return
+    }
+    // Side effect: registers `mockPanel`, `clearPanel`, `reviewDesktopDockAnimations` on globalThis.
+    require('@/lib/dev/mockPanelUpdates')
+  }, [])
+
+  /** Opaque-only stops so RN never interpolates through alpha (avoids “see-through” flashes). */
+  const insightsPreviewStripBg = useMemo(() => {
+    const idle = (theme.backgroundStrong?.val as string) ?? '#242526'
+    const brandWash = isDarkTheme
+      ? ((theme.brandSubtle?.val as string) ?? palette.brandSubtle)
+      : palette.brandSubtleLight
+    const finishPeak = isDarkTheme ? palette.brandFinishPeakDark : palette.brandFinishPeakLight
+    return { idle, brandWash, finishPeak }
+  }, [isDarkTheme, theme.backgroundStrong?.val, theme.brandSubtle?.val])
+
+  /** 0–1 drives brand overlay opacity while analyzing. */
+  const insightsPulseOverlayAnim = useBreathingPulseOverlay(isPanelAnalyzing, prefersReducedMotion)
+
+  /**
+   * Finish / idle strip emphasis (opaque hex interpolate). 0 = idle, 1 = brand wash,
+   * 1.5 = brighter finish peak. Held at 1 while analyzing so the steady wash doesn't flicker.
+   */
+  const insightsEmphasisAnim = useRef(new Animated.Value(isPanelAnalyzing ? 1 : 0)).current
+  /** Subtle “lift” on the finish flash (native transform only — outer wrapper). */
+  const insightsStripScaleAnim = useRef(new Animated.Value(1)).current
+  /** Finish-only border “ring” (1 → ~2.5 → 1); avoids animating width during the live pulse. */
+  const insightsStripBorderWidthAnim = useRef(new Animated.Value(1)).current
+  /** Brief sparkle opacity settle after analysis (native opacity). */
+  const insightsSparkleOpacityAnim = useRef(new Animated.Value(1)).current
+  const insightsFinishFlashRef = useRef<Animated.CompositeAnimation | null>(null)
+  const previousPanelAnalyzingRef = useRef(isPanelAnalyzing)
+
+  useEffect(() => {
+    const wasAnalyzing = previousPanelAnalyzingRef.current
+    previousPanelAnalyzingRef.current = isPanelAnalyzing
+
+    insightsFinishFlashRef.current?.stop()
+    insightsFinishFlashRef.current = null
+
+    if (isPanelAnalyzing) {
+      // Steady-state during analysis: brand wash + neutral scale/border.
+      insightsEmphasisAnim.setValue(1)
+      insightsStripScaleAnim.setValue(1)
+      insightsStripBorderWidthAnim.setValue(1)
+      insightsSparkleOpacityAnim.setValue(1)
+      return
+    }
+
+    // Reset to idle when never analyzed (or under reduced motion).
+    if (!wasAnalyzing || prefersReducedMotion) {
+      insightsEmphasisAnim.setValue(0)
+      insightsStripScaleAnim.setValue(1)
+      insightsStripBorderWidthAnim.setValue(1)
+      insightsSparkleOpacityAnim.setValue(1)
+      return
+    }
+
+    // Finish flash on analyzing → idle transition.
+    insightsEmphasisAnim.setValue(1)
+    insightsStripScaleAnim.setValue(1)
+    insightsStripBorderWidthAnim.setValue(1)
+    insightsSparkleOpacityAnim.setValue(1)
+
+    const cancelHaptic = scheduleFinishFlashHaptic()
+
+    const finishFlash = createFinishFlashSequence({
+      scaleAnim: insightsStripScaleAnim,
+      borderWidthAnim: insightsStripBorderWidthAnim,
+      scaleTo: 1.012,
+      borderWidthTo: 2.5,
+      scaleUsesNativeDriver: true,
+      riseExtras: [
+        Animated.timing(insightsEmphasisAnim, {
+          toValue: 1.5,
+          duration: 320,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+      ],
+      fallExtras: [
+        Animated.timing(insightsEmphasisAnim, {
+          toValue: 0,
+          duration: 980,
+          easing: Easing.bezier(0.4, 0, 0.2, 1),
+          useNativeDriver: false,
+        }),
+        Animated.sequence([
+          Animated.timing(insightsSparkleOpacityAnim, {
+            toValue: 0.86,
+            duration: 240,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(insightsSparkleOpacityAnim, {
+            toValue: 1,
+            duration: 560,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+      ],
+    })
+    insightsFinishFlashRef.current = finishFlash
+    finishFlash.start()
+
+    return () => {
+      cancelHaptic()
+    }
+  }, [
+    insightsEmphasisAnim,
+    insightsSparkleOpacityAnim,
+    insightsStripBorderWidthAnim,
+    insightsStripScaleAnim,
+    isPanelAnalyzing,
+    prefersReducedMotion,
+  ])
 
   const webQueuePreviewRightInsetPx = getWebQueuePreviewRightInsetPx(Platform.OS)
 
@@ -425,10 +472,28 @@ export default function ChatScreen() {
   const headerTitle = showContextPicker ? 'New Chat' : headerTitleInfo.title
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
   const isDesktopChatActive = isDesktop && !showContextPicker
-  const collapsedInsightsPreviewText = useMemo(
-    () => getCollapsedInsightsPreview(dealState?.aiPanelCards ?? []),
+  const buyerContextForPreview = dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT
+
+  const panelPreviewIconKinds = useMemo(
+    () => getDedupedPanelIconKinds(dealState?.aiPanelCards),
     [dealState?.aiPanelCards]
   )
+
+  const collapsedPrimaryHeadline = useMemo(
+    () => getCollapsedPrimaryHeadline(dealState, dismissedFlagIds, buyerContextForPreview),
+    [dealState, dismissedFlagIds, buyerContextForPreview]
+  )
+
+  const collapsedInsightsAccessibilityLabel = useMemo(() => {
+    const pausedPrefix =
+      insightsUpdateMode === 'paused' && !isPanelAnalyzing ? 'Insights updates paused. ' : ''
+    const updating = isPanelAnalyzing ? 'Insights panel is updating. ' : ''
+    const iconPart =
+      panelPreviewIconKinds.length > 0
+        ? `. Includes ${describePanelIconKindsForA11y(panelPreviewIconKinds)}`
+        : ''
+    return `${pausedPrefix}Open insights panel. ${updating}${collapsedPrimaryHeadline}${iconPart}`
+  }, [collapsedPrimaryHeadline, insightsUpdateMode, isPanelAnalyzing, panelPreviewIconKinds])
 
   const handleDesktopCollapsePress = useCallback(() => {
     setDesktopInsightsCollapsed(true)
@@ -616,8 +681,39 @@ export default function ChatScreen() {
   }
 
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
-  const previewItems = getPreviewItems(dealState, dismissedFlagIds)
-  const activeDealForPreview = dealState ? getActiveDeal(dealState) : null
+  const previewItems = useMemo(
+    () => getInsightsPreviewItems(dealState, dismissedFlagIds, buyerContextForPreview),
+    [dealState, dismissedFlagIds, buyerContextForPreview]
+  )
+
+  const insightsPreviewContentSignature = useMemo(() => {
+    if (isPanelAnalyzing) return 'analyzing'
+    if (insightsUpdateMode === 'paused') return 'paused'
+    const slice = previewItems.slice(0, MAX_INSIGHTS_PREVIEW_ITEMS)
+    const parts = slice.map((item) => {
+      switch (item.type) {
+        case 'health':
+          return `h:${item.status}`
+        case 'flag':
+          return `f:${item.label}`
+        case 'savings':
+          return `s:${item.label}`
+        case 'flagCount':
+          return `c:${item.count}`
+        case 'text':
+          return `t:${item.label}`
+        default:
+          return 'u'
+      }
+    })
+    return `live:${parts.join('·')}|${panelPreviewIconKinds.join(',')}`
+  }, [isPanelAnalyzing, insightsUpdateMode, panelPreviewIconKinds, previewItems])
+
+  const {
+    opacityAnim: insightsPreviewContentOpacityAnim,
+    translateYAnim: insightsPreviewContentTranslateYAnim,
+  } = useSignatureEntranceAnimation(insightsPreviewContentSignature, prefersReducedMotion)
+
   const desktopChatRailStyle = isDesktop ? getDesktopChatRailStyle() : undefined
   const composerTrayStyle = isDesktop
     ? ({
@@ -743,14 +839,14 @@ export default function ChatScreen() {
       <Pressable
         onPress={() => setIsInsightsOpen(true)}
         accessibilityRole="button"
-        accessibilityLabel="Open insights"
+        accessibilityLabel={collapsedInsightsAccessibilityLabel}
         style={({ pressed }) => ({
           marginHorizontal: 12,
           marginTop: 8,
           marginBottom: 6,
-          minHeight: 44,
-          opacity: pressed ? 0.96 : 1,
-          transform: [{ scale: pressed ? 0.995 : 1 }],
+          height: 44,
+          opacity: pressed ? 0.94 : 1,
+          transform: [{ scale: pressed ? 0.992 : 1 }],
           borderWidth: 0,
           ...(Platform.OS === 'web'
             ? {
@@ -762,83 +858,176 @@ export default function ChatScreen() {
             : null),
         })}
       >
-        <XStack
-          alignItems="center"
-          gap="$3"
-          paddingHorizontal="$3"
-          paddingVertical="$2"
-          backgroundColor="$backgroundStrong"
-          borderRadius="$4"
-          borderWidth={1}
-          borderColor="$borderColor"
+        <Animated.View
+          style={{
+            width: '100%',
+            transform: [{ scale: insightsStripScaleAnim }],
+          }}
         >
-          <XStack flex={1} alignItems="center" justifyContent="space-evenly">
-            {previewItems.slice(0, MAX_INSIGHTS_PREVIEW_ITEMS).map((item, i) => {
-              switch (item.type) {
-                case 'health': {
-                  return (
-                    <XStack key={i} alignItems="center" gap="$1.5">
-                      <Theme name={STATUS_THEMES[item.status]}>
-                        <YStack width={8} height={8} borderRadius={4} backgroundColor="$color" />
-                      </Theme>
-                      <Text fontSize={12} fontWeight="600" color="$color" numberOfLines={1}>
-                        {STATUS_LABELS[item.status]}
-                      </Text>
-                    </XStack>
-                  )
-                }
-                case 'flag':
-                  return (
+          <Animated.View
+            style={[
+              {
+                width: '100%',
+                height: 44,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                paddingHorizontal: 10,
+                overflow: 'hidden',
+                borderRadius: 14,
+                position: 'relative',
+                ...(Platform.OS === 'web'
+                  ? ({
+                      boxShadow: `0 8px 28px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
+                    } as any)
+                  : isPanelAnalyzing
+                    ? {
+                        shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
+                        shadowOffset: { width: 0, height: 6 },
+                        shadowOpacity: 0.22,
+                        shadowRadius: 16,
+                        elevation: 8,
+                      }
+                    : {
+                        shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
+                        shadowOffset: { width: 0, height: 6 },
+                        shadowOpacity: insightsEmphasisAnim.interpolate({
+                          inputRange: [0, 1, 1.5],
+                          outputRange: [0.14, 0.24, 0.38],
+                        }),
+                        shadowRadius: 16,
+                        elevation: 8,
+                      }),
+              },
+              isPanelAnalyzing
+                ? {
+                    borderWidth: 1,
+                    backgroundColor: insightsPreviewStripBg.brandWash,
+                    borderColor: palette.brand,
+                  }
+                : {
+                    borderWidth: insightsStripBorderWidthAnim,
+                    backgroundColor: insightsEmphasisAnim.interpolate({
+                      inputRange: [0, 1, 1.5],
+                      outputRange: [
+                        insightsPreviewStripBg.idle,
+                        insightsPreviewStripBg.brandWash,
+                        insightsPreviewStripBg.finishPeak,
+                      ],
+                    }),
+                    borderColor: insightsEmphasisAnim.interpolate({
+                      inputRange: [0, 1, 1.5],
+                      outputRange: [
+                        (theme.borderColor?.val as string) ?? '#3E4042',
+                        palette.brand,
+                        palette.brandLight,
+                      ],
+                    }),
+                  },
+            ]}
+          >
+            {isPanelAnalyzing && !prefersReducedMotion ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFillObject,
+                  {
+                    borderRadius: 14,
+                    backgroundColor: palette.brand,
+                    opacity: insightsPulseOverlayAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.07, 0.24],
+                    }),
+                  },
+                ]}
+              />
+            ) : null}
+            <XStack flexShrink={0} alignItems="center" justifyContent="center">
+              <Animated.View style={{ opacity: insightsSparkleOpacityAnim }}>
+                <Sparkles
+                  size={22}
+                  color={
+                    insightsUpdateMode === 'paused' && !isPanelAnalyzing
+                      ? '$placeholderColor'
+                      : '$brand'
+                  }
+                />
+              </Animated.View>
+            </XStack>
+            <XStack flex={1} minWidth={0} overflow="hidden">
+              <Animated.View
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'flex-start',
+                  gap: 10,
+                  opacity: insightsPreviewContentOpacityAnim,
+                  transform: [{ translateY: insightsPreviewContentTranslateYAnim }],
+                }}
+              >
+                {isPanelAnalyzing ? (
+                  <XStack flex={1} alignItems="center" minWidth={0}>
                     <Text
-                      key={i}
-                      fontSize={11}
-                      fontWeight="600"
-                      color="$danger"
+                      fontSize={13}
+                      fontWeight="700"
+                      lineHeight={18}
+                      color="$color"
                       numberOfLines={1}
                       flex={1}
+                      minWidth={0}
                     >
-                      {item.label}
+                      {INSIGHTS_COLLAPSED_PREVIEW_UPDATING}
                     </Text>
-                  )
-                case 'savings':
-                  return (
+                  </XStack>
+                ) : insightsUpdateMode === 'paused' ? (
+                  <XStack
+                    flex={1}
+                    alignItems="center"
+                    justifyContent="center"
+                    minWidth={0}
+                    gap="$1.5"
+                  >
                     <Text
-                      key={i}
-                      fontSize={12}
-                      fontWeight="600"
-                      color="$positive"
+                      fontSize={13}
+                      fontWeight="700"
+                      lineHeight={18}
+                      color="$placeholderColor"
                       numberOfLines={1}
+                      flexShrink={1}
+                      minWidth={0}
                     >
-                      {item.label}
+                      Paused
                     </Text>
-                  )
-                case 'flagCount':
-                  return (
-                    <XStack
-                      key={i}
-                      backgroundColor="$danger"
-                      borderRadius={8}
-                      paddingHorizontal={6}
-                      paddingVertical={1}
-                    >
-                      <Text fontSize={10} fontWeight="700" color="$white">
-                        {item.count}
-                      </Text>
-                    </XStack>
-                  )
-                case 'text':
-                  return (
-                    <Text key={i} fontSize={12} fontWeight="500" color="$color" numberOfLines={1}>
-                      {item.label}
-                    </Text>
-                  )
-              }
-            })}
-            {activeDealForPreview?.phase && (
-              <CompactPhaseIndicator currentPhase={activeDealForPreview.phase} />
-            )}
-          </XStack>
-        </XStack>
+                    <Pause size={14} color="$placeholderColor" />
+                  </XStack>
+                ) : (
+                  previewItems
+                    .slice(0, MAX_INSIGHTS_PREVIEW_ITEMS)
+                    .map((item, index) => (
+                      <InsightsPreviewItemChip key={`${item.type}:${index}`} item={item} />
+                    ))
+                )}
+                {insightsUpdateMode !== 'paused' || isPanelAnalyzing ? (
+                  panelPreviewIconKinds.length > 0 ? (
+                    <InsightPanelPreviewIcons kinds={panelPreviewIconKinds} />
+                  ) : null
+                ) : null}
+              </Animated.View>
+            </XStack>
+            <XStack opacity={0.85} flexShrink={0} alignItems="center" justifyContent="center">
+              <ChevronRight
+                size={18}
+                color={
+                  insightsUpdateMode === 'paused' && !isPanelAnalyzing
+                    ? '$placeholderColor'
+                    : '$brand'
+                }
+              />
+            </XStack>
+          </Animated.View>
+        </Animated.View>
       </Pressable>
     ) : null
 
@@ -1074,8 +1263,11 @@ export default function ChatScreen() {
               {desktopShell.shellState !== 'expanded' ? (
                 <DesktopInsightsDockControl
                   shellState={desktopShell.shellState}
-                  collapsedPreviewText={collapsedInsightsPreviewText}
+                  collapsedPrimaryText={collapsedPrimaryHeadline}
+                  panelIconKinds={panelPreviewIconKinds}
+                  collapsedPreviewAccessibilityLabel={collapsedInsightsAccessibilityLabel}
                   insightsUpdateMode={insightsUpdateMode}
+                  prefersReducedMotion={prefersReducedMotion}
                   launcherOpacity={desktopShell.launcherOpacity}
                   launcherTranslateX={desktopShell.launcherTranslateX}
                   topOffsetPx={CHAT_SCREEN_LAYOUT.desktopDockTopOffsetPx}
