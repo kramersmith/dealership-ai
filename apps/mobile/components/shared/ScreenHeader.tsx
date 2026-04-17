@@ -51,29 +51,41 @@ export function ScreenHeader({
       borderBottomWidth={1}
       borderBottomColor="$borderColor"
       backgroundColor="$backgroundStrong"
-    >{[
-      <HeaderIconButton key="hdr-left" onPress={onLeftPress} accessibilityLabel={leftLabel}><Animated.View
-          style={{
-            opacity: iconAnim.opacity,
-            transform: [{ rotate: iconAnim.rotate }],
-          }}
-        >{leftIcon}</Animated.View></HeaderIconButton>,
-      <ScrambleText
-        key={titleKey ?? title}
-        text={title}
-        active={scrambleActive}
-        containerStyle={{ flex: 1, minWidth: 0, alignItems: 'center' }}
-        fontSize={18}
-        fontWeight="700"
-        color="$color"
-        textAlign="center"
-        numberOfLines={1}
-      />,
-      rightIcon && onRightPress ? (
-        <HeaderIconButton key="hdr-right" onPress={onRightPress} accessibilityLabel={rightLabel ?? 'Action'}>{rightIcon}</HeaderIconButton>
-      ) : (
-        <XStack key="hdr-spacer" width={44} />
-      ),
-    ]}</XStack>
+    >
+      {[
+        <HeaderIconButton key="hdr-left" onPress={onLeftPress} accessibilityLabel={leftLabel}>
+          <Animated.View
+            style={{
+              opacity: iconAnim.opacity,
+              transform: [{ rotate: iconAnim.rotate }],
+            }}
+          >
+            {leftIcon}
+          </Animated.View>
+        </HeaderIconButton>,
+        <ScrambleText
+          key={titleKey ?? title}
+          text={title}
+          active={scrambleActive}
+          containerStyle={{ flex: 1, minWidth: 0, alignItems: 'center' }}
+          fontSize={18}
+          fontWeight="700"
+          color="$color"
+          textAlign="center"
+          numberOfLines={1}
+        />,
+        rightIcon && onRightPress ? (
+          <HeaderIconButton
+            key="hdr-right"
+            onPress={onRightPress}
+            accessibilityLabel={rightLabel ?? 'Action'}
+          >
+            {rightIcon}
+          </HeaderIconButton>
+        ) : (
+          <XStack key="hdr-spacer" width={44} />
+        ),
+      ]}
+    </XStack>
   )
 }

@@ -1,12 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react'
-import {
-  Animated,
-  Pressable,
-  TouchableOpacity,
-  Platform,
-  View,
-  Text as RNText,
-} from 'react-native'
+import { Animated, Pressable, TouchableOpacity, Platform, View, Text as RNText } from 'react-native'
 import { Trash2 } from '@tamagui/lucide-icons'
 import { useTheme } from 'tamagui'
 import type { DealPhase, DealSummary, Session } from '@/lib/types'
@@ -180,33 +173,35 @@ export function SessionCard({
     .join(', ')
 
   const dealSnapshotColumn = (
-    <View style={{ flex: 1, minWidth: 0, gap: 4, alignItems: 'flex-start' }}>{[
-      <RNText
-        key="ds-label"
-        style={{
-          fontSize: 10,
-          fontWeight: '700',
-          color: phaseAccent,
-          textTransform: 'uppercase',
-          letterSpacing: 0.9,
-          textAlign: 'left',
-        }}
-      >
-        Deal snapshot
-      </RNText>,
-      <RNText
-        key="ds-body"
-        style={{
-          fontSize: 12,
-          color: placeholderVal,
-          opacity: 0.88,
-          textAlign: 'left',
-          width: '100%',
-        }}
-      >
-        {summaryLine ?? 'Continue the conversation'}
-      </RNText>,
-    ]}</View>
+    <View style={{ flex: 1, minWidth: 0, gap: 4, alignItems: 'flex-start' }}>
+      {[
+        <RNText
+          key="ds-label"
+          style={{
+            fontSize: 10,
+            fontWeight: '700',
+            color: phaseAccent,
+            textTransform: 'uppercase',
+            letterSpacing: 0.9,
+            textAlign: 'left',
+          }}
+        >
+          Deal snapshot
+        </RNText>,
+        <RNText
+          key="ds-body"
+          style={{
+            fontSize: 12,
+            color: placeholderVal,
+            opacity: 0.88,
+            textAlign: 'left',
+            width: '100%',
+          }}
+        >
+          {summaryLine ?? 'Continue the conversation'}
+        </RNText>,
+      ]}
+    </View>
   )
 
   const cardStyle = {
@@ -228,181 +223,234 @@ export function SessionCard({
   }
 
   const card = (
-    <View style={cardStyle}>{[
-      <TouchableOpacity
-        key="open"
-        onPress={() => onSelect(session.id)}
-        onLongPress={Platform.OS !== 'web' ? () => onDelete(session.id) : undefined}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        activeOpacity={1}
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityText}
-        accessibilityHint={Platform.OS !== 'web' ? 'Long press to delete' : undefined}
-        style={{
-          width: '100%',
-          paddingHorizontal: 18,
-          paddingTop: 20,
-          paddingBottom: Platform.OS === 'web' ? 12 : 20,
-          ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {}),
-        }}
-      ><View style={{ width: '100%', gap: 14, alignItems: 'flex-start' }}>{[
-          <View key="top" style={{ width: '100%', gap: 10, alignItems: 'flex-start' }}>{[
-            <View
-              key="hdr"
-              style={{
-                width: '100%',
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 12,
-              }}
-            >{[
-              <View
-                key="hdr-l"
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}
-              >{[
-                <View
-                  key="dot"
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 999,
-                    backgroundColor: phaseAccent,
-                    flexShrink: 0,
-                  }}
-                />,
-                <RNText
-                  key="phase"
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    color: placeholderVal,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1,
-                    lineHeight: 14,
-                    flexShrink: 1,
-                    textAlign: 'left',
-                  }}
-                  numberOfLines={1}
-                >
-                  {phaseLabel(phase)}
-                </RNText>,
-              ]}</View>,
-              <View key="hdr-r" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                <RNText style={{ fontSize: 11, fontWeight: '600', color: placeholderVal, lineHeight: 14 }}>
-                  {formatRelativeTime(session.updatedAt)}
-                </RNText>
-              </View>,
-            ]}</View>,
-            <RNText
-              key="title"
-              style={{
-                fontSize: 17,
-                fontWeight: '800',
-                color: colorVal,
-                letterSpacing: -0.2,
-                textAlign: 'left',
-                width: '100%',
-              }}
-            >
-              {session.title}
-            </RNText>,
-            previewText ? (
-              <RNText
-                key="prev"
-                style={{
-                  fontSize: 14,
-                  color: colorVal,
-                  lineHeight: 20,
-                  opacity: 0.72,
-                  textAlign: 'left',
-                  width: '100%',
-                }}
-              >
-                {previewText}
-              </RNText>
-            ) : (
-              <RNText
-                key="prev-empty"
-                style={{
-                  fontSize: 13,
-                  color: placeholderVal,
-                  lineHeight: 19,
-                  textAlign: 'left',
-                  width: '100%',
-                }}
-              >
-                Open this conversation to continue the deal.
-              </RNText>
-            ),
-          ]}</View>,
-          <View key="divider-block" style={{ width: '100%', gap: 8, alignItems: 'flex-start' }}>{[
-            <View key="rule" style={{ height: 1, width: '100%', backgroundColor: dividerColor }} />,
-            Platform.OS !== 'web' ? (
-              <View key="snap-n" style={{ width: '100%', flexDirection: 'row', alignItems: 'flex-start' }}>{dealSnapshotColumn}</View>
-            ) : null,
-          ]}</View>,
-        ]}</View></TouchableOpacity>,
-      Platform.OS === 'web' ? (
-        <View
-          key="web-actions"
+    <View style={cardStyle}>
+      {[
+        <TouchableOpacity
+          key="open"
+          onPress={() => onSelect(session.id)}
+          onLongPress={Platform.OS !== 'web' ? () => onDelete(session.id) : undefined}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          activeOpacity={1}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityText}
+          accessibilityHint={Platform.OS !== 'web' ? 'Long press to delete' : undefined}
           style={{
             width: '100%',
             paddingHorizontal: 18,
-            paddingTop: 10,
-            paddingBottom: 12,
-            flexDirection: 'row',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-            backgroundColor: bgStrong,
+            paddingTop: 20,
+            paddingBottom: Platform.OS === 'web' ? 12 : 20,
+            ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {}),
           }}
-        >{[
-          <Pressable
-            key="snap-press"
-            accessibilityRole="button"
-            accessibilityLabel={accessibilityText}
-            onPress={() => onSelect(session.id)}
-            style={({ pressed }) => ({
-              flex: 1,
-              minWidth: 0,
-              cursor: 'pointer' as const,
-              opacity: pressed ? 0.85 : 1,
-            })}
-          >{dealSnapshotColumn}</Pressable>,
-          <TouchableOpacity
-            key="del"
-            onPress={() => onDelete(session.id)}
-            activeOpacity={0.65}
-            accessibilityRole="button"
-            accessibilityLabel={`Delete ${session.title}`}
-            style={
-              {
-                width: 44,
-                height: 44,
-                alignItems: 'center',
-                justifyContent: 'center',
-                alignSelf: 'flex-start',
-                cursor: 'pointer',
-                outlineStyle: 'none',
-                outlineWidth: 0,
-                boxShadow: 'none',
-              } as unknown as import('react-native').ViewStyle
-            }
-          ><Trash2 size={18} color={placeholderVal} /></TouchableOpacity>,
-        ]}</View>
-      ) : null,
-    ]}</View>
+        >
+          <View style={{ width: '100%', gap: 14, alignItems: 'flex-start' }}>
+            {[
+              <View key="top" style={{ width: '100%', gap: 10, alignItems: 'flex-start' }}>
+                {[
+                  <View
+                    key="hdr"
+                    style={{
+                      width: '100%',
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 12,
+                    }}
+                  >
+                    {[
+                      <View
+                        key="hdr-l"
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {[
+                          <View
+                            key="dot"
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: 999,
+                              backgroundColor: phaseAccent,
+                              flexShrink: 0,
+                            }}
+                          />,
+                          <RNText
+                            key="phase"
+                            style={{
+                              fontSize: 11,
+                              fontWeight: '700',
+                              color: placeholderVal,
+                              textTransform: 'uppercase',
+                              letterSpacing: 1,
+                              lineHeight: 14,
+                              flexShrink: 1,
+                              textAlign: 'left',
+                            }}
+                            numberOfLines={1}
+                          >
+                            {phaseLabel(phase)}
+                          </RNText>,
+                        ]}
+                      </View>,
+                      <View
+                        key="hdr-r"
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                          flexShrink: 0,
+                        }}
+                      >
+                        <RNText
+                          style={{
+                            fontSize: 11,
+                            fontWeight: '600',
+                            color: placeholderVal,
+                            lineHeight: 14,
+                          }}
+                        >
+                          {formatRelativeTime(session.updatedAt)}
+                        </RNText>
+                      </View>,
+                    ]}
+                  </View>,
+                  <RNText
+                    key="title"
+                    style={{
+                      fontSize: 17,
+                      fontWeight: '800',
+                      color: colorVal,
+                      letterSpacing: -0.2,
+                      textAlign: 'left',
+                      width: '100%',
+                    }}
+                  >
+                    {session.title}
+                  </RNText>,
+                  previewText ? (
+                    <RNText
+                      key="prev"
+                      style={{
+                        fontSize: 14,
+                        color: colorVal,
+                        lineHeight: 20,
+                        opacity: 0.72,
+                        textAlign: 'left',
+                        width: '100%',
+                      }}
+                    >
+                      {previewText}
+                    </RNText>
+                  ) : (
+                    <RNText
+                      key="prev-empty"
+                      style={{
+                        fontSize: 13,
+                        color: placeholderVal,
+                        lineHeight: 19,
+                        textAlign: 'left',
+                        width: '100%',
+                      }}
+                    >
+                      Open this conversation to continue the deal.
+                    </RNText>
+                  ),
+                ]}
+              </View>,
+              <View key="divider-block" style={{ width: '100%', gap: 8, alignItems: 'flex-start' }}>
+                {[
+                  <View
+                    key="rule"
+                    style={{ height: 1, width: '100%', backgroundColor: dividerColor }}
+                  />,
+                  Platform.OS !== 'web' ? (
+                    <View
+                      key="snap-n"
+                      style={{ width: '100%', flexDirection: 'row', alignItems: 'flex-start' }}
+                    >
+                      {dealSnapshotColumn}
+                    </View>
+                  ) : null,
+                ]}
+              </View>,
+            ]}
+          </View>
+        </TouchableOpacity>,
+        Platform.OS === 'web' ? (
+          <View
+            key="web-actions"
+            style={{
+              width: '100%',
+              paddingHorizontal: 18,
+              paddingTop: 10,
+              paddingBottom: 12,
+              flexDirection: 'row',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+              backgroundColor: bgStrong,
+            }}
+          >
+            {[
+              <Pressable
+                key="snap-press"
+                accessibilityRole="button"
+                accessibilityLabel={accessibilityText}
+                onPress={() => onSelect(session.id)}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  minWidth: 0,
+                  cursor: 'pointer' as const,
+                  opacity: pressed ? 0.85 : 1,
+                })}
+              >
+                {dealSnapshotColumn}
+              </Pressable>,
+              <TouchableOpacity
+                key="del"
+                onPress={() => onDelete(session.id)}
+                activeOpacity={0.65}
+                accessibilityRole="button"
+                accessibilityLabel={`Delete ${session.title}`}
+                style={
+                  {
+                    width: 44,
+                    height: 44,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    alignSelf: 'flex-start',
+                    cursor: 'pointer',
+                    outlineStyle: 'none',
+                    outlineWidth: 0,
+                    boxShadow: 'none',
+                  } as unknown as import('react-native').ViewStyle
+                }
+              >
+                <Trash2 size={18} color={placeholderVal} />
+              </TouchableOpacity>,
+            ]}
+          </View>
+        ) : null,
+      ]}
+    </View>
   )
 
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }, { scale: pressScale }] }}>{[
-      Platform.OS === 'web' ? (
-        <HoverLiftFrame key="lift" shadowColor={shadow as string} borderRadius={18}>{card}</HoverLiftFrame>
-      ) : (
-        <View key="wrap">{card}</View>
-      ),
-    ]}</Animated.View>
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale: pressScale }] }}>
+      {[
+        Platform.OS === 'web' ? (
+          <HoverLiftFrame key="lift" shadowColor={shadow as string} borderRadius={18}>
+            {card}
+          </HoverLiftFrame>
+        ) : (
+          <View key="wrap">{card}</View>
+        ),
+      ]}
+    </Animated.View>
   )
 }

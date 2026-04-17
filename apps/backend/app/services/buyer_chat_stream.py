@@ -37,6 +37,7 @@ from app.services.turn_context import TurnContext
 from app.services.usage_tracking import (
     SessionUsageSummary,
     build_request_usage,
+    log_request_usage,
     message_usage_payload,
 )
 
@@ -283,12 +284,17 @@ async def stream_buyer_chat_turn(
             return
 
         if result.usage_summary.get("requests", 0) > 0:
-            session_usage.add_request(
-                build_request_usage(
-                    model=settings.CLAUDE_MODEL,
-                    usage_summary=result.usage_summary,
-                )
+            request_usage = build_request_usage(
+                model=settings.CLAUDE_MODEL,
+                usage_summary=result.usage_summary,
             )
+            log_request_usage(
+                logger,
+                request_usage,
+                context="chat_loop_interrupted",
+                session_id=session_id,
+            )
+            session_usage.add_request(request_usage)
 
         session.usage = session_usage.to_dict()
         session.updated_at = datetime.now(timezone.utc)
@@ -361,12 +367,17 @@ async def stream_buyer_chat_turn(
 
     try:
         if result.usage_summary.get("requests", 0) > 0:
-            session_usage.add_request(
-                build_request_usage(
-                    model=settings.CLAUDE_MODEL,
-                    usage_summary=result.usage_summary,
-                )
+            request_usage = build_request_usage(
+                model=settings.CLAUDE_MODEL,
+                usage_summary=result.usage_summary,
             )
+            log_request_usage(
+                logger,
+                request_usage,
+                context="chat_loop",
+                session_id=session_id,
+            )
+            session_usage.add_request(request_usage)
         await update_session_metadata(
             session=session,
             deal_state=deal_state,

@@ -62,7 +62,8 @@ export function HeaderIconButton({
           }
         : undefined)}
       style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-    ><Animated.View
+    >
+      <Animated.View
         style={{
           width: filled ? 36 : 44,
           height: filled ? 36 : 44,
@@ -80,6 +81,9 @@ export function HeaderIconButton({
               }
             : null),
         }}
-      >{children}</Animated.View></TouchableOpacity>
+      >
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
   )
 }

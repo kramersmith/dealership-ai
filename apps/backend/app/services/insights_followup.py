@@ -432,9 +432,9 @@ async def stream_linked_insights_followup(
         panel_prompt_cache_last = panel_prompt_cache.get("last")
         if isinstance(panel_prompt_cache_last, dict):
             session_usage.prompt_cache_panel_last = panel_prompt_cache_last
-        session_usage.prompt_cache_break_count += int(
-            panel_prompt_cache.get("breaks_delta", 0)
-        )
+        breaks_delta = panel_prompt_cache.get("breaks_delta", 0)
+        if isinstance(breaks_delta, int):
+            session_usage.prompt_cache_break_count += breaks_delta
         if followup_request_usage_summary.get("requests", 0) > 0:
             session_usage.add_request(
                 build_request_usage(

@@ -1380,12 +1380,13 @@ describe('useChatStore.sendMessage', () => {
     api.sendMessage = vi.fn(
       async (_sessionId, content, _imageUri, _onChunk, _onToolResult, onTextDone) => {
         startedContents.push(content)
-        onTextDone?.(`reply:${content}`)
+        const assistantMessageId =
+          content === 'first'
+            ? '11111111-2222-4333-8444-555555555555'
+            : '66666666-7777-4888-8999-000000000000'
+        onTextDone?.(`reply:${content}`, undefined, undefined, assistantMessageId)
         return {
-          id:
-            content === 'first'
-              ? '11111111-2222-4333-8444-555555555555'
-              : '66666666-7777-4888-8999-000000000000',
+          id: assistantMessageId,
           sessionId: 'session-1',
           role: 'assistant',
           content: `reply:${content}`,

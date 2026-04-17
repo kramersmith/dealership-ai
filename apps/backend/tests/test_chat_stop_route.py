@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 from app.models.enums import (
-    InsightsUpdateMode,
     InsightsFollowupStatus,
     InsightsFollowupStepStatus,
+    InsightsUpdateMode,
     MessageRole,
 )
 from app.models.insights_followup_job import InsightsFollowupJob

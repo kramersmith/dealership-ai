@@ -443,7 +443,12 @@ type StreamBuyerChatCallbacks = {
   onChunk?: (text: string) => void
   onTurnStarted?: (data: { turnId: string }) => void
   onToolResult?: (toolCall: ToolCall) => void
-  onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void
+  onTextDone?: (
+    finalText: string,
+    usage?: MessageUsage,
+    sessionUsage?: SessionUsage,
+    assistantMessageId?: string
+  ) => void
   onInterrupted?: (data: {
     text: string
     reason: string
@@ -566,7 +571,7 @@ function streamBuyerChatSse(
             typeof data.assistant_message_id === 'string' ? data.assistant_message_id : undefined
           messageUsage = data.usage
           sessionUsage = data.sessionUsage ? mapSessionUsage(data.sessionUsage) : undefined
-          onTextDone?.(fullText, messageUsage, sessionUsage)
+          onTextDone?.(fullText, messageUsage, sessionUsage, assistantMessageId)
           flushPendingDealToolResults()
         } else if (eventType === 'panel_started') {
           console.debug('[apiClient] panel stream started')
@@ -1086,7 +1091,12 @@ class ApiClient implements ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
+    onTextDone?: (
+      finalText: string,
+      usage?: MessageUsage,
+      sessionUsage?: SessionUsage,
+      assistantMessageId?: string
+    ) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,
@@ -1133,7 +1143,12 @@ class ApiClient implements ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
+    onTextDone?: (
+      finalText: string,
+      usage?: MessageUsage,
+      sessionUsage?: SessionUsage,
+      assistantMessageId?: string
+    ) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,

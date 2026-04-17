@@ -34,9 +34,7 @@ export function HoverLiftFrame({
       ? `0 4px 12px ${shadowColor}, 0 2px 6px ${shadowColor}`
       : `0 1px 3px ${shadowColor}, 0 1px 2px ${shadowColor}`,
     transform: [{ translateY: allowHoverMotion && isHovered ? -2 : 0 }],
-    transition: prefersReducedMotion
-      ? 'none'
-      : 'transform 0.2s ease, box-shadow 0.2s ease',
+    transition: prefersReducedMotion ? 'none' : 'transform 0.2s ease, box-shadow 0.2s ease',
     cursor: interactive ? 'pointer' : 'default',
   } as any
 
@@ -45,7 +43,9 @@ export function HoverLiftFrame({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       style={style}
-    >{children}</HoverView>
+    >
+      {children}
+    </HoverView>
   ) : (
     <View style={style}>{children}</View>
   )

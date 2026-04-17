@@ -496,7 +496,12 @@ export interface ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
+    onTextDone?: (
+      finalText: string,
+      usage?: MessageUsage,
+      sessionUsage?: SessionUsage,
+      assistantMessageId?: string
+    ) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,
@@ -522,7 +527,12 @@ export interface ApiService {
     imageUri?: string,
     onChunk?: (text: string) => void,
     onToolResult?: (toolCall: ToolCall) => void,
-    onTextDone?: (finalText: string, usage?: MessageUsage, sessionUsage?: SessionUsage) => void,
+    onTextDone?: (
+      finalText: string,
+      usage?: MessageUsage,
+      sessionUsage?: SessionUsage,
+      assistantMessageId?: string
+    ) => void,
     onRetry?: (data: { attempt: number; reason: string }) => void,
     onStep?: (data: { step: number }) => void,
     onPanelStarted?: () => void,

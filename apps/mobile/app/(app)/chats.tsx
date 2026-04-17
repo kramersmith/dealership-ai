@@ -70,7 +70,8 @@ function EmptySessionsState({ onNewChat }: { onNewChat: () => void }) {
   const colorVal = (theme.color?.val as string | undefined) ?? '#1C1E21'
   const placeholderVal = (theme.placeholderColor?.val as string | undefined) ?? palette.overlay
   return (
-    <Animated.View style={{ flex: 1, opacity }}><View
+    <Animated.View style={{ flex: 1, opacity }}>
+      <View
         style={{
           flex: 1,
           justifyContent: 'center',
@@ -78,9 +79,11 @@ function EmptySessionsState({ onNewChat }: { onNewChat: () => void }) {
           padding: 24,
           gap: 12,
         }}
-      ><RNText style={{ fontSize: 18, fontWeight: '700', color: colorVal, textAlign: 'center' }}>
+      >
+        <RNText style={{ fontSize: 18, fontWeight: '700', color: colorVal, textAlign: 'center' }}>
           No chats yet
-        </RNText><RNText
+        </RNText>
+        <RNText
           style={{
             fontSize: 14,
             color: placeholderVal,
@@ -89,8 +92,12 @@ function EmptySessionsState({ onNewChat }: { onNewChat: () => void }) {
           }}
         >
           Start a new chat to get help with your car deal.
-        </RNText><View style={{ paddingTop: 8 }}>
-          <AppButton onPress={onNewChat}>Start a Chat</AppButton></View></View></Animated.View>
+        </RNText>
+        <View style={{ paddingTop: 8 }}>
+          <AppButton onPress={onNewChat}>Start a Chat</AppButton>
+        </View>
+      </View>
+    </Animated.View>
   )
 }
 
@@ -101,7 +108,8 @@ function EmptySearchState({ query }: { query: string }) {
   const theme = useTheme()
   const placeholderVal = (theme.placeholderColor?.val as string | undefined) ?? palette.overlay
   return (
-    <Animated.View style={{ flex: 1, opacity }}><View
+    <Animated.View style={{ flex: 1, opacity }}>
+      <View
         style={{
           flex: 1,
           justifyContent: 'center',
@@ -109,9 +117,12 @@ function EmptySearchState({ query }: { query: string }) {
           padding: 24,
           gap: 8,
         }}
-      ><RNText style={{ fontSize: 15, color: placeholderVal, textAlign: 'center' }}>
+      >
+        <RNText style={{ fontSize: 15, color: placeholderVal, textAlign: 'center' }}>
           No chats matching &ldquo;{query}&rdquo;
-        </RNText></View></Animated.View>
+        </RNText>
+      </View>
+    </Animated.View>
   )
 }
 
@@ -122,7 +133,8 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   const theme = useTheme()
   const placeholderVal = (theme.placeholderColor?.val as string | undefined) ?? palette.overlay
   return (
-    <Animated.View style={{ flex: 1, opacity }}><View
+    <Animated.View style={{ flex: 1, opacity }}>
+      <View
         style={{
           flex: 1,
           justifyContent: 'center',
@@ -130,11 +142,15 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
           padding: 24,
           gap: 16,
         }}
-      ><RNText style={{ fontSize: 15, color: placeholderVal, textAlign: 'center' }}>
+      >
+        <RNText style={{ fontSize: 15, color: placeholderVal, textAlign: 'center' }}>
           Couldn&apos;t load your chats
-        </RNText><AppButton variant="secondary" onPress={onRetry}>
+        </RNText>
+        <AppButton variant="secondary" onPress={onRetry}>
           Try Again
-        </AppButton></View></Animated.View>
+        </AppButton>
+      </View>
+    </Animated.View>
   )
 }
 
@@ -208,7 +224,10 @@ function SearchBar({
         paddingTop: 14,
         paddingBottom: 6,
       }}
-    >{/* RN: VirtualizedList + Tamagui stacks breaks on web (AiVehicleCard). */}<View style={{ width: '100%', gap: 8 }}><RNText
+    >
+      {/* RN: VirtualizedList + Tamagui stacks breaks on web (AiVehicleCard). */}
+      <View style={{ width: '100%', gap: 8 }}>
+        <RNText
           style={{
             fontSize: 11,
             fontWeight: '700',
@@ -218,7 +237,8 @@ function SearchBar({
           }}
         >
           Conversations
-        </RNText><View
+        </RNText>
+        <View
           style={{
             width: '100%',
             minHeight: 58,
@@ -240,7 +260,8 @@ function SearchBar({
                   elevation: Platform.OS === 'android' ? 3 : 0,
                 }),
           }}
-        ><View
+        >
+          <View
             style={{
               width: 44,
               height: 44,
@@ -261,7 +282,10 @@ function SearchBar({
                     elevation: Platform.OS === 'android' && isIconHighlighted ? 3 : 0,
                   }),
             }}
-          ><Search size={16} color={isIconHighlighted ? whiteVal : placeholderVal} /></View><TextInput
+          >
+            <Search size={16} color={isIconHighlighted ? whiteVal : placeholderVal} />
+          </View>
+          <TextInput
             style={[
               {
                 flex: 1,
@@ -294,7 +318,8 @@ function SearchBar({
             onChangeText={onChangeText}
             onFocus={() => setIsInputFocused(true)}
             onBlur={() => setIsInputFocused(false)}
-          />{hasQuery ? (
+          />
+          {hasQuery ? (
             <TouchableOpacity
               onPress={() => onChangeText('')}
               activeOpacity={0.7}
@@ -307,7 +332,8 @@ function SearchBar({
                 justifyContent: 'center',
                 flexShrink: 0,
               }}
-            ><View
+            >
+              <View
                 style={{
                   width: 36,
                   height: 36,
@@ -316,9 +342,14 @@ function SearchBar({
                   justifyContent: 'center',
                   backgroundColor: bgHoverVal,
                 }}
-              ><X size={14} color={placeholderVal} /></View></TouchableOpacity>
+              >
+                <X size={14} color={placeholderVal} />
+              </View>
+            </TouchableOpacity>
           ) : null}
-        </View></View></Animated.View>
+        </View>
+      </View>
+    </Animated.View>
   )
 }
 
@@ -467,18 +498,24 @@ export default function SessionsScreen() {
           alignItems: 'center',
           ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
         }}
-      ><View
+      >
+        <View
           style={{
             width: '100%',
             maxWidth: CHATS_SHEET_MAX_WIDTH,
             paddingHorizontal: CHATS_EDGE_INSET,
             ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
           }}
-        ><View style={{ width: '100%', paddingBottom: CHATS_LIST_BELOW_SEARCH_GAP }}><SearchBar
+        >
+          <View style={{ width: '100%', paddingBottom: CHATS_LIST_BELOW_SEARCH_GAP }}>
+            <SearchBar
               searchQuery={searchQuery}
               onChangeText={handleSearchChange}
               isFocused={isFocused}
-            /></View></View></View>
+            />
+          </View>
+        </View>
+      </View>
     )
   }, [sessions.length, searchQuery, handleSearchChange, isFocused])
 
@@ -490,124 +527,150 @@ export default function SessionsScreen() {
 
   return (
     <RoleGuard role="buyer">
-      <ThemedSafeArea edges={['top']} style={{ overflow: 'visible' }}><View style={{ flex: 1, backgroundColor: (theme.background?.val as string) ?? '#fff' }}>{[
-          <ScreenHeader
-            key="chats-header"
-            leftIcon={<Settings size={22} color="$color" />}
-            onLeftPress={() => router.push('/(app)/settings')}
-            leftLabel="Settings"
-            title={APP_NAME}
-            titleKey={`${APP_NAME}-${isFocused ? 'focused' : 'blurred'}`}
-            scrambleActive={isFocused}
-            iconTrigger={isFocused}
-            rightIcon={<MessageSquarePlus size={22} color="$color" />}
-            onRightPress={handleNew}
-            rightLabel="Start new chat"
-          />,
-          <View key="chats-body" style={{ flex: 1, overflow: 'visible' }}>{isLoading && sessions.length === 0 ? (
-              <LoadingIndicator message="Loading your chats..." />
-            ) : loadError ? (
-              <ErrorState onRetry={loadSessionsWithError} />
-            ) : (
-              <View style={{ flex: 1, width: '100%', backgroundColor: 'transparent', overflow: 'visible' }}>{(showSearchError || showEmptySearch) && searchBarRow}{showSearchError ? (
-                  <ErrorState onRetry={() => handleSearchChange(searchQuery)} />
-                ) : showEmptySearch ? (
-                  <EmptySearchState query={searchQuery} />
-                ) : showEmptyState ? (
-                  <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
-                ) : (
-                  <View
-                    style={{
-                      flex: 1,
-                      width: '100%',
-                      minHeight: 0,
-                      backgroundColor: 'transparent',
-                      overflow: 'visible',
-                    }}
-                  ><SectionList
-                      sections={sections}
-                      keyExtractor={(item) => item.id}
-                      removeClippedSubviews={false}
-                      ListHeaderComponent={searchBarRow ? () => searchBarRow : undefined}
-                      style={
-                        Platform.OS === 'web'
-                          ? ({
-                              flex: 1,
-                              minHeight: 0,
-                              width: '100%',
-                              backgroundColor: 'transparent',
-                              scrollbarWidth: 'thin',
-                              scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
-                            } as any)
-                          : {
-                              flex: 1,
-                              minHeight: 0,
-                              width: '100%',
-                              backgroundColor: 'transparent',
-                            }
-                      }
-                      contentContainerStyle={{
-                        flexGrow: 1,
+      <ThemedSafeArea edges={['top']} style={{ overflow: 'visible' }}>
+        <View style={{ flex: 1, backgroundColor: (theme.background?.val as string) ?? '#fff' }}>
+          {[
+            <ScreenHeader
+              key="chats-header"
+              leftIcon={<Settings size={22} color="$color" />}
+              onLeftPress={() => router.push('/(app)/settings')}
+              leftLabel="Settings"
+              title={APP_NAME}
+              titleKey={`${APP_NAME}-${isFocused ? 'focused' : 'blurred'}`}
+              scrambleActive={isFocused}
+              iconTrigger={isFocused}
+              rightIcon={<MessageSquarePlus size={22} color="$color" />}
+              onRightPress={handleNew}
+              rightLabel="Start new chat"
+            />,
+            <View key="chats-body" style={{ flex: 1, overflow: 'visible' }}>
+              {isLoading && sessions.length === 0 ? (
+                <LoadingIndicator message="Loading your chats..." />
+              ) : loadError ? (
+                <ErrorState onRetry={loadSessionsWithError} />
+              ) : (
+                <View
+                  style={{
+                    flex: 1,
+                    width: '100%',
+                    backgroundColor: 'transparent',
+                    overflow: 'visible',
+                  }}
+                >
+                  {(showSearchError || showEmptySearch) && searchBarRow}
+                  {showSearchError ? (
+                    <ErrorState onRetry={() => handleSearchChange(searchQuery)} />
+                  ) : showEmptySearch ? (
+                    <EmptySearchState query={searchQuery} />
+                  ) : showEmptyState ? (
+                    <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
+                  ) : (
+                    <View
+                      style={{
+                        flex: 1,
+                        width: '100%',
+                        minHeight: 0,
                         backgroundColor: 'transparent',
-                        paddingBottom: 16,
+                        overflow: 'visible',
                       }}
-                      ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-                      renderSectionHeader={({ section }) =>
-                        sections.length > 1 ? (
-                          <View style={{ width: '100%', alignItems: 'center' }}><View
+                    >
+                      <SectionList
+                        sections={sections}
+                        keyExtractor={(item) => item.id}
+                        removeClippedSubviews={false}
+                        ListHeaderComponent={searchBarRow ? () => searchBarRow : undefined}
+                        style={
+                          Platform.OS === 'web'
+                            ? ({
+                                flex: 1,
+                                minHeight: 0,
+                                width: '100%',
+                                backgroundColor: 'transparent',
+                                scrollbarWidth: 'thin',
+                                scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
+                              } as any)
+                            : {
+                                flex: 1,
+                                minHeight: 0,
+                                width: '100%',
+                                backgroundColor: 'transparent',
+                              }
+                        }
+                        contentContainerStyle={{
+                          flexGrow: 1,
+                          backgroundColor: 'transparent',
+                          paddingBottom: 16,
+                        }}
+                        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+                        renderSectionHeader={({ section }) =>
+                          sections.length > 1 ? (
+                            <View style={{ width: '100%', alignItems: 'center' }}>
+                              <View
+                                style={{
+                                  width: '100%',
+                                  maxWidth: CHATS_SHEET_MAX_WIDTH,
+                                  paddingHorizontal: CHATS_EDGE_INSET,
+                                }}
+                              >
+                                <RNText
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: '600',
+                                    color:
+                                      (theme.placeholderColor?.val as string | undefined) ??
+                                      palette.overlay,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: 0.5,
+                                    marginBottom: 8,
+                                    marginTop: 12,
+                                  }}
+                                >
+                                  {section.title}
+                                </RNText>
+                              </View>
+                            </View>
+                          ) : null
+                        }
+                        renderItem={({ item, index }) => (
+                          <View
+                            style={{
+                              width: '100%',
+                              alignItems: 'center',
+                              ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
+                            }}
+                          >
+                            <View
                               style={{
                                 width: '100%',
                                 maxWidth: CHATS_SHEET_MAX_WIDTH,
                                 paddingHorizontal: CHATS_EDGE_INSET,
+                                ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
                               }}
-                            ><RNText
-                                style={{
-                                  fontSize: 12,
-                                  fontWeight: '600',
-                                  color: (theme.placeholderColor?.val as string | undefined) ?? palette.overlay,
-                                  textTransform: 'uppercase',
-                                  letterSpacing: 0.5,
-                                  marginBottom: 8,
-                                  marginTop: 12,
-                                }}
-                              >
-                                {section.title}
-                              </RNText></View></View>
-                        ) : null
-                      }
-                      renderItem={({ item, index }) => (
-                        <View
-                          style={{
-                            width: '100%',
-                            alignItems: 'center',
-                            ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
-                          }}
-                        ><View
-                            style={{
-                              width: '100%',
-                              maxWidth: CHATS_SHEET_MAX_WIDTH,
-                              paddingHorizontal: CHATS_EDGE_INSET,
-                              ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
-                            }}
-                          ><SessionCard
-                              session={item}
-                              index={index}
-                              onSelect={handleSelect}
-                              onDelete={setDeleteTarget}
-                              isFocused={isFocused}
-                            /></View></View>
-                      )}
-                      refreshControl={
-                        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-                      }
-                      stickySectionHeadersEnabled={false}
-                    /></View>
-                )}
-              </View>
-            )}
-          </View>,
-        ]}</View>
-      </ThemedSafeArea><ConfirmModal
+                            >
+                              <SessionCard
+                                session={item}
+                                index={index}
+                                onSelect={handleSelect}
+                                onDelete={setDeleteTarget}
+                                isFocused={isFocused}
+                              />
+                            </View>
+                          </View>
+                        )}
+                        refreshControl={
+                          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+                        }
+                        stickySectionHeadersEnabled={false}
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>,
+          ]}
+        </View>
+      </ThemedSafeArea>
+      <ConfirmModal
         visible={deleteTarget !== null}
         title="Delete Chat"
         message="Are you sure you want to delete this chat? All messages and data will be permanently removed."

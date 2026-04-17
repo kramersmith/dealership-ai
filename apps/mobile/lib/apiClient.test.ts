@@ -145,7 +145,7 @@ describe('ApiClient.sendMessage', () => {
       role: 'assistant',
       content: 'Hello there',
     })
-    expect(onTextDone).toHaveBeenCalledWith('Hello there', undefined, undefined)
+    expect(onTextDone).toHaveBeenCalledWith('Hello there', undefined, undefined, undefined)
     expect(onPanelStarted).toHaveBeenCalledTimes(1)
     expect(onPanelFinished).toHaveBeenCalledTimes(1)
     expect(onToolResult).toHaveBeenCalledTimes(1)
@@ -282,7 +282,12 @@ describe('ApiClient.sendMessage', () => {
     await expect(sendPromise).resolves.toMatchObject({
       content: 'Here is the comparison.',
     })
-    expect(onTextDone).toHaveBeenCalledWith('Here is the comparison.', undefined, undefined)
+    expect(onTextDone).toHaveBeenCalledWith(
+      'Here is the comparison.',
+      undefined,
+      undefined,
+      undefined
+    )
   })
 
   it('forwards turn_started and interrupted events', async () => {
@@ -396,7 +401,7 @@ describe('ApiClient.sendMessage', () => {
       sessionId: 'session-branch',
       content: 'Branched reply',
     })
-    expect(onTextDone).toHaveBeenCalledWith('Branched reply', undefined, undefined)
+    expect(onTextDone).toHaveBeenCalledWith('Branched reply', undefined, undefined, undefined)
   })
 
   it('preserves backend detail text for non-2xx stream responses', async () => {

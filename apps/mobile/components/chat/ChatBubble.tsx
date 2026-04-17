@@ -45,14 +45,6 @@ interface ChatBubbleProps {
 const EDITABLE_BUBBLE_LINE_HEIGHT = 22
 const EDITABLE_BUBBLE_MAX_HEIGHT = 280
 
-function formatUsageCount(value: number) {
-  if (value >= 1000) {
-    const compact = value / 1000
-    return `${compact >= 10 ? Math.round(compact) : compact.toFixed(1)}k`
-  }
-  return String(value)
-}
-
 function StatusBadge({ label }: { label: string }) {
   return (
     <XStack
@@ -297,9 +289,7 @@ export const ChatBubble = memo(function ChatBubble({
     isUser && typeof editedBodyText === 'string' ? editedBodyText : message.content
   const isSystem = message.role === 'system'
   const prefersReducedMotion = usePrefersReducedMotion()
-  const { opacity, translateY } = useSlideIn(
-    skipAnimation || prefersReducedMotion ? 0 : 250
-  )
+  const { opacity, translateY } = useSlideIn(skipAnimation || prefersReducedMotion ? 0 : 250)
   const theme = useTheme()
   const { isDesktop } = useScreenWidth()
   const useInlineAssistantLayout = !isUser && !isSystem && !isDesktop
@@ -307,16 +297,12 @@ export const ChatBubble = memo(function ChatBubble({
   const bubbleMaxWidth =
     !isUser && !isSystem && isDesktop ? DESKTOP_ASSISTANT_BUBBLE_MAX_WIDTH : CHAT_BUBBLE_MAX_WIDTH
   const assistantColors = getAssistantMarkdownColors(theme)
-  const usageLabel =
-    !isUser && message.usage
-      ? `${message.usage.requests} req · ${formatUsageCount(message.usage.inputTokens)} in · ${formatUsageCount(message.usage.outputTokens)} out`
-      : null
   const assistantMessageMetaLabel =
     !isUser && !isSystem
-      ? `${new Date(message.createdAt).toLocaleTimeString([], {
+      ? new Date(message.createdAt).toLocaleTimeString([], {
           hour: 'numeric',
           minute: '2-digit',
-        })}${usageLabel ? ` · ${usageLabel}` : ''}`
+        })
       : null
   const userMessageStatusLabel = isUser
     ? message.status === 'queued'
@@ -544,46 +530,44 @@ export const ChatBubble = memo(function ChatBubble({
           alignItems={isUser ? 'flex-end' : 'stretch'}
           width={isUser ? undefined : '100%'}
         >
-          {isUser ? (
-            wrapDesktopWebFrame(
-              canPressBubbleToEdit ? (
-                <Pressable
-                  onPress={onStartEdit}
-                  style={({ pressed }) =>
-                    ({
-                      opacity: pressed ? 0.96 : 1,
-                      transform: [{ scale: pressed ? 0.985 : 1 }],
-                      ...(Platform.OS === 'web'
-                        ? {
-                            cursor: 'pointer',
-                          }
-                        : null),
-                    }) as any
-                  }
-                  {...(Platform.OS === 'web'
-                    ? ({
-                        'aria-label':
-                          'Revert to this message and continue the conversation from here',
-                      } as any)
-                    : {
-                        accessibilityLabel:
-                          'Revert to this message and continue the conversation from here',
-                      })}
-                >
-                  {userBubbleShell}
-                </Pressable>
-              ) : (
-                userBubbleShell
-              ),
-              {
-                borderRadius: 12,
-                interactive: canPressBubbleToEdit,
-                layoutStyle: { alignSelf: 'flex-end' },
-              }
-            )
-          ) : (
-            assistantBubbleShell
-          )}
+          {isUser
+            ? wrapDesktopWebFrame(
+                canPressBubbleToEdit ? (
+                  <Pressable
+                    onPress={onStartEdit}
+                    style={({ pressed }) =>
+                      ({
+                        opacity: pressed ? 0.96 : 1,
+                        transform: [{ scale: pressed ? 0.985 : 1 }],
+                        ...(Platform.OS === 'web'
+                          ? {
+                              cursor: 'pointer',
+                            }
+                          : null),
+                      }) as any
+                    }
+                    {...(Platform.OS === 'web'
+                      ? ({
+                          'aria-label':
+                            'Revert to this message and continue the conversation from here',
+                        } as any)
+                      : {
+                          accessibilityLabel:
+                            'Revert to this message and continue the conversation from here',
+                        })}
+                  >
+                    {userBubbleShell}
+                  </Pressable>
+                ) : (
+                  userBubbleShell
+                ),
+                {
+                  borderRadius: 12,
+                  interactive: canPressBubbleToEdit,
+                  layoutStyle: { alignSelf: 'flex-end' },
+                }
+              )
+            : assistantBubbleShell}
           {!isUser && assistantMessageMetaLabel ? (
             <XStack
               marginTop="$1"
@@ -593,12 +577,7 @@ export const ChatBubble = memo(function ChatBubble({
               gap="$1.5"
               flexWrap="wrap"
             >
-              <Text
-                fontSize={10}
-                color="$placeholderColor"
-                letterSpacing={0.25}
-                opacity={0.92}
-              >
+              <Text fontSize={10} color="$placeholderColor" letterSpacing={0.25} opacity={0.92}>
                 {assistantMessageMetaLabel}
               </Text>
               {message.completionStatus === 'interrupted' ? <StatusBadge label="Stopped" /> : null}

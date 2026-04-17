@@ -123,7 +123,12 @@ type BuyerTurnStreamInvoker = (callbacks: {
   onChunk: (text: string) => void
   onTurnStarted: (data: { turnId: string }) => void
   onToolResult: (toolCall: ToolCall) => void
-  onTextDone: (finalText: string, usage?: MessageUsage) => void
+  onTextDone: (
+    finalText: string,
+    usage?: MessageUsage,
+    sessionUsage?: unknown,
+    assistantMessageId?: string
+  ) => void
   onInterrupted: (data: {
     text: string
     reason: string
@@ -191,9 +196,24 @@ async function runBuyerTurnStream(params: {
     // (the "done" SSE event), so the StreamingBubble is replaced by a
     // permanent ChatBubble immediately — not seconds later on the first
     // tool_result.
-    const handleTextDone = (finalText: string, usage?: MessageUsage) => {
+    const handleTextDone = (
+      finalText: string,
+      usage?: MessageUsage,
+      _sessionUsage?: unknown,
+      assistantMessageId?: string
+    ) => {
       if (messageFinalized) return
       messageFinalized = true
+      // Claim isPanelAnalyzing synchronously in the same set() that flips
+      // isSending: false. Otherwise the onTextDone → finalizeSentOnDone path
+      // calls _recheckQueueDispatch before the detached follow-up has been
+      // fired, and the next queued turn dispatches prematurely. The follow-up
+      // condition mirrors the post-stream `shouldStartInsightsFollowup` check
+      // exactly (valid server id + live mode).
+      const willStartFollowup =
+        !!assistantMessageId &&
+        isServerMessageId(assistantMessageId) &&
+        useUserSettingsStore.getState().insightsUpdateMode === 'live'
       if (finalText.trim()) {
         const msg: Message = {
           id: Math.random().toString(36).substring(2),
@@ -217,6 +237,7 @@ async function runBuyerTurnStream(params: {
           isRetrying: false,
           isThinking: false,
           aiResponseCount: newResponseCount,
+          ...(willStartFollowup ? { isPanelAnalyzing: true } : {}),
         }))
       } else {
         set((state) => ({
@@ -230,6 +251,7 @@ async function runBuyerTurnStream(params: {
           isRetrying: false,
           isThinking: false,
           aiResponseCount: newResponseCount,
+          ...(willStartFollowup ? { isPanelAnalyzing: true } : {}),
         }))
       }
       onTextDone?.()
@@ -428,6 +450,69 @@ async function runBuyerTurnStream(params: {
       }
     }
 
+    // Fire the detached insights follow-up before awaiting loadMessages /
+    // loadSessions / onSuccess — those are refresh-only work that must not
+    // delay the follow-up. The follow-up's onPanelStarted is what holds the
+    // queue dispatcher so the next queued turn doesn't race ahead (paired
+    // with handleTextDone's synchronous claim).
+    const shouldStartInsightsFollowup =
+      isServerMessageId(assistantMessage.id) &&
+      useUserSettingsStore.getState().insightsUpdateMode === 'live'
+
+    if (shouldStartInsightsFollowup) {
+      // handleTextDone already claimed isPanelAnalyzing synchronously (see
+      // there). onPanelStarted sets the same flag idempotently; release paths
+      // below reset the flag and re-run dispatch so the queue resumes.
+      void api
+        .startInsightsFollowup(
+          activeSessionId,
+          assistantMessage.id,
+          handleToolResult,
+          () => {
+            clearInFlightUserStatus()
+            set({ panelInterruptionNotice: null, isPanelAnalyzing: true })
+          },
+          () => {
+            set({ isPanelAnalyzing: false })
+            get()._recheckQueueDispatch()
+          },
+          (data) => {
+            set({
+              isPanelAnalyzing: false,
+              panelInterruptionNotice: {
+                reason: data.reason,
+                at: new Date().toISOString(),
+              },
+            })
+            get()._recheckQueueDispatch()
+          },
+          (message) => {
+            console.warn('[chatStore] Non-fatal insights follow-up warning:', message)
+          }
+        )
+        .catch((error) => {
+          console.warn(
+            '[chatStore] Detached insights follow-up failed:',
+            error instanceof Error ? error.message : error
+          )
+          set({
+            isPanelAnalyzing: false,
+            panelInterruptionNotice: {
+              reason: 'error',
+              at: new Date().toISOString(),
+            },
+          })
+          get()._recheckQueueDispatch()
+        })
+    } else if (get().isPanelAnalyzing) {
+      // handleTextDone may have optimistically claimed isPanelAnalyzing if
+      // its own willStartFollowup check agreed, but the post-stream
+      // shouldStartInsightsFollowup check disagreed (e.g. user flipped
+      // insightsUpdateMode mid-turn). Release the claim and resume dispatch.
+      set({ isPanelAnalyzing: false })
+      get()._recheckQueueDispatch()
+    }
+
     // Refresh sessions list (fire-and-forget)
     get()
       .loadSessions()
@@ -447,49 +532,6 @@ async function runBuyerTurnStream(params: {
       })
     if (onSuccess) {
       await onSuccess()
-    }
-    const shouldStartInsightsFollowup =
-      isServerMessageId(assistantMessage.id) &&
-      useUserSettingsStore.getState().insightsUpdateMode === 'live'
-
-    if (shouldStartInsightsFollowup) {
-      void api
-        .startInsightsFollowup(
-          activeSessionId,
-          assistantMessage.id,
-          handleToolResult,
-          () => {
-            clearInFlightUserStatus()
-            set({ panelInterruptionNotice: null, isPanelAnalyzing: true })
-          },
-          () => {
-            set({ isPanelAnalyzing: false })
-          },
-          (data) =>
-            set({
-              isPanelAnalyzing: false,
-              panelInterruptionNotice: {
-                reason: data.reason,
-                at: new Date().toISOString(),
-              },
-            }),
-          (message) => {
-            console.warn('[chatStore] Non-fatal insights follow-up warning:', message)
-          }
-        )
-        .catch((error) => {
-          console.warn(
-            '[chatStore] Detached insights follow-up failed:',
-            error instanceof Error ? error.message : error
-          )
-          set({
-            isPanelAnalyzing: false,
-            panelInterruptionNotice: {
-              reason: 'error',
-              at: new Date().toISOString(),
-            },
-          })
-        })
     }
     set({
       suppressContextWarningUntilUsageRefresh: false,
