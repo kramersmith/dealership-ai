@@ -19,6 +19,7 @@ from app.services.claude import (
     merge_usage_summary,
     summarize_usage,
 )
+from app.services.panel_card_builder import build_rendered_panel_cards
 from app.services.panel_cards import canonicalize_panel_cards, normalize_panel_card
 from app.services.prompt_cache_signature import (
     DEFAULT_PROMPT_CACHE_BETAS,
@@ -168,7 +169,7 @@ def _build_panel_request_messages(
             "content": [
                 {
                     "type": "text",
-                    "text": GENERATE_AI_PANEL_PROMPT,
+                    "text": GENERATE_AI_PANEL_SYNTHESIS_PROMPT,
                     "cache_control": {"type": "ephemeral"},
                 },
                 {
@@ -418,153 +419,48 @@ def _enforce_single_vehicle_focus_for_panel_cards(
     return focused_cards
 
 
-GENERATE_AI_PANEL_PROMPT = """You are generating the Insights Panel for a car-buying app.
+GENERATE_AI_PANEL_SYNTHESIS_PROMPT = """You are generating the three NARRATIVE cards for a car-buying Insights Panel.
 
-The panel is NOT a recap of the latest assistant reply. It is the buyer's working memory.
-
-PRIMARY GOAL:
-Generate a concise set of cards (often 3–7) that help the buyer answer these questions at a glance:
-- What is true now?
-- What changed?
-- What is dangerous?
-- What still needs confirmation?
-- What should I do next?
-- What is worth remembering?
+The panel's vehicle, numbers, warning, checklist, notes, savings, what-still-needs-confirming, your-leverage, and stance cards are already rendered deterministically from structured deal state. Your only job is these three narrative kinds — the ones that require judgment or prose the renderer cannot produce.
 
 SOURCE OF TRUTH ORDER:
 1. negotiation_context
-2. structured deal state (numbers, vehicle, deal pipeline phase, comparison, checklist, red flags, information gaps)
-3. recent conversation as fallback only
-4. latest assistant response as fallback only
+2. structured deal state (numbers, scorecard, health, red_flags, information_gaps, phase)
+3. recent conversation (fallback only)
+4. latest assistant response (fallback only)
 
 CRITICAL RULES:
-- The user message begins with **Current date (UTC)** — treat it as authoritative "now" for any time-relative card copy (deadlines, "soon"/"recent", warranty or promo windows, lease pacing, loan term remaining, event ordering, vehicle age from model year). Do not assume another calendar year or month.
-- Do NOT paraphrase the latest assistant reply unless something needs to stay visible across turns.
+- The user message begins with **Current date (UTC)** — treat it as authoritative "now" for any time-relative copy.
+- Emit ONLY these three kinds. Omit the kind if no card of that kind would genuinely help the buyer right now. Returning fewer than three (or zero) is fine.
 - Never contradict the assistant's advice.
-- Every card must add distinct value. No duplicates.
 - Narrative body text must be 1-2 sentences max.
-- Prefer persistent state over fresh prose.
-- Stable cards should preserve structure across turns.
-- Use the exact card kinds below. Do not invent new kinds.
-- Do not return a title or render template. The backend assigns canonical titles and templates.
-- Do NOT emit `comparison` or `trade_off` cards. Side-by-side tables belong in chat, not the insights panel.
-- Vehicle role tags like `primary` and `candidate` are internal. Do not surface those literal labels in card body text, notes, checklist items, or number labels.
-- `active_deal_id` is the current focus. For non-vehicle cards, prioritize only the active deal/vehicle unless the user explicitly asks to keep comparing options.
-- When there are multiple shopping vehicles but one active focus, treat non-active vehicles as parked context (fallback only), not as inputs for primary numbers/leverage/next-step cards.
-- When 2+ shopping vehicles are still active and the buyer has NOT explicitly chosen one, avoid ambiguous wording. For every non-vehicle card, explicitly indicate scope (for example: vehicle name/year/color/VIN suffix, or "across both options"). Do not leave cards ambiguous about which vehicle they refer to.
+- Do not invent new kinds or return title/template — the backend assigns those.
+- Vehicle role tags like `primary` and `candidate` are internal. Do not surface them in copy.
+- `active_deal_id` is the current focus. When multiple shopping vehicles are active and the buyer has NOT picked one, disambiguate scope in the body (name the vehicle or say "across both options").
 
-Return ONLY a JSON array of card objects. Each card has:
-- "kind": one of the exact kinds below
-- "content": kind-specific content object
-- "priority": "critical", "high", "normal", or "low"
-
-EXACT CARD KINDS:
-
-vehicle
-- Use when a specific vehicle has been identified and it adds context.
-- Schema: {"vehicle": {"year": 2024, "make": "Ford", "model": "F-250", "trim": "XLT", "cab_style": "SuperCrew", "bed_length": "8 ft", "engine": "7.3L V8", "mileage": 15000, "color": "White", "vin": "1FT...", "role": "primary|candidate|trade_in"}, "risk_flags": ["High Mileage"]}
-- When 2+ vehicles are being actively compared, emit one separate vehicle card per compared vehicle. Do not collapse multiple VINs into one vehicle card.
-
-phase
-- The negotiation stance strip: mirrors `negotiation_context.stance` and `negotiation_context.situation` when present; otherwise infer a stance and one short situation line from buyer_context and deal state.
-- This is NOT the deal pipeline phase (`deals[].phase`). It is the buyer's current negotiation posture and what is happening now.
-- Schema: {"stance": "researching|preparing|engaging|negotiating|holding|walking|waiting|financing|closing|post_purchase", "situation": "One concise sentence (about 8–18 words) describing the moment."}
-- Emit at most one `phase` card.
-
-numbers
-- Use for: current deal state.
-- Labels must be short.
-- Schema: {"rows": [{"label": "Field", "value": "$32,000", "field": "current_offer", "highlight": "good|bad|neutral"}]}
-- Groups allowed: {"groups": [{"key": "pricing", "rows": [...]}, {"key": "financing", "rows": [...]}]}
-- If the card compares multiple vehicles or deals, use `groups` and make each group key an explicit option label (vehicle/deal/dealer/VIN suffix). Never emit repeated unlabeled row blocks.
-- Default to active-deal numbers. Only include multi-vehicle groups when the user is actively comparing in this turn.
-- When 2+ shopping vehicles are active and no explicit single-choice signal exists, prefer grouped rows keyed by explicit vehicle labels so the buyer can see which truck each number belongs to.
-
-what_changed
-- Use only when something materially changed since the prior state.
-- Same schema as `numbers`.
-- Prefer concrete deltas over explanation.
-
-warning
-- Use for: an active risk that stands on its own.
-- Schema: {"severity": "critical|warning", "message": "The concern", "action": "Optional — what to do"}
-
-if_you_say_yes
-- Use for: the consequence of agreeing right now.
-- Same schema as `warning`.
-- Focus on what the buyer would be accepting.
-
-notes
-- Use for: durable facts the buyer should not have to remember alone.
-- Facts only. No generic encouragement. No mind-reading. No recap.
-- High bar for inclusion. Max 5 items.
-- Good notes: first offer, pre-approval, dealer promises, unresolved payoff, verbal commitments.
-- Schema: {"items": ["First offer: $31,900", "Trade-in payoff still unconfirmed"]}
-
-what_still_needs_confirming
-- Use for: unresolved facts the buyer must verify before progressing.
-- Schema: {"items": [{"label": "Item description", "done": false}]}
-- Items should usually remain undone.
-
-checklist
-- Use for: concrete tasks and verification steps.
-- Schema: {"items": [{"label": "Item description", "done": false}]}
+THE THREE KINDS:
 
 dealer_read
+- A read on *this* specific dealer's posture, motivations, and likely next moves — based on something concrete tying the buyer to a particular dealer or deal: a named dealer, a quoted offer, a fee the dealer added, a specific truck at a specific lot, or a dealer interaction the buyer narrated. Use hedged language ("likely", "probably", "expect them to") — don't claim to read minds.
+- Do NOT fire during the research phase. If the buyer is still researching — no named dealer, no active deal with offer numbers, no specific vehicle at a specific dealer, no dealer quote or move — there is no "this dealer" to read. Generic "here's how dealerships work" commentary is not a dealer_read; that belongs in the reply text or the checklist, not as a panel card.
+- Signals that a read IS appropriate: buyer has a named dealer or dealer location, the deal has a current_offer or listing_price tied to a specific dealer, the buyer is at or scheduled at a named dealership, the buyer has described a dealer behavior (fee floated, pressure tactic, concession, email/call content).
+- Signals that a read is NOT appropriate: buyer_context = researching with no deal numbers, stance = researching or preparing with no named dealer, the whole message is comparison-shopping or education.
 - Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting signal"]}
 
 next_best_move
+- The single best action the buyer should take next. If `negotiation_context.pending_actions` has a top action, use it; if `negotiation_context.scripts` has a script for this moment, weave it in.
 - Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting point"]}
 
-your_leverage
-- Schema: {"body": "1-2 sentences. Supports **markdown**.", "bullets": ["Optional supporting point"]}
+if_you_say_yes
+- Use ONLY when there is a real offer on the table and agreeing has meaningful consequences. Focus on what the buyer would be accepting.
+- Schema: {"severity": "critical|warning", "message": "The concern", "action": "Optional — what to do"}
 
-success
-- Use for: a meaningful win or milestone.
-- Schema: {"body": "A measurable win. Supports **markdown**.", "headline": "Optional short line", "amount": "$2,400", "detail": "Optional detail"}
+PRIORITY:
+- dealer_read: "normal"
+- next_best_move: "high" during negotiation/financing/closing, otherwise "normal"
+- if_you_say_yes: "high" by default; "critical" when the risk is severe and immediate
 
-savings_so_far
-- Use only when the savings are real and grounded in actual deal numbers.
-- Schema: {"body": "A measurable win. Supports **markdown**.", "headline": "Optional short line", "amount": "$2,400", "detail": "Optional detail"}
-
-NEGOTIATION CONTEXT RULES:
-If negotiation_context exists, it is the strongest source of truth.
-- Emit a `phase` card from `stance` + `situation` whenever both are meaningful (usually always for active buyer sessions).
-- When **2+ shopping vehicles** are in deal state and the buyer is comparing, `situation` must reflect **both options or the main trade-off** — not only the active deal's last CARFAX line. If `negotiation_context.situation` is missing or clearly single-vehicle while multiple deals have material flags/health, infer one comparison-scoped sentence from structured deal state.
-- Use key_numbers to drive the Numbers card.
-- Use scripts to strengthen next_best_move when exact wording matters.
-- Use pending_actions to drive what_still_needs_confirming or checklist.
-- Use leverage to drive your_leverage.
-- The situation field should also inform dealer_read or next_best_move when those cards add distinct value beyond the phase strip.
-
-DEAL PIPELINE PHASE (structured `deals[].phase` enum: research, initial_contact, test_drive, negotiation, financing, closing — not the panel `phase` card):
-- research / initial_contact: emphasize vehicle, numbers, checklist, notes.
-- test_drive / negotiation: numbers, what_changed, warning, next_best_move, your_leverage, notes.
-- financing: numbers, warning, if_you_say_yes, what_still_needs_confirming, notes.
-- closing: numbers, what_still_needs_confirming, notes, savings_so_far, success.
-
-INCLUSION RULES:
-- Include a vehicle card when a specific vehicle has been identified and it adds context.
-- When 2+ vehicles are being compared and each one matters, include a separate vehicle card for each compared vehicle.
-- If deal state lists multiple shopping vehicles (primary/candidate), emit one vehicle card per listed vehicle — do not omit the non-active option when the buyer is still comparing.
-- Include a numbers card when meaningful financial data exists.
-- Include what_changed only for real deltas.
-- Include notes only when there are durable facts worth preserving.
-- Include savings_so_far only when the savings are real and grounded.
-- Use at most one of dealer_read or next_best_move unless both are clearly needed.
-- Do not create cards that only restate each other in different words.
-
-ORDER:
-- phase (always first — negotiation stance / situation strip)
-- warning / if_you_say_yes
-- numbers / what_changed
-- dealer_read / next_best_move / your_leverage
-- notes
-- vehicle
-- what_still_needs_confirming / checklist
-- savings_so_far / success
-
-Return ONLY the JSON array."""
+Each card in the output has "kind", "content", "priority". Return ONLY a JSON array."""
 
 
 async def generate_ai_panel_cards(
@@ -605,8 +501,18 @@ async def stream_ai_panel_cards_with_usage(
     client = create_anthropic_client()
     usage_summary = empty_usage_summary()
 
+    render_start_ts = time.monotonic()
+    rendered_cards = build_rendered_panel_cards(deal_state_dict)
+    logger.info(
+        "TIMING[panel.render] session_id=%s duration_ms=%d rendered_cards=%d kinds=%s",
+        session_id,
+        int((time.monotonic() - render_start_ts) * 1000),
+        len(rendered_cards),
+        [card["kind"] for card in rendered_cards],
+    )
+
     panel_static_snap = build_panel_static_prompt_cache_snapshot(
-        static_panel_prompt=GENERATE_AI_PANEL_PROMPT,
+        static_panel_prompt=GENERATE_AI_PANEL_SYNTHESIS_PROMPT,
         model=settings.CLAUDE_MODEL,
         betas=DEFAULT_PROMPT_CACHE_BETAS,
     )
@@ -660,6 +566,7 @@ async def stream_ai_panel_cards_with_usage(
         parser = _JsonArrayObjectStreamParser()
         emitted_this_attempt = 0
         streamed_text_chunks: list[str] = []
+        first_text_ts: float | None = None
 
         try:
             started_at = time.monotonic()
@@ -684,6 +591,15 @@ async def stream_ai_panel_cards_with_usage(
                         text_chunk = getattr(event.delta, "text", None)
                         if not isinstance(text_chunk, str):
                             continue
+                        if first_text_ts is None:
+                            first_text_ts = time.monotonic()
+                            logger.info(
+                                "TIMING[panel.stream.ttfb] session_id=%s attempt=%d "
+                                "ttfb_ms=%d",
+                                session_id,
+                                attempt + 1,
+                                int((first_text_ts - started_at) * 1000),
+                            )
                         streamed_text_chunks.append(text_chunk)
                         for raw_card in parser.feed(text_chunk):
                             validated = normalize_panel_card(raw_card)
@@ -693,6 +609,16 @@ async def stream_ai_panel_cards_with_usage(
                             emitted_this_attempt += 1
 
                 final_message = await stream.get_final_message()
+            stream_end_ts = time.monotonic()
+            logger.info(
+                "TIMING[panel.stream.end] session_id=%s attempt=%d duration_ms=%d "
+                "cards_streamed=%d text_chars=%d",
+                session_id,
+                attempt + 1,
+                int((stream_end_ts - started_at) * 1000),
+                emitted_this_attempt,
+                sum(len(chunk) for chunk in streamed_text_chunks),
+            )
 
             request_summary = summarize_usage(final_message.usage)
             merge_usage_summary(usage_summary, request_summary)
@@ -808,16 +734,36 @@ async def stream_ai_panel_cards_with_usage(
                     "Failed to stream AI panel cards (attempt %d)", attempt + 1
                 )
                 if attempt >= settings.CLAUDE_MAX_TOKENS_RETRIES:
-                    yield PanelStreamEvent(
-                        type="panel_error",
-                        data={
-                            "message": "Panel generation failed",
-                            "attempt": attempt + 1,
-                        },
+                    # Graceful degradation: the three narrative (synthesis)
+                    # card kinds are unavailable, but the deterministically
+                    # rendered cards are already built from structured state
+                    # and still useful to the buyer. Fall through to the
+                    # canonicalize + panel_done path with an empty synthesis
+                    # list rather than emitting panel_error and dropping the
+                    # rendered cards the user paid nothing to compute.
+                    logger.warning(
+                        "AI panel synthesis exhausted retries; delivering %d "
+                        "rendered cards without narrative synthesis",
+                        len(rendered_cards),
                     )
-                    return
+                    cards = []
+                    break
 
-    canonical_cards = canonicalize_panel_cards(cards)
+    canon_start_ts = time.monotonic()
+    # Merge rendered cards (from structured state) with synthesized cards (from
+    # the LLM). The synthesis prompt is restricted to three narrative kinds
+    # (dealer_read, next_best_move, if_you_say_yes) that the renderer does not
+    # produce, so in normal operation there is no kind overlap. Rendered cards
+    # are listed first: on the unlikely chance the LLM emits a rendered kind,
+    # identity-dedupe in canonicalize_panel_cards keeps the first-seen card at
+    # equal rank, so the deterministic rendered card wins over LLM drift.
+    rendered_normalized = [
+        normalized_card
+        for raw in rendered_cards
+        if (normalized_card := normalize_panel_card(raw)) is not None
+    ]
+    merged_cards = [*rendered_normalized, *cards]
+    canonical_cards = canonicalize_panel_cards(merged_cards)
     canonical_cards = [
         card
         for card in canonical_cards
@@ -827,14 +773,23 @@ async def stream_ai_panel_cards_with_usage(
     canonical_cards = _enforce_single_vehicle_focus_for_panel_cards(
         canonical_cards, deal_state_dict
     )
-    if canonical_cards != cards:
-        logger.info(
-            "AI panel canonicalization adjusted final cards from %d to %d: %s",
-            len(cards),
-            len(canonical_cards),
-            [card["kind"] for card in canonical_cards],
-        )
-        cards = canonical_cards
+    logger.info(
+        "TIMING[panel.canonicalize] session_id=%s duration_ms=%d "
+        "rendered=%d synthesized=%d cards_out=%d",
+        session_id,
+        int((time.monotonic() - canon_start_ts) * 1000),
+        len(rendered_normalized),
+        len(cards),
+        len(canonical_cards),
+    )
+    logger.info(
+        "AI panel canonicalization: rendered=%d synthesized=%d final=%d: %s",
+        len(rendered_normalized),
+        len(cards),
+        len(canonical_cards),
+        [card["kind"] for card in canonical_cards],
+    )
+    cards = canonical_cards
 
     logger.info(
         "AI panel streamed %d cards: %s",

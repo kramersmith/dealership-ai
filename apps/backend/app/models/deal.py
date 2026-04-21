@@ -66,6 +66,11 @@ class Deal(Base):
     pre_fi_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     savings_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Free-form custom numbers — fees, add-ons, tax, payoff, warranty cost, etc.
+    # List of {label, value, highlight?} dicts. Complements the typed number
+    # columns above; rendered alongside them in the Numbers panel card.
+    custom_numbers: Mapped[list] = mapped_column(JSON, default=list)
+
     # Deal comparison (AI-generated, stored for persistence)
     comparison: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

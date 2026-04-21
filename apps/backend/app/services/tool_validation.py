@@ -133,6 +133,39 @@ async def _resolve_target_deal(
     return await get_active_deal(deal_state, db)
 
 
+# Tools that operate on a single deal. All must resolve a target deal either
+# via explicit `deal_id` or the session's active deal before applying; a missing
+# target is a hard validation error so the model gets a clear tool_result and
+# can self-correct (e.g. call create_deal / switch_active_deal) on the next
+# step instead of silently no-opping.
+_DEAL_SCOPED_TOOLS: frozenset[str] = frozenset(
+    (
+        "update_deal_numbers",
+        "set_buyer_targets",
+        "update_deal_custom_numbers",
+        "update_deal_red_flags",
+        "update_deal_information_gaps",
+        "update_scorecard",
+        "update_deal_health",
+        "update_deal_phase",
+    )
+)
+
+
+async def _validate_target_deal_exists(
+    tool_name: str, tool_input: dict, context: TurnContext
+) -> None:
+    assert context.deal_state is not None
+    deal = await _resolve_target_deal(
+        tool_input.get("deal_id"), context.deal_state, context.db
+    )
+    if deal is None:
+        raise ToolValidationError(
+            f"Cannot apply {tool_name}: no target deal for this session. "
+            "Call create_deal or switch_active_deal first, or pass deal_id explicitly."
+        )
+
+
 def _validate_create_deal_phase(tool_input: dict) -> None:
     if "phase" not in tool_input or tool_input["phase"] is None:
         return
@@ -151,11 +184,9 @@ async def _validate_update_deal_phase(tool_input: dict, context: TurnContext) ->
     except ValueError as e:
         raise ToolValidationError(f"Invalid deal phase: {e}") from e
 
+    # Target-deal existence already verified by the shared precheck.
     deal = await get_active_deal(context.deal_state, context.db)
-    if deal is None:
-        raise ToolValidationError(
-            "Cannot update deal phase: no active deal. Create or select a deal first."
-        )
+    assert deal is not None  # narrowed by precheck
 
     try:
         current = DealPhase(deal.phase)
@@ -201,13 +232,11 @@ async def _validate_update_deal_health(tool_input: dict, context: TurnContext) -
             "update_deal_health requires a non-empty recommendation."
         )
 
+    # Target-deal existence already verified by the shared precheck.
     deal = await _resolve_target_deal(
         tool_input.get("deal_id"), context.deal_state, context.db
     )
-    if deal is None:
-        raise ToolValidationError(
-            "Cannot update deal health: no target deal (set an active deal or pass deal_id)."
-        )
+    assert deal is not None  # narrowed by precheck
 
     if not await _deal_has_health_grounding(deal, context.db):
         raise ToolValidationError(
@@ -225,7 +254,11 @@ async def validate_tool_input(
     Callers (execute_tool_batch) are responsible for logging; this function
     raises without logging to avoid double-logging the same event.
     """
-    if tool_name == "update_deal_numbers":
+    # Shared precheck: deal-scoped tools all require a resolvable target deal.
+    if tool_name in _DEAL_SCOPED_TOOLS:
+        await _validate_target_deal_exists(tool_name, tool_input, context)
+
+    if tool_name in ("update_deal_numbers", "set_buyer_targets"):
         _validate_update_deal_numbers(tool_input)
     elif tool_name == "update_deal_health":
         await _validate_update_deal_health(tool_input, context)

@@ -562,7 +562,7 @@ data: {"message": "AI response failed. Please try again."}
 - The persisted assistant row exists before `done`; `assistant_message_id` in the `done` payload lets the client bind a later follow-up stream to that row
 - Persisted assistant-message usage on the send path is chat-phase usage only. Later detached follow-up work merges additional usage into the same assistant row and the session usage ledger
 - The backend may emit a safe `error` event after `done` if a later persistence step fails; clients should keep the delivered reply and show the warning
-- After `done`, the client may open a detached follow-up stream to reconcile state and refresh the insights panel for the persisted assistant row
+- After `done`, the client may open a detached follow-up stream to refresh the insights panel for the persisted assistant row (the reconcile LLM pass was removed per ADR 0026; panel-only generation now)
 - Assistant message (with tool calls and chat-phase usage) is persisted before `done`; detached follow-up may later add `panel_cards` and merged usage to that same row
 - Tool call results are applied to the session's deal state
 - Post-chat processing updates `last_message_preview` and auto-generates a session title (deterministic vehicle title or LLM fallback via Haiku) when `auto_title` is true
@@ -583,7 +583,7 @@ data: {"message": "AI response failed. Please try again."}
 
 Start a detached insights follow-up stream for a previously persisted assistant message.
 
-This is the live-mode follow-up path triggered by the client after `POST .../message` or `POST .../messages/{message_id}/branch` returns `done`. It emits `panel_started` immediately so the UI can show panel activity while detached work is still running, then reconciles structured state, runs panel generation, and persists a durable follow-up job row keyed by `(session_id, assistant_message_id, kind)`. In paused mode the mobile client skips this automatic request and users call `POST .../panel-refresh` explicitly.
+This is the live-mode follow-up path triggered by the client after `POST .../message` or `POST .../messages/{message_id}/branch` returns `done`. It emits `panel_started` immediately so the UI can show panel activity while detached work is still running, then runs panel generation (deterministic render + narrow narrative synthesis — no reconcile LLM pass as of ADR 0026; `reconcile_status` is always `SKIPPED`), and persists a durable follow-up job row keyed by `(session_id, assistant_message_id, kind)`. In paused mode the mobile client skips this automatic request and users call `POST .../panel-refresh` explicitly.
 
 **Auth required:** Yes
 
@@ -607,7 +607,7 @@ This is the live-mode follow-up path triggered by the client after `POST .../mes
 
 **Response:** `200 OK` — `text/event-stream`
 
-**`panel_started` event** — Live follow-up processing began; the client can show panel activity immediately while reconcile/panel work continues:
+**`panel_started` event** — Live follow-up processing began; the client can show panel activity immediately while panel generation continues:
 ```
 event: panel_started
 data: {}
@@ -628,7 +628,7 @@ data: {"message": "...", "attempt": 2}
 **Side effects:**
 
 - Creates or reuses an `insights_followup_jobs` row for the assistant message
-- Emits `panel_started` before reconcile and panel generation so the client can show “updating insights” earlier
+- Emits `panel_started` before panel generation so the client can show “updating insights” earlier
 - Persists the canonical card snapshot on `Message.panel_cards`
 - Replaces `DealState.ai_panel_cards` with the same canonical snapshot
 - Merges panel-phase usage into the assistant row usage and session-level usage ledger

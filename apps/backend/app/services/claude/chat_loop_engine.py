@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -23,13 +24,10 @@ from app.services.claude.prompt_static import (
     CONTINUATION_AFTER_STATE_EXTRACTION_SYSTEM,
     CONTINUATION_AFTER_TOOL_ONLY_SYSTEM,
     CONTINUATION_TEXT_ONLY_SYSTEM,
-    DASHBOARD_RECONCILE_AFTER_ASSESSMENT_TOOLS,
-    POST_EXTRACTION_ASSESSMENT_NUDGE,
     POST_TOOL_CONTINUATION_REMINDER,
     POST_TOOL_TEASER_RECOVERY_SYSTEM,
     SESSION_SCOPED_DASHBOARD_TOOLS,
     STATE_EXTRACTION_TOOLS,
-    STEP_AFTER_TOOL_ONLY_NUDGE,
     TEXT_ONLY_RECOVERY_TOOL_NAMES,
 )
 from app.services.claude.recovery import generate_text_only_recovery_response
@@ -56,6 +54,13 @@ logger = logging.getLogger(__name__)
 # Minimum char length for a post-tool continuation to be considered substantive.
 # Below this threshold, the step is treated as "too thin" and teaser recovery fires.
 _THIN_CONTINUATION_CHAR_THRESHOLD = 120
+
+# Minimum char length for pre-tool text in a step to treat the turn as complete
+# after tool execution (no continuation step). With the complete-reply-first
+# prompt, the model should emit the full reply before tools; this threshold
+# filters out short openers like "Got it — let me update…" that indicate the
+# model broke the rule and a step-1 continuation is still needed to recover.
+_COMPLETE_REPLY_CHAR_THRESHOLD = 150
 
 
 @dataclass
@@ -150,20 +155,8 @@ def _build_step_prompt_config(
         return _StepPromptConfig(
             tool_choice_param=tool_choice_param, step_system=step_system
         )
-
-    step_system = system_prompt
-    if step_tool_policy.inject_dashboard_reconcile_nudge:
-        step_system = [*step_system, *DASHBOARD_RECONCILE_AFTER_ASSESSMENT_TOOLS]
-    elif step_tool_policy.inject_post_extraction_assessment_nudge:
-        step_system = [*step_system, *POST_EXTRACTION_ASSESSMENT_NUDGE]
-    elif (
-        step == 1
-        and not prev_step.had_visible_assistant_text
-        and not prev_step.had_tool_errors
-    ):
-        step_system = [*step_system, *STEP_AFTER_TOOL_ONLY_NUDGE]
     return _StepPromptConfig(
-        tool_choice_param=tool_choice_param, step_system=step_system
+        tool_choice_param=tool_choice_param, step_system=system_prompt
     )
 
 
@@ -264,12 +257,20 @@ async def _execute_tool_calls(
 
     if turn_context.deal_state:
         execution_plan = build_execution_plan(tool_use_blocks)
-        for batch in execution_plan:
+        session_id_for_log = (
+            turn_context.session.id if turn_context.session is not None else None
+        )
+        tool_exec_start_ts = time.monotonic()
+        applied_count = 0
+        errored_tool_names: list[str] = []
+        for batch_index, batch in enumerate(execution_plan):
             if is_cancelled and is_cancelled():
                 result.interrupted = True
                 result.interrupted_reason = "user_stop"
                 logger.info("Chat loop interrupted before tool batch at step %d", step)
                 return
+            batch_start_ts = time.monotonic()
+            batch_tool_names = [b["name"] for b in batch]
             async for tool_block, outcome in execute_tool_batch(
                 batch,
                 turn_context,
@@ -286,6 +287,7 @@ async def _execute_tool_calls(
 
                 if isinstance(outcome, Exception):
                     tool_exec_state.had_tool_errors = True
+                    errored_tool_names.append(tool_name)
                     if isinstance(outcome, ToolValidationError):
                         error_msg = f"Tool '{tool_name}' validation failed: {outcome}"
                     else:
@@ -302,6 +304,7 @@ async def _execute_tool_calls(
                     continue
 
                 applied = outcome
+                applied_count += len(applied)
                 result.tool_calls.extend(applied)
                 for tool_call in applied:
                     yield f"event: tool_result\ndata: {json.dumps({'tool': tool_call['name'], 'data': tool_call['args']})}\n\n"
@@ -322,6 +325,27 @@ async def _execute_tool_calls(
                         step,
                     )
                     return
+            logger.info(
+                "TIMING[chat.step.tool_batch] session_id=%s step=%d batch=%d "
+                "duration_ms=%d tools=%s",
+                session_id_for_log,
+                step,
+                batch_index,
+                int((time.monotonic() - batch_start_ts) * 1000),
+                batch_tool_names,
+            )
+        logger.info(
+            "TIMING[chat.step.tool_exec_total] session_id=%s step=%d duration_ms=%d "
+            "batch_count=%d emitted=%d applied=%d errored=%d errored_tools=%s",
+            session_id_for_log,
+            step,
+            int((time.monotonic() - tool_exec_start_ts) * 1000),
+            len(execution_plan),
+            len(tool_use_blocks),
+            applied_count,
+            len(errored_tool_names),
+            errored_tool_names,
+        )
         return
 
     for tool_block in tool_use_blocks:
@@ -401,6 +425,9 @@ async def _stream_step_with_retries(
 
     current_max_tokens = settings.CLAUDE_MAX_TOKENS
     truncation_retry_count = 0
+    session_id_for_log = (
+        turn_context.session.id if turn_context.session is not None else None
+    )
 
     while True:
         step_text = ""
@@ -410,6 +437,11 @@ async def _stream_step_with_retries(
         current_tool_name: str | None = None
         current_tool_input_json = ""
         json_error_blocks: list[dict] = []
+        # TIMING instrumentation for this attempt (resets on max_tokens retry below).
+        model_start_ts = time.monotonic()
+        first_text_ts: float | None = None
+        first_tool_ts: float | None = None
+        preamble_text_chars = 0
 
         try:
             stop_reason = None
@@ -460,6 +492,11 @@ async def _stream_step_with_retries(
                     current_tool_name = None
                     current_tool_input_json = ""
                     json_error_blocks = []
+                    # Reset TIMING clocks so retry attempts are measured separately.
+                    model_start_ts = time.monotonic()
+                    first_text_ts = None
+                    first_tool_ts = None
+                    preamble_text_chars = 0
                     continue
 
                 if event_type == "final_message":
@@ -475,6 +512,25 @@ async def _stream_step_with_retries(
                         stop_reason,
                         current_max_tokens,
                     )
+                    logger.info(
+                        "TIMING[chat.step] session_id=%s step=%d model_duration_ms=%d ttfb_ms=%s "
+                        "first_tool_after_ms=%s preamble_text_chars=%d text_chars=%d "
+                        "tool_use_count=%d tool_names=%s stop=%s",
+                        session_id_for_log,
+                        step,
+                        int((time.monotonic() - model_start_ts) * 1000),
+                        int((first_text_ts - model_start_ts) * 1000)
+                        if first_text_ts is not None
+                        else None,
+                        int((first_tool_ts - model_start_ts) * 1000)
+                        if first_tool_ts is not None
+                        else None,
+                        preamble_text_chars,
+                        len(step_text),
+                        len(tool_use_blocks),
+                        [b["name"] for b in tool_use_blocks],
+                        stop_reason,
+                    )
                     continue
 
                 event = event_data
@@ -483,6 +539,17 @@ async def _stream_step_with_retries(
                         hasattr(event.content_block, "type")
                         and event.content_block.type == "tool_use"
                     ):
+                        if first_tool_ts is None:
+                            first_tool_ts = time.monotonic()
+                            logger.info(
+                                "TIMING[chat.step.first_tool] session_id=%s step=%d "
+                                "first_tool_after_ms=%d preamble_text_chars=%d tool=%s",
+                                session_id_for_log,
+                                step,
+                                int((first_tool_ts - model_start_ts) * 1000),
+                                preamble_text_chars,
+                                event.content_block.name,
+                            )
                         current_tool_id = event.content_block.id
                         current_tool_name = event.content_block.name
                         current_tool_input_json = ""
@@ -490,6 +557,17 @@ async def _stream_step_with_retries(
                     if hasattr(event.delta, "type"):
                         if event.delta.type == "text_delta":
                             chunk = event.delta.text
+                            if first_text_ts is None:
+                                first_text_ts = time.monotonic()
+                                logger.info(
+                                    "TIMING[chat.step.ttfb] session_id=%s step=%d "
+                                    "model_ttfb_ms=%d",
+                                    session_id_for_log,
+                                    step,
+                                    int((first_text_ts - model_start_ts) * 1000),
+                                )
+                            if first_tool_ts is None:
+                                preamble_text_chars += len(chunk)
                             step_text += chunk
                             yield f"event: text\ndata: {json.dumps({'chunk': chunk})}\n\n"
                         elif event.delta.type == "input_json_delta":
@@ -789,6 +867,15 @@ async def run_chat_loop_engine(
     )
     cache_state = _CacheState(last_chat_cache_snapshot=prompt_cache_prior_chat)
     prev_step = _PrevStepState()
+    turn_session_id = (
+        turn_context.session.id if turn_context.session is not None else None
+    )
+    turn_start_ts = time.monotonic()
+    logger.info(
+        "TIMING[chat.turn.start] session_id=%s max_steps=%d",
+        turn_session_id,
+        max_steps,
+    )
 
     for step in range(max_steps):
         if is_cancelled and is_cancelled():
@@ -827,6 +914,16 @@ async def run_chat_loop_engine(
         ):
             yield sse_event
         if result.interrupted or result.failed:
+            logger.info(
+                "TIMING[chat.turn.end] session_id=%s outcome=%s "
+                "total_ms=%d steps=%d text_chars=%d tool_calls=%d",
+                turn_session_id,
+                "interrupted" if result.interrupted else "failed",
+                int((time.monotonic() - turn_start_ts) * 1000),
+                step + 1,
+                len(result.full_text),
+                len(result.tool_calls),
+            )
             return
 
         stop_reason = step_result.stop_reason
@@ -869,6 +966,15 @@ async def run_chat_loop_engine(
                 len(result.full_text),
                 len(result.tool_calls),
             )
+            logger.info(
+                "TIMING[chat.turn.end] session_id=%s outcome=complete "
+                "total_ms=%d steps=%d text_chars=%d tool_calls=%d",
+                turn_session_id,
+                int((time.monotonic() - turn_start_ts) * 1000),
+                step + 1,
+                len(result.full_text),
+                len(result.tool_calls),
+            )
             return
 
         tool_exec_state = _ToolExecutionState()
@@ -901,6 +1007,37 @@ async def run_chat_loop_engine(
             linked_messages=linked_messages,
         )
 
+        # Complete-reply-first: if the model produced a substantive user-facing
+        # reply BEFORE emitting tools, the turn is complete once tools execute.
+        # Skip the continuation step — there's nothing the model needs to add
+        # after tools that it couldn't have said before them, and running step
+        # N+1 only introduces a visible pause and extra latency.
+        if (
+            not tool_exec_state.had_tool_errors
+            and not json_error_blocks
+            and len(step_text.strip()) >= _COMPLETE_REPLY_CHAR_THRESHOLD
+        ):
+            result.completed = True
+            if emit_done_event:
+                yield f"event: done\ndata: {json.dumps({'text': result.full_text})}\n\n"
+            logger.info(
+                "Chat loop complete (reply+tools, skipped continuation): "
+                "steps=%d, text_length=%d, tool_calls=%d",
+                step + 1,
+                len(result.full_text),
+                len(result.tool_calls),
+            )
+            logger.info(
+                "TIMING[chat.turn.end] session_id=%s outcome=reply_with_tools "
+                "total_ms=%d steps=%d text_chars=%d tool_calls=%d",
+                turn_session_id,
+                int((time.monotonic() - turn_start_ts) * 1000),
+                step + 1,
+                len(result.full_text),
+                len(result.tool_calls),
+            )
+            return
+
         done_event = await _try_ancillary_tools_text_recovery(
             step=step,
             system_prompt=system_prompt,
@@ -916,6 +1053,15 @@ async def run_chat_loop_engine(
         if done_event is not None:
             if done_event:
                 yield done_event
+            logger.info(
+                "TIMING[chat.turn.end] session_id=%s outcome=ancillary_recovery "
+                "total_ms=%d steps=%d text_chars=%d tool_calls=%d",
+                turn_session_id,
+                int((time.monotonic() - turn_start_ts) * 1000),
+                step + 1,
+                len(result.full_text),
+                len(result.tool_calls),
+            )
             return
 
         prev_step.update(
@@ -937,3 +1083,12 @@ async def run_chat_loop_engine(
         emit_done_event=emit_done_event,
     ):
         yield sse_event
+    logger.info(
+        "TIMING[chat.turn.end] session_id=%s outcome=max_steps_recovery "
+        "total_ms=%d steps=%d text_chars=%d tool_calls=%d",
+        turn_session_id,
+        int((time.monotonic() - turn_start_ts) * 1000),
+        max_steps,
+        len(result.full_text),
+        len(result.tool_calls),
+    )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,18 +23,11 @@ from app.models.insights_followup_job import InsightsFollowupJob
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.services.claude import (
-    ChatLoopResult,
-    build_context_message,
-    build_messages,
-    build_system_prompt,
     empty_usage_summary,
-    get_buyer_chat_tools,
     merge_usage_summary,
-    stream_chat_loop,
 )
 from app.services.deal_state import deal_state_to_dict
 from app.services.panel import stream_ai_panel_cards_with_usage
-from app.services.turn_context import TurnContext
 from app.services.usage_tracking import (
     SessionUsageSummary,
     build_request_usage,
@@ -41,23 +35,6 @@ from app.services.usage_tracking import (
 )
 
 logger = logging.getLogger(__name__)
-
-_FOLLOWUP_RECONCILE_TRIGGER = (
-    "Detached follow-up reconcile task: review the full conversation above and "
-    "bring structured deal state up to date. Use tools only for material changes. "
-    "Do not produce user-facing reply text. If nothing should change, return no text and no tools."
-)
-
-_FOLLOWUP_RECONCILE_SYSTEM = [
-    {
-        "type": "text",
-        "text": (
-            "DETACHED FOLLOW-UP RECONCILE: You are reconciling structured state after the assistant reply has already been delivered. "
-            "Do not write any user-visible prose. Use the conversation transcript and current structured state to decide whether tools are needed. "
-            "Call tools only for real state changes; otherwise return no text and no tools."
-        ),
-    }
-]
 
 
 @dataclass(frozen=True)
@@ -191,28 +168,6 @@ async def _load_assistant_message(
     return assistant_message
 
 
-def _build_followup_reconcile_messages(
-    *,
-    deal_state_dict: dict,
-    anchored_history_rows: list[Message],
-) -> list[dict]:
-    history = [
-        {"role": row.role, "content": row.content}
-        for row in anchored_history_rows
-        if row.role in (MessageRole.USER, MessageRole.ASSISTANT)
-    ]
-    context_message = build_context_message(
-        deal_state_dict,
-        user_turn_text=_FOLLOWUP_RECONCILE_TRIGGER,
-    )
-    return build_messages(
-        history,
-        _FOLLOWUP_RECONCILE_TRIGGER,
-        None,
-        context_message,
-    )
-
-
 async def stream_linked_insights_followup(
     *,
     db: AsyncSession,
@@ -223,6 +178,12 @@ async def stream_linked_insights_followup(
     followup_enabled: bool = True,
 ) -> AsyncIterator[str]:
     # Preamble: load the persisted assistant anchor and the durable job row.
+    followup_start_ts = time.monotonic()
+    logger.info(
+        "TIMING[followup.start] session_id=%s assistant_message_id=%s",
+        session_id,
+        assistant_message_id,
+    )
     try:
         assistant_message = await _load_assistant_message(
             db=db,
@@ -278,7 +239,10 @@ async def stream_linked_insights_followup(
         )
 
         job.status = InsightsFollowupStatus.RUNNING.value
-        job.reconcile_status = InsightsFollowupStepStatus.RUNNING.value
+        # Reconcile step is retired. The column is kept to avoid a migration
+        # and always marked SKIPPED. Main chat is the sole source of
+        # structured state updates; this pipeline only renders + synthesizes.
+        job.reconcile_status = InsightsFollowupStepStatus.SKIPPED.value
         job.panel_status = InsightsFollowupStepStatus.PENDING.value
         job.attempts += 1
         job.error = None
@@ -308,6 +272,12 @@ async def stream_linked_insights_followup(
         followup_request_usage_summary = empty_usage_summary()
         panel_started_emitted = True
         yield "event: panel_started\ndata: {}\n\n"
+        preamble_end_ts = time.monotonic()
+        logger.info(
+            "TIMING[followup.preamble] session_id=%s duration_ms=%d",
+            session_id,
+            int((preamble_end_ts - followup_start_ts) * 1000),
+        )
 
         deal_state = await db.scalar(
             select(DealState).where(DealState.session_id == session_id)
@@ -320,60 +290,11 @@ async def stream_linked_insights_followup(
             for row in anchored_history_rows
             if row.role in (MessageRole.USER, MessageRole.ASSISTANT)
         ]
-        deal_state_dict = await deal_state_to_dict(deal_state, db)
-        reconcile_messages = _build_followup_reconcile_messages(
-            deal_state_dict=deal_state_dict,
-            anchored_history_rows=anchored_history_rows,
-        )
-        reconcile_result = ChatLoopResult()
         session_usage = SessionUsageSummary.from_dict(session.usage)
-        turn_context = TurnContext.create(session=session, deal_state=deal_state, db=db)
 
-        async for reconcile_event in stream_chat_loop(
-            [*build_system_prompt(), *_FOLLOWUP_RECONCILE_SYSTEM],
-            reconcile_messages,
-            get_buyer_chat_tools(
-                allow_persistence_affecting_tools=True,
-                allow_chat_only_tools=False,
-            ),
-            turn_context,
-            reconcile_result,
-            emit_done_event=False,
-            linked_messages=None,
-            prompt_cache_prior_chat=session_usage.prompt_cache_chat_last,
-        ):
-            event_name, data = _parse_sse_chunk(reconcile_event)
-            if event_name == "tool_result":
-                yield reconcile_event
-            elif event_name == "error":
-                message = data.get("message") or "Insights reconcile failed"
-                raise RuntimeError(str(message))
-
-        if reconcile_result.failed or reconcile_result.interrupted:
-            raise RuntimeError("Insights reconcile failed")
-
-        logger.info(
-            "Insights reconcile step succeeded: session_id=%s, tool_calls=%d",
-            session_id,
-            len(reconcile_result.tool_calls),
-        )
-
-        merge_usage_summary(
-            followup_request_usage_summary, reconcile_result.usage_summary
-        )
-        merge_usage_summary(
-            total_followup_usage_summary, reconcile_result.usage_summary
-        )
-        job.reconcile_status = InsightsFollowupStepStatus.SUCCEEDED.value
         job.panel_status = InsightsFollowupStepStatus.RUNNING.value
         await db.commit()
 
-        refreshed_deal_state = await db.scalar(
-            select(DealState).where(DealState.session_id == session_id)
-        )
-        if refreshed_deal_state is None:
-            raise RuntimeError("Deal state not found")
-        deal_state = refreshed_deal_state
         updated_state_dict = await deal_state_to_dict(deal_state, db)
         panel_usage_summary: dict[str, int] | None = None
         latest_cards: list[dict] = assistant_message.panel_cards or []
@@ -383,6 +304,11 @@ async def stream_linked_insights_followup(
             "breaks_delta": 0,
         }
 
+        panel_start_ts = time.monotonic()
+        logger.info(
+            "TIMING[followup.panel.start] session_id=%s",
+            session_id,
+        )
         async for panel_event in stream_ai_panel_cards_with_usage(
             updated_state_dict,
             assistant_message.content,
@@ -408,6 +334,13 @@ async def stream_linked_insights_followup(
             raise RuntimeError(
                 "Insights follow-up ended without a terminal panel result"
             )
+        panel_end_ts = time.monotonic()
+        logger.info(
+            "TIMING[followup.panel.end] session_id=%s duration_ms=%d cards=%d",
+            session_id,
+            int((panel_end_ts - panel_start_ts) * 1000),
+            len(latest_cards),
+        )
 
         merge_usage_summary(followup_request_usage_summary, panel_usage_summary or {})
         merge_usage_summary(total_followup_usage_summary, panel_usage_summary or {})
@@ -424,11 +357,6 @@ async def stream_linked_insights_followup(
         )
 
         session_usage = SessionUsageSummary.from_dict(session.usage)
-        if reconcile_result.prompt_cache_chat_last is not None:
-            session_usage.prompt_cache_chat_last = (
-                reconcile_result.prompt_cache_chat_last
-            )
-        session_usage.prompt_cache_break_count += reconcile_result.prompt_cache_breaks
         panel_prompt_cache_last = panel_prompt_cache.get("last")
         if isinstance(panel_prompt_cache_last, dict):
             session_usage.prompt_cache_panel_last = panel_prompt_cache_last
@@ -457,6 +385,16 @@ async def stream_linked_insights_followup(
             assistant_message_id,
             len(latest_cards),
         )
+        followup_end_ts = time.monotonic()
+        logger.info(
+            "TIMING[followup.total] session_id=%s outcome=succeeded total_ms=%d "
+            "preamble_ms=%d panel_ms=%d cards=%d",
+            session_id,
+            int((followup_end_ts - followup_start_ts) * 1000),
+            int((preamble_end_ts - followup_start_ts) * 1000),
+            int((panel_end_ts - panel_start_ts) * 1000),
+            len(latest_cards),
+        )
 
         payload = {
             "cards": latest_cards,
@@ -471,9 +409,6 @@ async def stream_linked_insights_followup(
             assistant_message_id,
         )
         job_id = job.id
-        reconcile_was_running = (
-            job.reconcile_status == InsightsFollowupStepStatus.RUNNING.value
-        )
         panel_was_running = job.panel_status == InsightsFollowupStepStatus.RUNNING.value
         await db.rollback()
         refetched_job = await db.get(InsightsFollowupJob, job_id)
@@ -486,8 +421,6 @@ async def stream_linked_insights_followup(
             yield _panel_error_sse()
             return
         refetched_job.status = InsightsFollowupStatus.FAILED.value
-        if reconcile_was_running:
-            refetched_job.reconcile_status = InsightsFollowupStepStatus.FAILED.value
         if panel_was_running:
             refetched_job.panel_status = InsightsFollowupStepStatus.FAILED.value
         refetched_job.error = "Insights follow-up failed"

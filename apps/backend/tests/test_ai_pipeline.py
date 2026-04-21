@@ -581,10 +581,12 @@ def test_turn_context_for_db_session_without_deal_state():
 
 
 # ─── chat_tool_choice_for_step tests ───
+# Simplified policy: step 0 → auto (model decides), step >= 1 → none (text-only
+# recovery). Reconcile era tool-round policy was removed with reconcile itself.
 
 
 def test_chat_tool_choice_step_zero_is_auto():
-    """Step 0 always returns auto (model decides freely)."""
+    """Step 0 always returns auto — model decides tools freely."""
     result = chat_tool_choice_for_step(
         0,
         prev_step_had_tool_errors=False,
@@ -592,121 +594,21 @@ def test_chat_tool_choice_step_zero_is_auto():
         prev_step_tools_were_dashboard_only=False,
     )
     assert result.tool_choice == {"type": "auto"}
-    assert not result.inject_dashboard_reconcile_nudge
 
 
-def test_chat_tool_choice_step_two_or_beyond_is_none():
-    """Step >= 2 always forces text-only (no tools)."""
-    for step in (2, 3, 4):
+def test_chat_tool_choice_step_one_plus_is_none():
+    """Step 1+ forces text-only. Complete-reply-first means step 0 should have
+    delivered both reply + tools; a follow-up step only exists to recover with
+    user-visible text."""
+    for step in (1, 2, 3, 4):
         result = chat_tool_choice_for_step(
             step,
             prev_step_had_tool_errors=False,
             prev_step_had_visible_assistant_text=True,
             prev_step_tools_were_dashboard_only=False,
+            prev_step_tool_names=frozenset({"set_vehicle"}),
         )
         assert result.tool_choice == {"type": "none"}, f"step={step}"
-        assert not result.inject_dashboard_reconcile_nudge
-
-
-def test_chat_tool_choice_step_one_none_when_text_and_no_errors():
-    """Step 1 forces none when step 0 had visible text and no errors."""
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=True,
-        prev_step_tools_were_dashboard_only=False,
-    )
-    assert result.tool_choice == {"type": "none"}
-    assert not result.inject_dashboard_reconcile_nudge
-    assert not result.inject_post_extraction_assessment_nudge
-
-
-def test_chat_tool_choice_step_one_none_when_dashboard_only_no_errors():
-    """Step 1 forces none when step 0 had dashboard-only tools and no errors."""
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=False,
-        prev_step_tools_were_dashboard_only=True,
-    )
-    assert result.tool_choice == {"type": "none"}
-    assert not result.inject_dashboard_reconcile_nudge
-
-
-def test_chat_tool_choice_step_one_auto_when_tool_errors():
-    """Step 1 allows auto when step 0 had tool errors (model self-correction)."""
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=True,
-        prev_step_had_visible_assistant_text=True,
-        prev_step_tools_were_dashboard_only=False,
-    )
-    assert result.tool_choice == {"type": "auto"}
-    assert not result.inject_dashboard_reconcile_nudge
-
-
-def test_chat_tool_choice_step_one_auto_when_no_text_and_not_dashboard():
-    """Step 1 allows auto when step 0 had no visible text and non-dashboard tools."""
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=False,
-        prev_step_tools_were_dashboard_only=False,
-    )
-    assert result.tool_choice == {"type": "auto"}
-    assert not result.inject_dashboard_reconcile_nudge
-
-
-def test_chat_tool_choice_step_one_reconcile_when_flags_without_health():
-    """Step 1 allows a catch-up tool round after visible text + flags/gaps but no health."""
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=True,
-        prev_step_tools_were_dashboard_only=False,
-        prev_step_tool_names=frozenset({"update_deal_red_flags"}),
-    )
-    assert result.tool_choice == {"type": "auto"}
-    assert result.inject_dashboard_reconcile_nudge
-    assert not result.inject_post_extraction_assessment_nudge
-
-
-def test_chat_tool_choice_step_one_post_extraction_after_set_vehicle_only():
-    """Step 1 allows tools after visible text + extraction-only step (e.g. second truck + pasted CARFAX)."""
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=True,
-        prev_step_tools_were_dashboard_only=False,
-        prev_step_tool_names=frozenset({"set_vehicle"}),
-    )
-    assert result.tool_choice == {"type": "auto"}
-    assert not result.inject_dashboard_reconcile_nudge
-    assert result.inject_post_extraction_assessment_nudge
-
-
-def test_chat_tool_choice_step_one_no_post_extraction_when_assessment_ran():
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=True,
-        prev_step_tools_were_dashboard_only=False,
-        prev_step_tool_names=frozenset({"set_vehicle", "update_negotiation_context"}),
-    )
-    assert result.tool_choice == {"type": "none"}
-    assert not result.inject_post_extraction_assessment_nudge
-
-
-def test_chat_tool_choice_step_one_no_reconcile_when_health_present():
-    result = chat_tool_choice_for_step(
-        1,
-        prev_step_had_tool_errors=False,
-        prev_step_had_visible_assistant_text=True,
-        prev_step_tools_were_dashboard_only=False,
-        prev_step_tool_names=frozenset({"update_deal_red_flags", "update_deal_health"}),
-    )
-    assert result.tool_choice == {"type": "none"}
-    assert not result.inject_dashboard_reconcile_nudge
 
 
 # ─── build_messages tests ───
@@ -1226,9 +1128,119 @@ async def test_stream_ai_panel_cards_with_usage_canonicalizes_duplicates_and_app
 
 
 @patch("app.services.panel.create_anthropic_client")
-async def test_stream_ai_panel_cards_with_usage_emits_panel_error_after_retries(
+async def test_stream_ai_panel_cards_with_usage_merges_rendered_and_narrative_cards(
     mock_create_client,
 ):
+    """Rendered cards (from structured state) merge with the LLM's 3 narrative kinds.
+
+    The synthesis stream now only emits narrative kinds (dealer_read, next_best_move,
+    if_you_say_yes). Numbers, warnings, notes, vehicle, etc. come from
+    build_rendered_panel_cards and must appear in the final panel even though the
+    LLM did not emit them.
+    """
+    streamed_chunks = [
+        "[",
+        '{"kind":"dealer_read","content":{"body":"This dealer is anchoring high and testing patience."},"priority":"normal"}',
+        ",",
+        '{"kind":"next_best_move","content":{"body":"Counter at $62,000 out-the-door."},"priority":"high"}',
+        ",",
+        '{"kind":"if_you_say_yes","content":{"body":"Locking this in at 6.25% APR means ~$3.2k more interest than the pre-approval."},"priority":"high"}',
+        "]",
+    ]
+
+    mock_client = AsyncMock()
+    mock_client.messages.stream = AsyncMock(
+        return_value=_FakePanelStream(streamed_chunks, stop_reason="end_turn")
+    )
+    mock_create_client.return_value = mock_client
+
+    deal_state = {
+        "buyer_context": "at_dealership",
+        "active_deal_id": "deal-1",
+        "vehicles": [
+            {
+                "id": "v1",
+                "role": "primary",
+                "year": 2024,
+                "make": "Ford",
+                "model": "F-250",
+                "vin": "1FT8W3DT8NEE99999",
+            },
+        ],
+        "deals": [
+            {
+                "id": "deal-1",
+                "vehicle_id": "v1",
+                "phase": "negotiation",
+                "numbers": {
+                    "msrp": None,
+                    "listing_price": None,
+                    "current_offer": 62500.0,
+                    "your_target": 60000.0,
+                    "walk_away_price": None,
+                    "trade_in_value": None,
+                    "down_payment": None,
+                    "monthly_payment": None,
+                    "apr": 6.25,
+                    "loan_term_months": 72,
+                    "invoice_price": None,
+                },
+                "scorecard": {"price": "red", "financing": "yellow"},
+                "health": {},
+                "red_flags": [
+                    {
+                        "id": "rf1",
+                        "severity": "warning",
+                        "message": "Doc fee $1,995 is high",
+                    },
+                ],
+                "information_gaps": [],
+                "offer_history": {"first_offer": 64500.0, "pre_fi_price": None},
+                "dealer_name": "Sunrise Ford",
+            }
+        ],
+        "negotiation_context": {
+            "stance": "negotiating",
+            "situation": "Dealer countered at $62,500 with doc fee.",
+            "leverage": ["Pre-approved at 5.5% APR"],
+        },
+    }
+
+    events = []
+    async for event in stream_ai_panel_cards_with_usage(
+        deal_state,
+        "Counter at $62,000 out-the-door.",
+        [{"role": "user", "content": "They came back at 62,500."}],
+    ):
+        events.append((event.type, event.data))
+
+    panel_done = events[-1][1]
+    kinds = [card["kind"] for card in panel_done["cards"]]
+
+    # Narrative kinds from the LLM stream must appear.
+    assert "dealer_read" in kinds
+    assert "next_best_move" in kinds
+    # Rendered kinds from structured state must appear even though the LLM
+    # never emitted them.
+    assert "phase" in kinds  # stance + situation -> phase card
+    assert "numbers" in kinds  # current_offer/your_target/apr/loan_term rendered
+    assert "warning" in kinds  # doc-fee flag from red_flags
+    assert "your_leverage" in kinds  # from negotiation_context.leverage
+    assert "notes" in kinds  # dealer_name + first-offer movement
+    assert "savings_so_far" in kinds  # 64,500 -> 62,500 = 2,000 delta
+    assert "vehicle" in kinds
+
+
+@patch("app.services.panel.create_anthropic_client")
+async def test_stream_ai_panel_cards_with_usage_degrades_gracefully_after_retries(
+    mock_create_client,
+):
+    """When synthesis retries are exhausted, rendered cards are still delivered.
+
+    Only the three narrative kinds (dealer_read, next_best_move, if_you_say_yes)
+    depend on the LLM. All other cards come from build_rendered_panel_cards and
+    must survive synthesis failure.
+    """
     retries = settings.CLAUDE_MAX_TOKENS_RETRIES
     mock_client = AsyncMock()
     mock_client.messages.stream = AsyncMock(
@@ -1247,8 +1259,85 @@ async def test_stream_ai_panel_cards_with_usage_emits_panel_error_after_retries(
 
     started_count = sum(1 for event_type, _ in events if event_type == "panel_started")
     assert started_count == retries + 1
-    assert events[-1][0] == "panel_error"
-    assert events[-1][1]["attempt"] == retries + 1
+    # Synthesis exhausted -> panel still completes with whatever rendered cards
+    # are available (empty here since deals/vehicles are empty).
+    assert events[-1][0] == "panel_done"
+
+
+@patch("app.services.panel.create_anthropic_client")
+async def test_stream_ai_panel_cards_with_usage_delivers_rendered_cards_when_synthesis_fails(
+    mock_create_client,
+):
+    """Synthesis failure must not drop rendered cards built from structured state.
+
+    With populated deals/vehicles/negotiation_context, the rendered-card pipeline
+    should still produce phase/numbers/vehicle cards even when the LLM synthesis
+    stream raises on every retry.
+    """
+    mock_client = AsyncMock()
+    mock_client.messages.stream = AsyncMock(
+        side_effect=RuntimeError("stream unavailable")
+    )
+    mock_client.messages.create = AsyncMock(side_effect=RuntimeError("fallback failed"))
+    mock_create_client.return_value = mock_client
+
+    deal_state = {
+        "buyer_context": "at_dealership",
+        "active_deal_id": "deal-1",
+        "vehicles": [
+            {
+                "id": "v1",
+                "role": "primary",
+                "year": 2024,
+                "make": "Ford",
+                "model": "F-250",
+                "vin": "1FT8W3DT8NEE99999",
+            },
+        ],
+        "deals": [
+            {
+                "id": "deal-1",
+                "vehicle_id": "v1",
+                "phase": "negotiation",
+                "numbers": {
+                    "current_offer": 62500.0,
+                    "your_target": 60000.0,
+                    "apr": 6.25,
+                    "loan_term_months": 72,
+                },
+                "scorecard": {},
+                "health": {},
+                "red_flags": [],
+                "information_gaps": [],
+                "offer_history": {},
+                "dealer_name": "Sunrise Ford",
+            }
+        ],
+        "negotiation_context": {
+            "stance": "negotiating",
+            "situation": "Dealer countered at $62,500.",
+        },
+    }
+
+    events = []
+    async for event in stream_ai_panel_cards_with_usage(
+        deal_state,
+        "Counter at $62,000.",
+        [{"role": "user", "content": "They came back at 62,500."}],
+    ):
+        events.append((event.type, event.data))
+
+    assert events[-1][0] == "panel_done"
+    panel_done = events[-1][1]
+    kinds = [card["kind"] for card in panel_done["cards"]]
+    # Rendered-only kinds survive synthesis exhaustion.
+    assert "phase" in kinds
+    assert "numbers" in kinds
+    assert "vehicle" in kinds
+    # Narrative LLM-only kinds must NOT appear since synthesis failed.
+    assert "dealer_read" not in kinds
+    assert "next_best_move" not in kinds
+    assert "if_you_say_yes" not in kinds
 
 
 @patch("app.services.panel.create_anthropic_client")
@@ -2377,10 +2466,6 @@ async def test_insights_followup_skips_all_work_when_user_mode_is_paused(
 
     with (
         patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=should_not_reconcile,
-        ),
-        patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=should_not_stream_panel,
         ),
@@ -2496,10 +2581,6 @@ async def test_insights_followup_persists_empty_panel_results_and_clears_stale_c
 
     with (
         patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=fake_stream_chat_loop_noop,
-        ),
-        patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=fake_stream_panel_cards_with_usage,
         ),
@@ -2552,166 +2633,6 @@ async def test_insights_followup_persists_empty_panel_results_and_clears_stale_c
         )
         assert job is not None
         assert job.status == InsightsFollowupStatus.SUCCEEDED.value
-
-
-async def test_insights_followup_reconciles_before_panel_and_emits_tool_results(
-    async_client, adb, async_buyer_user
-):
-    session, deal_state = await async_create_session_with_deal_state(
-        adb, async_buyer_user
-    )
-    assistant = Message(
-        session_id=session.id,
-        role=MessageRole.ASSISTANT,
-        content="You should ask for the out-the-door price before discussing financing.",
-        usage={
-            "requests": 1,
-            "inputTokens": 20,
-            "outputTokens": 10,
-            "cacheCreationInputTokens": 0,
-            "cacheReadInputTokens": 0,
-            "totalTokens": 30,
-        },
-    )
-    adb.add(assistant)
-    await adb.commit()
-    await adb.refresh(session)
-    await adb.refresh(deal_state)
-    await adb.refresh(assistant)
-    token = create_access_token({"sub": async_buyer_user.id})
-
-    async def fake_stream_chat_loop(*args, **kwargs):
-        turn_context = args[3]
-        result = args[4]
-        turn_context.deal_state.negotiation_context = {
-            "stance": "negotiating",
-            "situation": "Waiting for the dealer's out-the-door quote.",
-        }
-        merge_usage_summary(
-            result.usage_summary,
-            summarize_usage(
-                SimpleNamespace(
-                    input_tokens=12,
-                    output_tokens=8,
-                    cache_creation_input_tokens=0,
-                    cache_read_input_tokens=0,
-                )
-            ),
-        )
-        result.completed = True
-        yield (
-            "event: tool_result\n"
-            'data: {"tool": "update_negotiation_context", '
-            '"data": {"stance": "negotiating", "situation": "Waiting for the dealer\'s out-the-door quote."}}\n\n'
-        )
-
-    async def fake_stream_panel_cards_with_usage(*args, **kwargs):
-        yield SimpleNamespace(
-            type="panel_started", data={"attempt": 1, "max_tokens": 2048}
-        )
-        yield SimpleNamespace(
-            type="panel_done",
-            data={
-                "cards": [
-                    {
-                        "kind": "phase",
-                        "template": "briefing",
-                        "title": "Status",
-                        "content": {
-                            "stance": "negotiating",
-                            "situation": "Waiting for the dealer's out-the-door quote.",
-                        },
-                        "priority": "high",
-                    }
-                ],
-                "usage_summary": {
-                    "requests": 1,
-                    "input_tokens": 40,
-                    "output_tokens": 10,
-                    "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                    "total_tokens": 50,
-                },
-            },
-        )
-
-    with (
-        patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=fake_stream_chat_loop,
-        ),
-        patch(
-            "app.services.insights_followup.stream_ai_panel_cards_with_usage",
-            new=fake_stream_panel_cards_with_usage,
-        ),
-    ):
-        async with async_client.stream(
-            "POST",
-            f"/api/chat/{session.id}/insights-followup",
-            json={"assistant_message_id": assistant.id},
-            headers={"Authorization": f"Bearer {token}"},
-        ) as response:
-            assert response.status_code == 200
-            events = await _collect_response_events(response)
-
-    assert [event_name for event_name, _ in events] == [
-        "panel_started",
-        "tool_result",
-        "panel_done",
-    ]
-    assert events[1] == (
-        "tool_result",
-        {
-            "tool": "update_negotiation_context",
-            "data": {
-                "stance": "negotiating",
-                "situation": "Waiting for the dealer's out-the-door quote.",
-            },
-        },
-    )
-    panel_done = events[-1][1]
-    assert panel_done["usage"] == {
-        "requests": 2,
-        "inputTokens": 52,
-        "outputTokens": 18,
-        "cacheCreationInputTokens": 0,
-        "cacheReadInputTokens": 0,
-        "totalTokens": 70,
-    }
-
-    async with TestingAsyncSessionLocal() as check_db:
-        persisted_deal_state = await check_db.scalar(
-            select(DealState).where(DealState.session_id == session.id)
-        )
-        assert persisted_deal_state is not None
-        assert persisted_deal_state.negotiation_context == {
-            "stance": "negotiating",
-            "situation": "Waiting for the dealer's out-the-door quote.",
-        }
-
-        persisted_message = await check_db.scalar(
-            select(Message).where(Message.id == assistant.id)
-        )
-        assert persisted_message is not None
-        assert persisted_message.usage == {
-            "requests": 3,
-            "inputTokens": 72,
-            "outputTokens": 28,
-            "cacheCreationInputTokens": 0,
-            "cacheReadInputTokens": 0,
-            "totalTokens": 100,
-        }
-
-        job = await check_db.scalar(
-            select(InsightsFollowupJob).where(
-                InsightsFollowupJob.session_id == session.id,
-                InsightsFollowupJob.assistant_message_id == assistant.id,
-            )
-        )
-        assert job is not None
-        assert job.reconcile_status == InsightsFollowupStepStatus.SUCCEEDED.value
-        assert job.panel_status == InsightsFollowupStepStatus.SUCCEEDED.value
-        assert job.usage == panel_done["usage"]
 
 
 async def test_insights_followup_marks_job_failed_when_panel_generation_errors(
@@ -2772,10 +2693,6 @@ async def test_insights_followup_marks_job_failed_when_panel_generation_errors(
 
     with (
         patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=fake_stream_chat_loop,
-        ),
-        patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=fake_stream_panel_cards_with_usage,
         ),
@@ -2810,7 +2727,7 @@ async def test_insights_followup_marks_job_failed_when_panel_generation_errors(
         )
         assert job is not None
         assert job.status == InsightsFollowupStatus.FAILED.value
-        assert job.reconcile_status == InsightsFollowupStepStatus.SUCCEEDED.value
+        assert job.reconcile_status == InsightsFollowupStepStatus.SKIPPED.value
         assert job.panel_status == InsightsFollowupStepStatus.FAILED.value
         assert job.error == "Insights follow-up failed"
 
@@ -3094,10 +3011,6 @@ async def test_insights_followup_emits_panel_error_when_panel_stream_crashes_aft
 
     with (
         patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=fake_stream_chat_loop_noop,
-        ),
-        patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=failing_stream_panel_cards_with_usage,
         ),
@@ -3158,10 +3071,6 @@ async def test_insights_followup_treats_panel_error_event_as_terminal_failure(
 
     with (
         patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=fake_stream_chat_loop_noop,
-        ),
-        patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=fake_panel_stream_with_error_event,
         ),
@@ -3197,7 +3106,7 @@ async def test_insights_followup_treats_panel_error_event_as_terminal_failure(
     )
     job = job_result.scalar_one()
     assert job.status == InsightsFollowupStatus.FAILED.value
-    assert job.reconcile_status == InsightsFollowupStepStatus.SUCCEEDED.value
+    assert job.reconcile_status == InsightsFollowupStepStatus.SKIPPED.value
     assert job.panel_status == InsightsFollowupStepStatus.FAILED.value
 
 
@@ -3228,10 +3137,6 @@ async def test_insights_followup_fails_when_panel_stream_ends_without_terminal_e
             yield ""
 
     with (
-        patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=fake_stream_chat_loop_noop,
-        ),
         patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=fake_panel_stream_without_terminal,
@@ -3304,10 +3209,6 @@ async def test_insights_followup_rejects_concurrent_run_for_same_message(
             yield None
 
     with (
-        patch(
-            "app.services.insights_followup.stream_chat_loop",
-            new=should_not_run_chat_loop,
-        ),
         patch(
             "app.services.insights_followup.stream_ai_panel_cards_with_usage",
             new=should_not_run_panel,

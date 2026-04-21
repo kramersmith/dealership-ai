@@ -1,6 +1,6 @@
 # Buyer chat turn lifecycle
 
-**Last updated:** 2026-04
+**Last updated:** 2026-04-20
 
 End-to-end flow for a single **buyer** message on `POST /api/chat/{session_id}/message` or `POST /api/chat/{session_id}/messages/{message_id}/branch`. Dealer simulation uses related chat infrastructure but different prompts and tools; this document is scoped to the **shared buyer turn** pipeline.
 
@@ -52,7 +52,7 @@ flowchart TD
 
 ### Technical version
 
-The user sends one message; the backend saves it, runs one or more **Claude steps** (each step = one model call that may stream text and/or call tools); when the model answers with **text only**, the backend **persists the assistant row**, emits **`done`**, and closes the chat SSE response. After `done`, the mobile client opens a **second** SSE request keyed by the assistant message id when insights are **live**: that detached follow-up runs reconcile/panel work.
+The user sends one message; the backend saves it, runs one or more **Claude steps** (each step = one model call that may stream text and/or call tools); when the model answers with **text only** — or when step 0 produces a substantive pre-tool reply (≥150 chars) alongside tool calls, which short-circuits the continuation step per ADR 0026 — the backend **persists the assistant row**, emits **`done`**, and closes the chat SSE response. After `done`, the mobile client opens a **second** SSE request keyed by the assistant message id when insights are **live**: that detached follow-up runs panel generation (no reconcile pass as of ADR 0026).
 
 ```mermaid
 sequenceDiagram
@@ -91,8 +91,9 @@ sequenceDiagram
 
   opt Insights update mode = live
     Stream-->>Client: SSE panel_started
-    Stream->>Claude: Reconcile state and generate panel cards
-    Stream-->>Client: SSE panel_done
+    Note over Stream: Deterministic render for 10 card kinds (no LLM);
+    Stream->>Claude: Narrow narrative synthesis for dealer_read / next_best_move / if_you_say_yes
+    Stream-->>Client: SSE panel_done (merged + canonicalized cards)
   end
 ```
 
@@ -119,10 +120,10 @@ Typical **happy path** order:
 1. **Compaction** (buyer long-chat): `run_auto_compaction_if_needed()` may emit `compaction_*` SSE events and adjust what is projected into the model transcript (ADR 0017).
 2. **Persist user message** (insert or update when resuming a pre-persisted row).
 3. **Build messages** — `build_messages()` merges per-turn context (deal state snapshot, linked sessions, date, branch reminder) into the user content; no synthetic assistant filler.
-4. **Run chat step loop** via `stream_chat_loop(..., emit_done_event=False)` — the loop **does not** emit `done`; the outer service does after persistence.
+4. **Run chat step loop** via `stream_chat_loop(..., emit_done_event=False)` — the loop **does not** emit `done`; the outer service does after persistence. Step 0 uses `auto` tool choice; step ≥ 1 forces `none`. The engine short-circuits when step 0 emits a substantive pre-tool reply (≥150 chars) with tool calls (ADR 0026, TIMING outcome `reply_with_tools`).
 5. On completion: **insert assistant `Message`**, **`commit`**.
 6. Emit **`done`** with final `text`, chat-phase usage, and `assistant_message_id` (assistant row already exists), then close the stream.
-7. **Detached follow-up** (separate request): after `done`, the mobile client calls `POST …/insights-followup` with the `assistant_message_id` when insights are `live`. That route emits `panel_started` immediately so the client can show panel activity while follow-up work is still running, then creates or reuses a persisted follow-up job row, runs reconcile/panel generation, and finishes with `panel_done` (or `panel_error`). In `paused`, the automatic request is skipped unless the user explicitly triggers `POST …/panel-refresh`.
+7. **Detached follow-up** (separate request): after `done`, the mobile client calls `POST …/insights-followup` with the `assistant_message_id` when insights are `live`. That route emits `panel_started` immediately, creates or reuses a persisted follow-up job row, then runs **panel-only** generation (the reconcile LLM pass was removed in ADR 0026; `reconcile_status` is always marked `SKIPPED`). Panel generation merges deterministic rendered cards (10 kinds built from deal state with no LLM, via `panel_card_builder.py`) with narrow narrative synthesis (Sonnet call producing only `dealer_read` / `next_best_move` / `if_you_say_yes`), then canonicalizes the union and finishes with `panel_done` (or `panel_error`). On synthesis retry exhaustion the rendered cards are still delivered. In `paused`, the automatic request is skipped unless the user explicitly triggers `POST …/panel-refresh`.
 
 Cancellation is cooperative for the chat phase (`TurnCancellationRegistry` / `POST …/stop`). Detached insights follow-up currently runs outside that chat turn registry.
 
@@ -158,7 +159,7 @@ Not exhaustive; see `docs/backend-endpoints.md` and `docs/architecture.md` for f
 | `done` | Final assistant text + usage + `assistant_message_id`; **chat phase is complete**. |
 | `compaction_*` | Long-chat compaction lifecycle. |
 | `interrupted` | User stop or similar — partial text + reason. |
-| `panel_started` / `panel_done` / `panel_error` | Detached insights follow-up SSE events from `POST …/insights-followup` when policy is **live** or the user refreshes. `panel_started` is emitted at live follow-up start so the client can show “updating insights” before reconcile/panel work finishes. |
+| `panel_started` / `panel_done` / `panel_error` | Detached insights follow-up SSE events from `POST …/insights-followup` when policy is **live** or the user refreshes. `panel_started` is emitted at live follow-up start so the client can show “updating insights” before panel generation finishes. |
 
 ---
 
@@ -177,8 +178,8 @@ Not exhaustive; see `docs/backend-endpoints.md` and `docs/architecture.md` for f
 
 ## Detached insights follow-up
 
-- **Live** (`insights_update_mode=live`): the chat request ends at `done`, then the mobile client opens `POST …/insights-followup` for that assistant row. That detached stream emits `panel_started` immediately, runs reconcile/panel generation, then persists canonical cards on the assistant row and emits them atomically in `panel_done`.
-- **Paused**: The client skips the automatic follow-up request after `done`. Users may call **`POST …/panel-refresh`** for an explicit rerun of the shared reconcile/panel pipeline against the latest assistant turn.
+- **Live** (`insights_update_mode=live`): the chat request ends at `done`, then the mobile client opens `POST …/insights-followup` for that assistant row. That detached stream emits `panel_started` immediately, runs panel generation (deterministic render + narrow narrative synthesis — no reconcile pass per ADR 0026), then persists canonical cards on the assistant row and emits them atomically in `panel_done`.
+- **Paused**: The client skips the automatic follow-up request after `done`. Users may call **`POST …/panel-refresh`** for an explicit rerun of the shared panel pipeline against the latest assistant turn.
 
 **What pausing actually stops right now:** both the automatic detached panel regeneration request that rebuilds **`ai_panel_cards`** and the persistence-affecting buyer chat tools during the normal turn. Existing cards stay on screen until you refresh or switch back to live.
 
@@ -205,4 +206,4 @@ See [logging-harness.md](logging-harness.md), [logging-guidelines.md](logging-gu
 - [architecture.md](architecture.md) — Monorepo map, step loop + panel cards section, operational notes.
 - [backend-endpoints.md](backend-endpoints.md) — API details.
 - [logging-harness.md](logging-harness.md) — `chat_turn_summary` and NDJSON workflow.
-- ADRs: [0005](adr/0005-turn-step-chat-loop.md) (turn vs step), [0012](adr/0012-two-phase-chat-panel-sse-contract.md) (historical chat vs panel SSE contract), [0017](adr/0017-context-compaction-custom.md) (compaction), [0019](adr/0019-pre-persisted-user-messages-for-vin-intercept.md) (pre-persisted user message), [0020](adr/0020-chat-branch-from-user-message.md) (branch), [0022](adr/0022-client-side-message-queue.md) (queue), [0023](adr/0023-stop-generation-cancellation-contract.md) (chat-phase stop), [0024](adr/0024-panel-update-policy-and-user-settings.md) (insights mode), [0025](adr/0025-detached-insights-followup-jobs-and-paused-tool-gating.md) (durable detached follow-up + paused-mode tool gating).
+- ADRs: [0005](adr/0005-turn-step-chat-loop.md) (turn vs step), [0012](adr/0012-two-phase-chat-panel-sse-contract.md) (historical chat vs panel SSE contract), [0017](adr/0017-context-compaction-custom.md) (compaction), [0019](adr/0019-pre-persisted-user-messages-for-vin-intercept.md) (pre-persisted user message), [0020](adr/0020-chat-branch-from-user-message.md) (branch), [0022](adr/0022-client-side-message-queue.md) (queue), [0023](adr/0023-stop-generation-cancellation-contract.md) (chat-phase stop), [0024](adr/0024-panel-update-policy-and-user-settings.md) (insights mode), [0025](adr/0025-detached-insights-followup-jobs-and-paused-tool-gating.md) (durable detached follow-up + paused-mode tool gating), [0026](adr/0026-panel-templating-and-reconcile-removal.md) (panel templating + reconcile removal + complete-reply-first).

@@ -80,6 +80,97 @@ async def test_execute_tool_update_deal_numbers(adb, async_buyer_user):
     assert deal.current_offer == 33500
 
 
+async def test_execute_tool_set_buyer_targets_updates_target_and_walkaway(
+    adb, async_buyer_user
+):
+    """set_buyer_targets writes buyer target fields only; applied_tools reports set_buyer_targets."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(
+        session_id=session.id,
+        vehicle_id=vehicle.id,
+        listing_price=40000,
+        current_offer=39500,
+    )
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    result = await execute_tool(
+        "set_buyer_targets",
+        {"your_target": 36000, "walk_away_price": 37500},
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+
+    tool_names = [tc["name"] for tc in result]
+    assert "set_buyer_targets" in tool_names
+    assert deal.your_target == 36000
+    assert deal.walk_away_price == 37500
+    # Pre-existing dealer-side fields must NOT be touched by set_buyer_targets.
+    assert deal.listing_price == 40000
+    assert deal.current_offer == 39500
+
+
+async def test_execute_tool_set_buyer_targets_rejects_out_of_range(
+    adb, async_buyer_user
+):
+    """set_buyer_targets shares update_deal_numbers validation (range, type)."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    with pytest.raises(ToolValidationError, match="cannot be negative"):
+        await execute_tool(
+            "set_buyer_targets",
+            {"your_target": -1000},
+            TurnContext.create(session=session, deal_state=deal_state, db=adb),
+        )
+
+
+async def test_execute_tool_set_buyer_targets_errors_without_active_deal(
+    adb, async_buyer_user
+):
+    """set_buyer_targets is deal-scoped — no active deal is a validation error."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    with pytest.raises(ToolValidationError, match="no target deal"):
+        await execute_tool(
+            "set_buyer_targets",
+            {"your_target": 30000},
+            TurnContext.create(session=session, deal_state=deal_state, db=adb),
+        )
+
+
 async def test_execute_tool_rejects_negative_listing_price(adb, async_buyer_user):
     """Negative deal numbers fail semantic validation before DB write."""
     from app.models.session import ChatSession
@@ -503,3 +594,234 @@ def test_validate_deal_numbers_skips_deal_id_and_none():
     _validate_update_deal_numbers(
         {"deal_id": "some-id", "listing_price": None, "msrp": 30000}
     )  # should not raise
+
+
+# ─── active-deal resolution invariants ───
+
+
+async def test_get_active_deal_falls_back_to_sole_deal(adb, async_buyer_user):
+    """When active_deal_id is None but exactly one deal exists, promote it."""
+    from app.models.session import ChatSession
+    from app.services.deal_state import get_active_deal
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
+    adb.add(deal)
+    await adb.flush()
+    # Intentionally leave active_deal_id unset — this is the bug scenario.
+    assert deal_state.active_deal_id is None
+
+    resolved = await get_active_deal(deal_state, adb)
+
+    assert resolved is not None
+    assert resolved.id == deal.id
+    # Promotion persists so subsequent calls don't re-run the fallback scan.
+    assert deal_state.active_deal_id == deal.id
+
+
+async def test_get_active_deal_returns_none_when_multiple_deals_unambiguated(
+    adb, async_buyer_user
+):
+    """With 2+ deals and no active set, caller must pick — don't auto-promote."""
+    from app.models.session import ChatSession
+    from app.services.deal_state import get_active_deal
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+    vehicle1 = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    vehicle2 = Vehicle(session_id=session.id, role=VehicleRole.CANDIDATE)
+    adb.add_all([vehicle1, vehicle2])
+    await adb.flush()
+    adb.add_all(
+        [
+            Deal(session_id=session.id, vehicle_id=vehicle1.id),
+            Deal(session_id=session.id, vehicle_id=vehicle2.id),
+        ]
+    )
+    await adb.flush()
+
+    resolved = await get_active_deal(deal_state, adb)
+
+    assert resolved is None
+    assert deal_state.active_deal_id is None  # not auto-picked
+
+
+async def test_set_vehicle_promotes_new_deal_when_active_is_unset(
+    adb, async_buyer_user
+):
+    """If active_deal_id is None when a second deal is created, promote it."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+    # Simulate the broken state: a deal exists but is not active.
+    orphan_vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(orphan_vehicle)
+    await adb.flush()
+    orphan_deal = Deal(session_id=session.id, vehicle_id=orphan_vehicle.id)
+    adb.add(orphan_deal)
+    await adb.flush()
+    assert deal_state.active_deal_id is None
+
+    # Add a second vehicle via set_vehicle — its auto-created deal should be
+    # promoted to active so the invariant holds.
+    result = await execute_tool(
+        "set_vehicle",
+        {"role": "candidate", "make": "Ford", "model": "F-250", "year": 2024},
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+    create_call = next(call for call in result if call["name"] == "create_deal")
+    assert create_call["args"]["make_active"] is True
+    assert deal_state.active_deal_id == create_call["args"]["deal_id"]
+
+
+async def test_remove_vehicle_promotes_sole_remaining_deal(adb, async_buyer_user):
+    """After removing the active vehicle, sole remaining deal auto-promotes."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+    v_active = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    v_keep = Vehicle(session_id=session.id, role=VehicleRole.CANDIDATE)
+    adb.add_all([v_active, v_keep])
+    await adb.flush()
+    d_active = Deal(session_id=session.id, vehicle_id=v_active.id)
+    d_keep = Deal(session_id=session.id, vehicle_id=v_keep.id)
+    adb.add_all([d_active, d_keep])
+    await adb.flush()
+    deal_state.active_deal_id = d_active.id
+
+    await execute_tool(
+        "remove_vehicle",
+        {"vehicle_id": v_active.id},
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+
+    assert deal_state.active_deal_id == d_keep.id
+
+
+async def test_update_deal_custom_numbers_replaces_custom_numbers_list(
+    adb, async_buyer_user
+):
+    """update_deal_custom_numbers replaces the full custom_numbers list on the active deal."""
+    from app.models.session import ChatSession
+    from sqlalchemy import select
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+    vehicle = Vehicle(session_id=session.id, role=VehicleRole.PRIMARY)
+    adb.add(vehicle)
+    await adb.flush()
+    deal = Deal(session_id=session.id, vehicle_id=vehicle.id)
+    adb.add(deal)
+    await adb.flush()
+    deal_state.active_deal_id = deal.id
+
+    rows = [
+        {"label": "Doc fee", "value": "$899", "highlight": "neutral"},
+        {"label": "Dealer prep fee", "value": "$1,995", "highlight": "bad"},
+    ]
+    result = await execute_tool(
+        "update_deal_custom_numbers",
+        {"rows": rows},
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+
+    assert [call["name"] for call in result] == ["update_deal_custom_numbers"]
+    assert result[0]["args"]["rows"] == rows
+
+    refreshed = (await adb.execute(select(Deal).where(Deal.id == deal.id))).scalar_one()
+    assert refreshed.custom_numbers == rows
+
+    # Subsequent call with a different list replaces rather than appending.
+    next_rows = [{"label": "Tax", "value": "$3,200"}]
+    await execute_tool(
+        "update_deal_custom_numbers",
+        {"rows": next_rows},
+        TurnContext.create(session=session, deal_state=deal_state, db=adb),
+    )
+    refreshed = (await adb.execute(select(Deal).where(Deal.id == deal.id))).scalar_one()
+    # "Tax" entry survives; highlight wasn't passed so it's not on the row.
+    assert refreshed.custom_numbers == [{"label": "Tax", "value": "$3,200"}]
+
+
+async def test_update_deal_custom_numbers_errors_without_active_deal(
+    adb, async_buyer_user
+):
+    """Deal-scoped validation blocks custom-numbers update when no deal is resolvable."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+
+    with pytest.raises(ToolValidationError, match="no target deal"):
+        await execute_tool(
+            "update_deal_custom_numbers",
+            {"rows": [{"label": "Doc fee", "value": "$899"}]},
+            TurnContext.create(session=session, deal_state=deal_state, db=adb),
+        )
+
+
+async def test_deal_scoped_tool_errors_when_no_deal_exists(adb, async_buyer_user):
+    """All deal-scoped tools must surface a ToolValidationError, not silent no-op."""
+    from app.models.session import ChatSession
+
+    session = ChatSession(user_id=async_buyer_user.id, title="Test")
+    adb.add(session)
+    await adb.flush()
+    deal_state = DealState(session_id=session.id)
+    adb.add(deal_state)
+    await adb.flush()
+    # No deals in this session at all.
+
+    for tool_name, tool_input in (
+        ("update_deal_numbers", {"current_offer": 30000}),
+        ("update_deal_red_flags", {"flags": []}),
+        (
+            "update_deal_information_gaps",
+            {"gaps": [{"label": "x", "reason": "y", "priority": "high"}]},
+        ),
+        (
+            "update_scorecard",
+            {
+                "price": "green",
+                "financing": "green",
+                "trade_in": "green",
+                "fees": "green",
+            },
+        ),
+    ):
+        with pytest.raises(ToolValidationError, match="no target deal"):
+            await execute_tool(
+                tool_name,
+                tool_input,
+                TurnContext.create(session=session, deal_state=deal_state, db=adb),
+            )

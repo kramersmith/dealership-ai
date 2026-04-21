@@ -164,6 +164,17 @@ class AiCardPriority(StrEnum):
     LOW = "low"
 
 
+class NumberHighlight(StrEnum):
+    """Row-level highlight on numbers/custom_numbers panel cards."""
+
+    GOOD = "good"
+    BAD = "bad"
+    NEUTRAL = "neutral"
+
+
+NUMBER_HIGHLIGHT_VALUES: frozenset[str] = frozenset(h.value for h in NumberHighlight)
+
+
 class IdentityConfirmationStatus(StrEnum):
     UNCONFIRMED = "unconfirmed"
     CONFIRMED = "confirmed"

@@ -6,6 +6,7 @@ from app.models.enums import (
     GapPriority,
     HealthStatus,
     NegotiationStance,
+    NumberHighlight,
     RedFlagSeverity,
     ScoreStatus,
     VehicleRole,
@@ -20,7 +21,17 @@ CHAT_ONLY_TOOL_NAMES: frozenset[str] = frozenset()
 CHAT_TOOLS: list[dict] = [
     {
         "name": "set_vehicle",
-        "description": "Create or update a vehicle. Include vehicle_id to update existing, omit to create new. Only extract from user messages — never from assistant suggestions.",
+        "description": (
+            "Create or update a vehicle the buyer is considering. Call when the buyer names a vehicle by "
+            "year/make/model/trim or supplies a VIN. Pass vehicle_id to update an existing vehicle with "
+            "new details; omit vehicle_id to create a new vehicle. When the buyer later supplies specs — "
+            "trim ('Lariat'), engine ('7.3 V8 gas', '6.7 Power Stroke diesel'), cab_style, bed_length, "
+            "color, or corrected mileage — pass vehicle_id along with only the new/changed fields so "
+            "those specs land on the vehicle record. When the buyer gives a VIN alone, persist the VIN "
+            "only — do not infer year, make, model, trim, or engine from it. Do not call for casual "
+            "mentions ('my neighbor has a Tesla') or for vehicles the assistant suggested but the buyer "
+            "has not confirmed."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -48,7 +59,13 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "create_deal",
-        "description": "Create or update a deal. Only use when same vehicle is discussed at a DIFFERENT dealer.",
+        "description": (
+            "Create a deal (vehicle + dealer + negotiation context) or update an existing deal's dealer "
+            "name or phase. set_vehicle auto-creates a deal the first time it runs for a primary or "
+            "candidate vehicle, so normally you don't need this. Call this explicitly when the same "
+            "vehicle is being shopped at a different dealer, or when updating dealer_name or phase on an "
+            "existing deal."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -75,7 +92,15 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_deal_numbers",
-        "description": "Update financial figures on the active deal (or specified deal_id). Only include fields that changed.",
+        "description": (
+            "Update the typed financial fields on the active deal (or specified deal_id). Call whenever "
+            "the buyer states a listing/asking price, current offer, MSRP, APR, loan term, monthly payment, "
+            "down payment, or trade-in value. Only include fields that changed. listing_price and "
+            "current_offer are pre-tax/pre-fee — never the financed total (e.g. '$35,900 with taxes included' "
+            "on a $34k listing means listing_price=34000, not 35900). "
+            "For the buyer's own target or walk-away price, use set_buyer_targets instead. "
+            "For fees, add-ons, warranty cost, tax, or rebates, use update_deal_custom_numbers instead."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -88,14 +113,6 @@ CHAT_TOOLS: list[dict] = [
                 "listing_price": {
                     "type": "number",
                     "description": "Advertised price BEFORE taxes/fees. NOT the financed total.",
-                },
-                "your_target": {
-                    "type": "number",
-                    "description": "Buyer's ideal purchase price.",
-                },
-                "walk_away_price": {
-                    "type": "number",
-                    "description": "Max the buyer will pay.",
                 },
                 "current_offer": {
                     "type": "number",
@@ -110,8 +127,81 @@ CHAT_TOOLS: list[dict] = [
         },
     },
     {
+        "name": "set_buyer_targets",
+        "description": (
+            "Persist the buyer's stated negotiation targets — their target price (what they'd like to "
+            "pay) and/or walk-away price (the max they'll go to). Call ONLY when the buyer has explicitly "
+            "stated these numbers in their own words ('my target is $X', 'I want to pay around $X', "
+            "'I'll walk at $Y', 'my max is $Y'). Do not call from your own recommendations in the reply "
+            "text — recommending a target or walk-away in chat does not authorize you to persist it. "
+            "Include only the field(s) the buyer actually stated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deal_id": {
+                    "type": "string",
+                    "description": "Defaults to active deal if omitted.",
+                },
+                "your_target": {"type": "number"},
+                "walk_away_price": {"type": "number"},
+            },
+        },
+    },
+    {
+        "name": "update_deal_custom_numbers",
+        "description": (
+            "Replace the full list of deal-specific custom number rows for the Numbers panel card. "
+            "Use this for deal figures that do not fit the typed fields in update_deal_numbers: "
+            "doc fees, dealer prep/add-ons, GAP insurance, extended warranty cost, registration/title, "
+            "tax totals, trade-in payoff, warranty remaining, dealer discount, rebates, AND market "
+            "reference values the buyer cites or pastes (CARFAX retail value, KBB / Edmunds estimates, "
+            "appraisal numbers, comparable listings) so the buyer can see asking-vs-retail side by side "
+            "on the Numbers card. "
+            'Format the value as a display string (e.g. "$1,995", "72 mo", "6.25%") — the '
+            "renderer does not reformat it. Use highlight='bad' for fabricated/predatory charges "
+            "(e.g. dealer prep fee), 'good' for favorable figures (e.g. rebates), 'neutral' otherwise. "
+            "Send every row every time — this replaces the list."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deal_id": {
+                    "type": "string",
+                    "description": "Defaults to active deal if omitted.",
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "Short label (e.g. 'Doc fee', 'Dealer prep fee').",
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": "Pre-formatted display string (e.g. '$1,995').",
+                            },
+                            "highlight": {
+                                "type": "string",
+                                "enum": [v.value for v in NumberHighlight],
+                            },
+                        },
+                        "required": ["label", "value"],
+                    },
+                },
+            },
+            "required": ["rows"],
+        },
+    },
+    {
         "name": "update_deal_phase",
-        "description": "Update the deal phase when it has progressed.",
+        "description": (
+            "Advance the deal's pipeline phase. Call when the beat moves the deal forward — research → "
+            "initial_contact, test_drive → negotiation, negotiation → financing, financing → closing, or "
+            "the buyer explicitly walks away. Do not regress the phase backward."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -125,7 +215,11 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_scorecard",
-        "description": "Update deal quality scores. Only include scores that changed.",
+        "description": (
+            "Update deal quality scores (price, financing, trade_in, fees, overall — each green/yellow/red). "
+            "Call whenever deal numbers, red flags, or information gaps shift materially. Batch with "
+            "update_deal_health so the dashboard stays consistent. Only include scores that changed."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -156,10 +250,12 @@ CHAT_TOOLS: list[dict] = [
     {
         "name": "update_deal_health",
         "description": (
-            "Update the overall deal health assessment. Health summary must reference actual data, "
-            "recommendation must be specific. If the buyer pasted CARFAX/AutoCheck/history text in chat, "
-            "the summary must reflect that evidence — do not claim history is missing just because "
-            "intelligence.history_report (API) is empty."
+            "Update the overall deal health assessment (status + summary + recommendation). Call whenever "
+            "numbers, flags, or gaps shift — health needs to stay current with the rest of the dashboard. "
+            "Ground summary and recommendation in the buyer's actual data; recommendation should be specific "
+            "('Counter at $31,500'), not generic ('Try negotiating'). When the buyer has pasted CARFAX, "
+            "AutoCheck, or dealer history text in chat, treat that as history evidence — don't claim history "
+            "is missing just because the API's intelligence.history_report is empty."
         ),
         "input_schema": {
             "type": "object",
@@ -186,7 +282,14 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_deal_red_flags",
-        "description": "Replace the full list of deal-specific red flags. Missing info is NEVER a red flag — use information gaps for that.",
+        "description": (
+            "Replace the full list of deal-specific red flags (send every flag every time). Call when a new "
+            "problem surfaces (unusually high APR, fabricated/hidden fee, dealer pressure tactic, a number "
+            "that changed from earlier, pasted history revealing a concern) or when a prior flag no longer "
+            "applies and should be removed. Each flag must reference specific data from the conversation — "
+            "not generic warnings. Missing information is never a red flag — use update_deal_information_gaps "
+            "for that."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -211,7 +314,12 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_session_red_flags",
-        "description": "Replace the full list of session/buyer-level red flags.",
+        "description": (
+            "Replace the full list of buyer-level red flags that aren't tied to one specific deal "
+            "(stretched-term borrowing pattern, broad pressure behavior, identity doc mismatches, etc.). "
+            "Call when the session-level pattern changes. For deal-specific problems, use "
+            "update_deal_red_flags instead."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -235,7 +343,12 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_deal_information_gaps",
-        "description": "Replace the full list of deal-specific missing information.",
+        "description": (
+            "Replace the full list of deal-specific missing information (send every gap every time). "
+            "Information gaps are data that would improve the assessment — asking price, mileage, engine, "
+            "trim, pre-approval status, dealer name, etc. Call when a gap opens, a gap fills, or the buyer "
+            "narrows/resolves the underlying question. Missing info is a gap, not a red flag."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -260,7 +373,12 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_session_information_gaps",
-        "description": "Replace the full list of session-level missing information.",
+        "description": (
+            "Replace the full list of session-level missing information (credit range, budget, buyer "
+            "context that spans deals). Call when session-level data arrives, or when a stale gap is "
+            "satisfied by structured state (e.g. listing_price is now set, so 'we need a listing price' "
+            "can be removed). For deal-specific gaps, use update_deal_information_gaps."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -284,7 +402,12 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_deal_comparison",
-        "description": "Update deal comparison when 2+ deals exist and comparison has materially changed.",
+        "description": (
+            "Update the side-by-side comparison between 2+ deals when the comparison frame has materially "
+            "changed (new numbers on one side, a new red flag, a new trade-off). Use highlights to surface "
+            "the decisive differences per row and mark which deal wins each row. Do not call when only one "
+            "deal is in play."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -321,12 +444,16 @@ CHAT_TOOLS: list[dict] = [
         "name": "update_negotiation_context",
         "description": (
             "Session-scoped negotiation context for the buyer-visible stance + situation strip above the "
-            "insights panel (not tied to active_deal_id). Update when offers, location, pasted history "
-            "(CARFAX/AutoCheck), mileage pace, commercial use, recalls/liens, or next checks change. "
-            "When 2+ shopping vehicles/deals are in play and you update assessment on any deal, refresh "
-            "this in the same batch so situation describes the comparison frame, not only the last "
-            "single-vehicle CARFAX summary. Preserve fields that still apply; refresh situation, "
-            "key_numbers, and pending_actions so the strip matches red flags and gaps."
+            "insights panel (not tied to active_deal_id). Call this on EVERY turn where the buyer "
+            "narrated a moment of the negotiation — what the dealer said or did, the buyer's response, "
+            "a new concern, an emerging next step — even if no hard fact (price, VIN, mileage) changed. "
+            "The beat itself is the update: situation must match the current moment, not the prior turn. "
+            "Also update when offers, location, pasted history (CARFAX/AutoCheck), mileage pace, "
+            "commercial use, recalls/liens, or next checks change. When 2+ shopping vehicles/deals are "
+            "in play and you update assessment on any deal, refresh this in the same batch so situation "
+            "describes the comparison frame, not only the last single-vehicle summary. Preserve fields "
+            "that still apply; refresh situation, key_numbers, and pending_actions so the strip matches "
+            "the conversation."
         ),
         "input_schema": {
             "type": "object",
@@ -397,8 +524,13 @@ CHAT_TOOLS: list[dict] = [
     {
         "name": "update_checklist",
         "description": (
-            "Replace the full buyer checklist (send every item). Mark history-report tasks done when the "
-            "buyer pasted CARFAX/AutoCheck or equivalent for the focused vehicle — not only after the in-app VIN history check."
+            "Replace the full buyer checklist (send every item). Call this on any turn where a task was "
+            "implicitly completed, a new task emerged from the conversation, or an existing item would "
+            "now be out of date — not only when pasted history reports arrive. Mark history-report "
+            "tasks done when the buyer pasted CARFAX/AutoCheck or equivalent for the focused vehicle — "
+            "not only after the in-app VIN history check. The checklist renders directly to the panel, "
+            "so staleness is visible; refresh it whenever the to-do list would no longer match the state "
+            "of the negotiation."
         ),
         "input_schema": {
             "type": "object",
@@ -420,7 +552,11 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "update_buyer_context",
-        "description": "Update the buyer's situation context when it changes.",
+        "description": (
+            "Update the buyer's situation context when it shifts between researching (from home), "
+            "reviewing_deal (considering a specific offer), or at_dealership (on-site). The greeting, "
+            "stance defaults, and advice intensity all key off this."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -434,7 +570,12 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "switch_active_deal",
-        "description": "Switch which deal is active. Only when user wants to discuss a different deal.",
+        "description": (
+            "Switch which deal is the active focus. Call when the buyer explicitly picks one option among "
+            "known vehicles ('I prefer the Tacoma', 'I'll go with that one', 'the red truck is out'), or "
+            "references a specific VIN/deal as their choice. Do not call while the buyer is still actively "
+            "comparing."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -445,7 +586,11 @@ CHAT_TOOLS: list[dict] = [
     },
     {
         "name": "remove_vehicle",
-        "description": "Remove a vehicle and its associated deals. Only when user explicitly asks to remove a vehicle.",
+        "description": (
+            "Remove a vehicle and its associated deals from the session. Call only when the buyer "
+            "explicitly asks to drop a vehicle from their consideration set ('forget about the F-150', "
+            "'I'm no longer looking at the Silverado'). Never call unilaterally to 'clean up' vehicles."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

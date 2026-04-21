@@ -437,6 +437,7 @@ erDiagram
         int loan_term_months
         float down_payment
         float trade_in_value
+        json custom_numbers
         string score_price
         string score_financing
         string score_trade_in
@@ -587,6 +588,7 @@ erDiagram
 | `loan_term_months` | Integer  | Nullable                                  |                             |
 | `down_payment`     | Float    | Nullable                                  |                             |
 | `trade_in_value`   | Float    | Nullable                                  |                             |
+| `custom_numbers`   | JSON     | Nullable                                  | Free-form number rows for the Numbers panel card; replaced as a full list via `update_deal_custom_numbers` (ADR 0026) |
 | `score_price`      | String   | Nullable                                  | `red`, `yellow`, or `green` |
 | `score_financing`  | String   | Nullable                                  | `red`, `yellow`, or `green` |
 | `score_trade_in`   | String   | Nullable                                  | `red`, `yellow`, or `green` |

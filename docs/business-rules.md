@@ -233,8 +233,9 @@ Updates the financial dashboard when prices, payments, rates, or financial terms
 | `msrp` | number | Manufacturer's suggested retail price |
 | `invoice_price` | number | Dealer invoice price |
 | `listing_price` | number | The price the vehicle is listed or advertised for, before negotiation or fees |
-| `your_target` | number | Buyer's target price |
-| `walk_away_price` | number | Price above which the buyer should walk away |
+| `your_target` | number | Buyer's target price (written only via the narrow-scope `set_buyer_targets` tool — must be an explicit buyer-stated value, never the model's recommendation; ADR 0026) |
+| `walk_away_price` | number | Price above which the buyer should walk away (written only via `set_buyer_targets`; see above) |
+| `custom_numbers` | JSON array | Free-form number rows (fees, add-ons, tax, rebates, retail references) shown on the Numbers panel card; replaced as a full list via the `update_deal_custom_numbers` tool (ADR 0026) |
 | `current_offer` | number | Current negotiation price on the table |
 | `monthly_payment` | number | Monthly payment amount |
 | `apr` | number | Annual percentage rate |
@@ -519,7 +520,7 @@ Chat responses are streamed via Server-Sent Events (SSE) with turn lifecycle, op
 
 ### Step Loop Architecture
 
-The backend uses a bounded step loop for the chat phase, followed by an optional detached follow-up request for reconcile/panel work when insights are live:
+The backend uses a bounded step loop for the chat phase, followed by an optional detached follow-up request for panel work when insights are live (the reconcile LLM pass was removed per ADR 0026):
 
 1. Claude streams text and accumulates tool-use blocks in the current step
 2. Tool calls are executed after the step finishes streaming

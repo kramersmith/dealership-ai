@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.deal import Deal
 from app.models.deal_state import DealState
 from app.models.enums import (
+    NUMBER_HIGHLIGHT_VALUES,
     BuyerContext,
     DealPhase,
     HealthStatus,
@@ -130,17 +131,43 @@ async def _build_assessment_vehicle_dict(vehicle: Vehicle, db: AsyncSession) -> 
 
 
 async def get_active_deal(deal_state: DealState, db: AsyncSession) -> Deal | None:
-    """Get the active deal for the current deal state."""
-    if not deal_state.active_deal_id:
-        return None
-    result = await db.execute(select(Deal).where(Deal.id == deal_state.active_deal_id))
-    return result.scalar_one_or_none()
+    """Get the active deal for the current deal state.
+
+    When `active_deal_id` is set, looks it up. When it's unset but the session
+    has exactly one deal, promotes that deal to active (persists the fix) and
+    returns it. Returns None only when there are zero deals, or when there are
+    multiple deals and no active is selected (ambiguous — caller must pick).
+    """
+    if deal_state.active_deal_id:
+        result = await db.execute(
+            select(Deal).where(Deal.id == deal_state.active_deal_id)
+        )
+        return result.scalar_one_or_none()
+
+    # Sole-deal fallback: when exactly one deal exists for this session, it is
+    # unambiguously the active deal. Persist so subsequent calls are direct.
+    deals_result = await db.execute(
+        select(Deal).where(Deal.session_id == deal_state.session_id)
+    )
+    deals = list(deals_result.scalars().all())
+    if len(deals) == 1:
+        sole_deal = deals[0]
+        deal_state.active_deal_id = sole_deal.id
+        logger.info(
+            "Auto-promoted sole deal %s to active for session %s",
+            sole_deal.id,
+            deal_state.session_id,
+        )
+        return sole_deal
+    return None
 
 
 _TOOL_TO_EXTRACTION_KEY: dict[str, str] = {
     "set_vehicle": "vehicle",
     "create_deal": "deal",
     "update_deal_numbers": "numbers",
+    "set_buyer_targets": "buyer_targets",
+    "update_deal_custom_numbers": "custom_numbers",
     "update_scorecard": "scorecard",
     "update_deal_health": "health",
     "update_deal_red_flags": "deal_red_flags",
@@ -315,14 +342,18 @@ async def apply_extraction(
                 )
                 db.add(auto_deal)
                 await db.flush()
-                if deal_count_before == 0:
+                # Promote this deal to active when it's the first deal OR
+                # when no deal is currently active — invariant: if any deal
+                # exists, active_deal_id points to one.
+                make_active = deal_count_before == 0 or not deal_state.active_deal_id
+                if make_active:
                     deal_state.active_deal_id = auto_deal.id
                 logger.debug(
-                    "Auto-created deal %s for vehicle %s role=%s first_deal=%s",
+                    "Auto-created deal %s for vehicle %s role=%s make_active=%s",
                     auto_deal.id,
                     vehicle.id,
                     role,
-                    deal_count_before == 0,
+                    make_active,
                 )
                 applied_tools.append(
                     {
@@ -330,7 +361,7 @@ async def apply_extraction(
                         "args": {
                             "deal_id": auto_deal.id,
                             "vehicle_id": vehicle.id,
-                            "make_active": deal_count_before == 0,
+                            "make_active": make_active,
                         },
                     }
                 )
@@ -437,6 +468,101 @@ async def apply_extraction(
                 )
         else:
             logger.warning("update_deal_numbers: no active deal found")
+
+    if "buyer_targets" in extraction:
+        buyer_targets = extraction["buyer_targets"]
+        targets_deal_id = (
+            buyer_targets.get("deal_id") if isinstance(buyer_targets, dict) else None
+        )
+        if targets_deal_id:
+            deal = await _get_session_deal(db, deal_state.session_id, targets_deal_id)
+        else:
+            deal = await get_active_deal(deal_state, db)
+        if deal:
+            target_fields = ("your_target", "walk_away_price")
+            changed_target_fields = [
+                field
+                for field in target_fields
+                if field in buyer_targets
+                and getattr(deal, field) != buyer_targets[field]
+            ]
+            if not changed_target_fields:
+                logger.debug(
+                    "Skipped buyer targets update: deal=%s no changes", deal.id
+                )
+            else:
+                for field in changed_target_fields:
+                    setattr(deal, field, buyer_targets[field])
+                applied_tools.append(
+                    {
+                        "name": "set_buyer_targets",
+                        "args": {
+                            "deal_id": deal.id,
+                            **{
+                                field: buyer_targets[field]
+                                for field in changed_target_fields
+                            },
+                        },
+                    }
+                )
+                logger.debug(
+                    "Updated buyer targets: deal=%s, fields=%s",
+                    deal.id,
+                    changed_target_fields,
+                )
+        else:
+            logger.warning("set_buyer_targets: no active deal found")
+
+    if "custom_numbers" in extraction:
+        custom_data = extraction["custom_numbers"]
+        custom_deal_id = (
+            custom_data.get("deal_id") if isinstance(custom_data, dict) else None
+        )
+        if custom_deal_id:
+            deal = await _get_session_deal(db, deal_state.session_id, custom_deal_id)
+        else:
+            deal = await get_active_deal(deal_state, db)
+        if deal:
+            raw_rows = (
+                custom_data.get("rows", []) if isinstance(custom_data, dict) else []
+            )
+            next_rows: list[dict] = []
+            for raw in raw_rows or []:
+                if not isinstance(raw, dict):
+                    continue
+                label = raw.get("label")
+                value = raw.get("value")
+                if not isinstance(label, str) or not label.strip():
+                    continue
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                row: dict[str, object] = {
+                    "label": label.strip(),
+                    "value": value.strip(),
+                }
+                highlight = raw.get("highlight")
+                if highlight in NUMBER_HIGHLIGHT_VALUES:
+                    row["highlight"] = highlight
+                next_rows.append(row)
+            if _json_like_equal(deal.custom_numbers or [], next_rows):
+                logger.debug(
+                    "Skipped deal custom numbers update: deal=%s no changes", deal.id
+                )
+            else:
+                deal.custom_numbers = next_rows
+                applied_tools.append(
+                    {
+                        "name": "update_deal_custom_numbers",
+                        "args": {"deal_id": deal.id, "rows": next_rows},
+                    }
+                )
+                logger.debug(
+                    "Updated deal custom numbers: deal=%s, count=%d",
+                    deal.id,
+                    len(next_rows),
+                )
+        else:
+            logger.warning("update_deal_custom_numbers: no active deal found")
 
     if "scorecard" in extraction:
         scorecard_deal_id = extraction["scorecard"].get("deal_id")
@@ -715,6 +841,21 @@ async def apply_extraction(
                 await db.delete(deal)
             await db.delete(vehicle)
             await db.flush()
+            # Preserve invariant: if deals remain for this session, at least
+            # one is active. When active was just cleared, promote the sole
+            # remaining deal (unambiguous); with 2+ remaining, leave for the
+            # model to pick via switch_active_deal.
+            if not deal_state.active_deal_id:
+                remaining_result = await db.execute(
+                    select(Deal).where(Deal.session_id == deal_state.session_id)
+                )
+                remaining = list(remaining_result.scalars().all())
+                if len(remaining) == 1:
+                    deal_state.active_deal_id = remaining[0].id
+                    logger.info(
+                        "Auto-promoted sole remaining deal %s after vehicle removal",
+                        remaining[0].id,
+                    )
             applied_tools.append(
                 {
                     "name": "remove_vehicle",
@@ -801,6 +942,11 @@ async def deal_state_to_dict(deal_state: DealState, db: AsyncSession) -> dict:
                 "phase": deal.phase,
                 "numbers": {
                     field: getattr(deal, field) for field in DEAL_NUMBER_FIELDS
+                },
+                "custom_numbers": list(deal.custom_numbers or []),
+                "offer_history": {
+                    "first_offer": deal.first_offer,
+                    "pre_fi_price": deal.pre_fi_price,
                 },
                 "scorecard": {
                     "price": deal.score_price,

@@ -1,19 +1,23 @@
 # Insights Panel Card System
 
-**Last updated:** 2026-04-04
+**Last updated:** 2026-04-20
 
-This document defines the exact card kinds, render templates, priorities, and visual rules used by the AI-generated Insights Panel. The model selects exact card kinds and priorities; the backend canonicalizes them into a typed panel-card contract; the frontend renders them with fixed templates described here.
+This document defines the exact card kinds, render templates, priorities, and visual rules used by the AI-generated Insights Panel. Panel cards come from two sources merged before canonicalization: deterministic rendering from deal state for most kinds, and a narrow Sonnet synthesis for the three genuinely narrative kinds. The backend canonicalizes the union into a typed panel-card contract; the frontend renders them with fixed templates described here.
 
 ---
 
-## How It Works
+## How It Works (ADR 0026)
 
-1. The user chats with the AI advisor (Sonnet streams text)
-2. After the response, Haiku generates a set of panel cards based on the deal state and conversation
-3. The frontend renders each card using the templates below
-4. The AI controls **which exact cards** appear
-5. The backend canonicalizes each card into `kind`, `template`, `title`, `content`, and `priority`
-6. The frontend controls **how** each template looks
+1. The user chats with the AI advisor (Sonnet streams text). Main chat is the sole source of structured state updates via tool calls.
+2. After the assistant reply is persisted, a detached follow-up runs panel generation:
+   - **Deterministic render** — `panel_card_builder.py:build_rendered_panel_cards(deal_state_dict)` produces ~10 card kinds (`phase`, `numbers`, `warning`, `what_still_needs_confirming`, `checklist`, `your_leverage`, `vehicle`, `success`, `savings_so_far`, `notes`) from deal state with no LLM.
+   - **Narrow narrative synthesis** — a Sonnet call produces only the 3 genuinely narrative kinds: `dealer_read`, `next_best_move`, `if_you_say_yes`.
+3. Rendered + synthesized cards merge and flow through `canonicalize_panel_cards` + `_enforce_single_vehicle_focus_for_panel_cards`. On synthesis retry exhaustion the rendered cards are still delivered.
+4. The frontend renders each card using the templates below.
+5. The backend canonicalizes each card into `kind`, `template`, `title`, `content`, and `priority`.
+6. The frontend controls **how** each template looks.
+
+> The reconcile LLM pass was removed in ADR 0026. Panel kinds `comparison` and `trade_off` are no longer emitted — side-by-side comparisons render as markdown tables in chat (ADR 0018). The `phase` kind (stance + situation) is always first in the panel order.
 
 ## Contract
 
@@ -29,11 +33,12 @@ The model no longer invents freeform titles or chooses arbitrary templates.
 
 ### Exact Card Kinds
 
+- `phase` (stance strip — always first; rendered via `briefing` template with title "Status")
 - `vehicle`
 - `numbers`
 - `warning`
 - `notes`
-- `comparison`
+- `comparison` (no longer emitted to the panel — renders as markdown table in chat per ADR 0018)
 - `checklist`
 - `success`
 - `what_changed`
@@ -42,7 +47,7 @@ The model no longer invents freeform titles or chooses arbitrary templates.
 - `your_leverage`
 - `next_best_move`
 - `if_you_say_yes`
-- `trade_off`
+- `trade_off` (no longer emitted to the panel — renders as markdown table in chat per ADR 0018)
 - `savings_so_far`
 
 ### Render Templates

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.models.enums import (
+    NUMBER_HIGHLIGHT_VALUES,
     AiCardKind,
     AiCardPriority,
     AiCardTemplate,
@@ -212,7 +213,7 @@ def _normalize_number_row(value: Any) -> dict[str, Any] | None:
         normalized["field"] = field
 
     highlight = _as_string(value.get("highlight"))
-    if highlight in {"good", "bad", "neutral"}:
+    if highlight in NUMBER_HIGHLIGHT_VALUES:
         normalized["highlight"] = highlight
 
     if isinstance(value.get("secondary"), bool):

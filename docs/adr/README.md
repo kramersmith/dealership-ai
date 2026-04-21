@@ -35,3 +35,4 @@ Each ADR follows the template in `0000-template.md`. ADRs are numbered sequentia
 | [0023](0023-stop-generation-cancellation-contract.md) | Stop generation cancellation contract | Accepted | 2026-04 |
 | [0024](0024-panel-update-policy-and-user-settings.md) | Centralized panel update policy and user settings | Accepted | 2026-04 |
 | [0025](0025-detached-insights-followup-jobs-and-paused-tool-gating.md) | Detached insights follow-up jobs and paused buyer-tool gating | Accepted | 2026-04 |
+| [0026](0026-panel-templating-and-reconcile-removal.md) | Panel templating + reconcile removal + complete-reply-first | Accepted | 2026-04 |

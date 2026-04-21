@@ -143,9 +143,6 @@ def test_panel_refresh_updates_session_usage_ledger(client, db, monkeypatch):
             yield ""
 
     monkeypatch.setattr(
-        "app.services.insights_followup.stream_chat_loop", _fake_reconcile_noop
-    )
-    monkeypatch.setattr(
         "app.services.insights_followup.stream_ai_panel_cards_with_usage",
         _fake_stream,
     )
@@ -247,9 +244,6 @@ def test_panel_refresh_reruns_even_after_prior_followup_success(
             yield ""
 
     monkeypatch.setattr(
-        "app.services.insights_followup.stream_chat_loop", _fake_reconcile_noop
-    )
-    monkeypatch.setattr(
         "app.services.insights_followup.stream_ai_panel_cards_with_usage",
         _fake_stream,
     )
@@ -335,9 +329,6 @@ def test_panel_refresh_still_runs_when_user_mode_is_paused(client, db, monkeypat
         if False:
             yield ""
 
-    monkeypatch.setattr(
-        "app.services.insights_followup.stream_chat_loop", _fake_reconcile_noop
-    )
     monkeypatch.setattr(
         "app.services.insights_followup.stream_ai_panel_cards_with_usage",
         _fake_stream,
