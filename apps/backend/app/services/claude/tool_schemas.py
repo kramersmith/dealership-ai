@@ -347,7 +347,9 @@ CHAT_TOOLS: list[dict] = [
             "Replace the full list of deal-specific missing information (send every gap every time). "
             "Information gaps are data that would improve the assessment — asking price, mileage, engine, "
             "trim, pre-approval status, dealer name, etc. Call when a gap opens, a gap fills, or the buyer "
-            "narrows/resolves the underlying question. Missing info is a gap, not a red flag."
+            "narrows/resolves the underlying question. Missing info is a gap, not a red flag. "
+            "The insights panel shows gaps in the same Checklist card as playbook steps (merged display); "
+            "avoid duplicating the same line in update_checklist — keep unknowns here and actionable steps there."
         ),
         "input_schema": {
             "type": "object",
@@ -530,7 +532,9 @@ CHAT_TOOLS: list[dict] = [
             "tasks done when the buyer pasted CARFAX/AutoCheck or equivalent for the focused vehicle — "
             "not only after the in-app VIN history check. The checklist renders directly to the panel, "
             "so staleness is visible; refresh it whenever the to-do list would no longer match the state "
-            "of the negotiation."
+            "of the negotiation. Information gaps use update_deal_information_gaps / update_session_information_gaps; "
+            "the panel merges gaps and checklist into one card for the buyer, but these tools stay separate — "
+            "dedupe conceptually so the same line is not maintained in both."
         ),
         "input_schema": {
             "type": "object",

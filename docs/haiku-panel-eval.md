@@ -268,7 +268,7 @@ Before committing to priority 1 (panel → templated rendering), walked each of 
 | **phase** (stance strip) | `negotiation_context.stance` + `.situation` | Direct pass-through. Situation is already a one-sentence string. |
 | **numbers** | `deals[].numbers` + `deals[].scorecard` | Label map (field → display name); `highlight` from scorecard thresholds. |
 | **warning** | `red_flags[]` (`{id, severity, message}`) | Schema already matches. `action` field rarely used; extend red_flag schema if ever needed. |
-| **what_still_needs_confirming** | `information_gaps[]` (`{label, reason, priority}`) | Map `label` + `done: false`. |
+| **checklist** (`open_questions`) | `information_gaps[]` (`{label, reason, priority}`) | Map `label` + optional `priority` (no `done`; merged into the same `checklist` card as playbook `items`). |
 | **checklist** | `deal_state.checklist[]` (`{label, done}`) | Identity mapping. |
 | **your_leverage** | `negotiation_context.leverage[]` (array of short strings) | Wrap strings as bullets. |
 | **success** | `deals[].numbers` (MSRP − current_offer, trade-in uplift) | Compute. |
@@ -364,14 +364,14 @@ Final panel had all eight kinds expected for an active-negotiation turn with a r
 - `[SYNTH] next_best_move` (high) — "Walk out — but before you leave, say: \"The CARFAX shows a rear-end collision in 2023...\""
 - `[RENDER] your_leverage` — "Dealer verbally misrepresented accident history — strong walkaway justification"
 - `[RENDER] vehicle` — 2023 Ford F-250 Super Duty, VIN first 10 chars shown
-- `[RENDER] what_still_needs_confirming` — 1 item
+- `[RENDER] checklist` — `open_questions` and/or `items` as applicable
 - `[RENDER] checklist` — 6 items
 
 Quality parity with prior LLM-only output on every render-able kind; synthesis kinds retain their narrative punch.
 
 ### Bugs caught during the spot-check
 
-- **Notes card was rendering information_gaps as if they were known facts.** Gap labels like "Year, trim & engine" appeared in the notes card on a turn with no structured deal data — but gaps are unknowns, not durable facts. Fixed: notes card now holds only dealer identity and offer-history facts (first_offer / pre_fi_price). Unknowns go exclusively to `what_still_needs_confirming`. Test added.
+- **Notes card was rendering information_gaps as if they were known facts.** Gap labels like "Year, trim & engine" appeared in the notes card on a turn with no structured deal data — but gaps are unknowns, not durable facts. Fixed: notes card now holds only dealer identity and offer-history facts (first_offer / pre_fi_price). Unknowns surface under the merged `checklist` card as `open_questions`. Test added.
 
 ### What stays deferred
 

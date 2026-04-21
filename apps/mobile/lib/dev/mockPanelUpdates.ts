@@ -35,9 +35,7 @@ function mockKind(type: AiCardTemplate, title: string): AiCardKind {
   if (type === 'notes') return 'notes'
   if (type === 'comparison') return normalizedTitle === 'trade-off' ? 'trade_off' : 'comparison'
   if (type === 'checklist') {
-    return normalizedTitle.includes('post-purchase') || normalizedTitle.includes('research')
-      ? 'checklist'
-      : 'what_still_needs_confirming'
+    return 'checklist'
   }
   if (type === 'success') return normalizedTitle === 'deal closed' ? 'success' : 'savings_so_far'
   if (type === 'tip') return 'your_leverage'
@@ -64,7 +62,6 @@ function templateForMockKind(kind: AiCardKind): AiCardTemplate {
     case 'trade_off':
       return 'comparison'
     case 'checklist':
-    case 'what_still_needs_confirming':
       return 'checklist'
     case 'success':
     case 'savings_so_far':

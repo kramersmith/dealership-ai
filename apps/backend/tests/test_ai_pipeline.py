@@ -1093,7 +1093,7 @@ async def test_stream_ai_panel_cards_with_usage_canonicalizes_duplicates_and_app
         '{"kind":"numbers","content":{"rows":[{"label":"List","value":"$44,900"}]},"priority":"high"},'
         '{"kind":"notes","content":{"items":["One-owner claim is unverified"]},"priority":"normal"},'
         '{"kind":"your_leverage","content":{"body":"The repeated price cuts give you room to counter."},"priority":"high"},'
-        '{"kind":"what_still_needs_confirming","content":{"items":[{"label":"Ask for the auction disclosure","done":false}]},"priority":"high"},'
+        '{"kind":"checklist","content":{"open_questions":[{"label":"Ask for the auction disclosure"}]},"priority":"high"},'
         '{"kind":"vehicle","content":{"vehicle":{"year":2022,"make":"Ford","model":"F-250"}},"priority":"normal"}'
         "]"
     ]
@@ -1119,7 +1119,7 @@ async def test_stream_ai_panel_cards_with_usage_canonicalizes_duplicates_and_app
         "your_leverage",
         "notes",
         "vehicle",
-        "what_still_needs_confirming",
+        "checklist",
     ]
     assert (
         panel_done["cards"][0]["content"]["message"]

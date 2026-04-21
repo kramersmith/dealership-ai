@@ -91,7 +91,7 @@ sequenceDiagram
 
   opt Insights update mode = live
     Stream-->>Client: SSE panel_started
-    Note over Stream: Deterministic render for 10 card kinds (no LLM);
+    Note over Stream: Deterministic render for 9 card kinds (no LLM);
     Stream->>Claude: Narrow narrative synthesis for dealer_read / next_best_move / if_you_say_yes
     Stream-->>Client: SSE panel_done (merged + canonicalized cards)
   end

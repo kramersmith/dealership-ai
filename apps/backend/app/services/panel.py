@@ -421,7 +421,7 @@ def _enforce_single_vehicle_focus_for_panel_cards(
 
 GENERATE_AI_PANEL_SYNTHESIS_PROMPT = """You are generating the three NARRATIVE cards for a car-buying Insights Panel.
 
-The panel's vehicle, numbers, warning, checklist, notes, savings, what-still-needs-confirming, your-leverage, and stance cards are already rendered deterministically from structured deal state. Your only job is these three narrative kinds — the ones that require judgment or prose the renderer cannot produce.
+The panel's vehicle, numbers, warning, checklist (including merged open questions from information gaps), notes, savings, your-leverage, and stance cards are already rendered deterministically from structured deal state. Your only job is these three narrative kinds — the ones that require judgment or prose the renderer cannot produce.
 
 SOURCE OF TRUTH ORDER:
 1. negotiation_context

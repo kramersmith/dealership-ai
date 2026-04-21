@@ -205,3 +205,178 @@ def test_normalize_panel_card_phase_invalid_stance_defaults_to_researching() -> 
     assert normalized is not None
     assert normalized["content"]["stance"] == "researching"
     assert normalized["content"]["situation"] == "Still at the desk."
+
+
+def test_normalize_panel_card_checklist_open_questions_only() -> None:
+    normalized = normalize_panel_card(
+        {
+            "kind": "checklist",
+            "content": {
+                "open_questions": [
+                    {"label": "  Cab style  ", "priority": "high"},
+                ],
+            },
+            "priority": "normal",
+        }
+    )
+    assert normalized is not None
+    assert normalized["content"] == {
+        "open_questions": [{"label": "Cab style", "priority": "high"}],
+    }
+
+
+def test_normalize_panel_card_checklist_merged_open_questions_and_items() -> None:
+    normalized = normalize_panel_card(
+        {
+            "kind": "checklist",
+            "content": {
+                "open_questions": [{"label": "Lien docs"}],
+                "items": [{"label": "OTD in writing", "done": True}],
+            },
+            "priority": "normal",
+        }
+    )
+    assert normalized is not None
+    assert normalized["content"]["open_questions"] == [{"label": "Lien docs"}]
+    assert normalized["content"]["items"] == [{"label": "OTD in writing", "done": True}]
+
+
+def test_canonicalize_merges_two_checklist_cards_after_migration() -> None:
+    cards = [
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "priority": "normal",
+            "content": {
+                "open_questions": [{"label": "Lien proof"}],
+                "items": [{"label": "Get OTD in writing", "done": False}],
+            },
+        },
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "priority": "high",
+            "content": {
+                "open_questions": [{"label": "Cab style"}],
+                "items": [{"label": "Get OTD in writing", "done": True}],
+            },
+        },
+    ]
+    canonical = canonicalize_panel_cards(cards)
+    assert len(canonical) == 1
+    assert canonical[0]["kind"] == "checklist"
+    assert canonical[0]["priority"] == "high"
+    body = canonical[0]["content"]
+    assert [r["label"] for r in body["open_questions"]] == ["Lien proof", "Cab style"]
+    # First card wins duplicate playbook rows (same label).
+    assert body["items"] == [{"label": "Get OTD in writing", "done": False}]
+
+
+def test_canonicalize_merges_checklist_cards_case_insensitive_dedupe() -> None:
+    """Duplicate labels across two checklist cards should dedupe case-insensitively,
+    both within `items` and between `open_questions` and `items` (playbook wins)."""
+    cards = [
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "priority": "normal",
+            "content": {
+                "open_questions": [{"label": "Lien proof"}],
+                "items": [{"label": "Get OTD in writing", "done": False}],
+            },
+        },
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "priority": "normal",
+            "content": {
+                # Same label as first card's playbook, but cased differently — should be dropped.
+                "open_questions": [
+                    {"label": "GET OTD IN WRITING"},
+                    {"label": "Cab style"},
+                ],
+                # Playbook duplicate with different casing — first card wins.
+                "items": [{"label": "GET OTD IN WRITING", "done": True}],
+            },
+        },
+    ]
+    canonical = canonicalize_panel_cards(cards)
+    assert len(canonical) == 1
+    body = canonical[0]["content"]
+    assert body["items"] == [{"label": "Get OTD in writing", "done": False}]
+    # "GET OTD IN WRITING" open-question dropped because playbook covers it (case-insensitive).
+    assert [r["label"] for r in body["open_questions"]] == ["Lien proof", "Cab style"]
+
+
+def test_canonicalize_merges_checklist_cards_when_one_has_empty_content() -> None:
+    """A checklist card with empty/invalid content should still be collapsed with a populated one
+    without dropping the populated content or raising."""
+    cards = [
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "priority": "normal",
+            "content": {},
+        },
+        {
+            "kind": "checklist",
+            "template": "checklist",
+            "title": "Checklist",
+            "priority": "high",
+            "content": {
+                "items": [{"label": "Confirm OTD", "done": False}],
+            },
+        },
+    ]
+    canonical = canonicalize_panel_cards(cards)
+    assert len(canonical) == 1
+    assert canonical[0]["priority"] == "high"
+    assert canonical[0]["content"]["items"] == [{"label": "Confirm OTD", "done": False}]
+    assert "open_questions" not in canonical[0]["content"]
+
+
+def test_normalize_panel_card_checklist_neither_field_returns_none() -> None:
+    normalized = normalize_panel_card(
+        {
+            "kind": "checklist",
+            "content": {},
+            "priority": "normal",
+        }
+    )
+    assert normalized is None
+
+
+def test_normalize_panel_card_checklist_invalid_types_return_none() -> None:
+    # `items` and `open_questions` are not lists → treated as empty → no valid content → None.
+    normalized = normalize_panel_card(
+        {
+            "kind": "checklist",
+            "content": {"items": "not-a-list", "open_questions": 42},
+            "priority": "normal",
+        }
+    )
+    assert normalized is None
+
+
+def test_normalize_panel_card_rejects_retired_what_still_needs_confirming_kind() -> (
+    None
+):
+    """Historic panels persisted before ADR 0026's checklist merge had
+    `kind: "what_still_needs_confirming"`. That kind is no longer valid, so
+    re-normalization drops the card (acceptable for pre-production — persisted
+    panels on `Message.panel_cards` are served as-is and not re-normalized on read)."""
+    normalized = normalize_panel_card(
+        {
+            "kind": "what_still_needs_confirming",
+            "template": "checklist",
+            "title": "What Still Needs Confirming",
+            "content": {"items": [{"label": "Confirm doc fee", "done": False}]},
+            "priority": "normal",
+        }
+    )
+    assert normalized is None

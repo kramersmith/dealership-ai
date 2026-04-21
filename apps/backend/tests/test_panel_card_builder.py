@@ -316,7 +316,7 @@ def test_leverage_card_skipped_when_empty_list():
 
 
 def test_notes_card_holds_only_durable_known_facts():
-    """Notes must be KNOWN durable facts; unknowns belong in what_still_needs_confirming."""
+    """Notes must be KNOWN durable facts; unknowns belong in checklist open_questions."""
     deal = {
         "id": "deal-1",
         "dealer_name": "Sunrise Ford",
@@ -414,10 +414,10 @@ def test_trade_in_vehicle_also_renders():
     )
 
 
-# ─── what_still_needs_confirming ───
+# ─── merged checklist (open_questions + items) ───
 
 
-def test_confirming_card_includes_deal_and_session_gaps_deduped():
+def test_merged_checklist_gaps_only_uses_open_questions():
     deal = {
         "id": "deal-1",
         "phase": DealPhase.NEGOTIATION.value,
@@ -451,20 +451,17 @@ def test_confirming_card_includes_deal_and_session_gaps_deduped():
             ],
         )
     )
-    confirming = [
-        card
-        for card in cards
-        if card["kind"] == AiCardKind.WHAT_STILL_NEEDS_CONFIRMING.value
+    checklist_cards = [
+        card for card in cards if card["kind"] == AiCardKind.CHECKLIST.value
     ]
-    assert len(confirming) == 1
-    labels = [item["label"] for item in confirming[0]["content"]["items"]]
+    assert len(checklist_cards) == 1
+    content = checklist_cards[0]["content"]
+    assert "items" not in content
+    labels = [item["label"] for item in content["open_questions"]]
     assert labels == [
         "Confirm doc fee is not itemized",
         "Confirm pre-approval terms",
-    ]  # deduped
-
-
-# ─── checklist ───
+    ]  # deduped across deal + session gaps
 
 
 def test_checklist_card_pass_through_with_done_state():
@@ -483,6 +480,79 @@ def test_checklist_card_pass_through_with_done_state():
         {"label": "Pull VIN history", "done": True},
         {"label": "Verify warranty coverage", "done": False},
     ]
+    assert "open_questions" not in checklist[0]["content"]
+
+
+def test_merged_checklist_combines_gaps_and_playbook():
+    deal = {
+        "id": "deal-1",
+        "phase": DealPhase.NEGOTIATION.value,
+        "numbers": {},
+        "scorecard": {},
+        "health": {},
+        "red_flags": [],
+        "information_gaps": [
+            {"label": "Lien release proof", "reason": "", "priority": "high"},
+        ],
+        "offer_history": {"first_offer": None, "pre_fi_price": None},
+    }
+    cards = build_rendered_panel_cards(
+        _deal_state(
+            deals=[deal],
+            checklist=[
+                {"label": "Walk-away price written down", "done": False},
+            ],
+        )
+    )
+    checklist_cards = [c for c in cards if c["kind"] == AiCardKind.CHECKLIST.value]
+    assert len(checklist_cards) == 1
+    body = checklist_cards[0]["content"]
+    assert [r["label"] for r in body["open_questions"]] == ["Lien release proof"]
+    assert body["items"] == [
+        {"label": "Walk-away price written down", "done": False},
+    ]
+
+
+def test_merged_checklist_drops_gap_when_label_matches_playbook_case_insensitive():
+    deal = {
+        "id": "deal-1",
+        "phase": DealPhase.NEGOTIATION.value,
+        "numbers": {},
+        "scorecard": {},
+        "health": {},
+        "red_flags": [],
+        "information_gaps": [
+            {"label": "GET PRE-APPROVED", "reason": "", "priority": "medium"},
+        ],
+        "offer_history": {"first_offer": None, "pre_fi_price": None},
+    }
+    cards = build_rendered_panel_cards(
+        _deal_state(
+            deals=[deal],
+            checklist=[{"label": "get pre-approved", "done": False}],
+        )
+    )
+    checklist_cards = [c for c in cards if c["kind"] == AiCardKind.CHECKLIST.value]
+    assert len(checklist_cards) == 1
+    body = checklist_cards[0]["content"]
+    assert "open_questions" not in body
+    assert body["items"] == [{"label": "get pre-approved", "done": False}]
+
+
+def test_merged_checklist_omitted_when_no_gaps_and_no_playbook():
+    deal = {
+        "id": "deal-1",
+        "phase": DealPhase.NEGOTIATION.value,
+        "numbers": {},
+        "scorecard": {},
+        "health": {},
+        "red_flags": [],
+        "information_gaps": [],
+        "offer_history": {"first_offer": None, "pre_fi_price": None},
+    }
+    cards = build_rendered_panel_cards(_deal_state(deals=[deal], checklist=[]))
+    checklist_cards = [c for c in cards if c["kind"] == AiCardKind.CHECKLIST.value]
+    assert checklist_cards == []
 
 
 # ─── savings_so_far ───

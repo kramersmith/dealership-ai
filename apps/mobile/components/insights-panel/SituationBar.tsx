@@ -9,7 +9,7 @@ import { CardTitle } from './CardTitle'
 interface SituationBarProps {
   context: NegotiationContext
   /**
-   * `panel` — standalone strip (insights header / legacy).
+   * `panel` — standalone strip (insights header / collapsed chrome).
    * `insightCard` — same typography rhythm as other AiCards: CardTitle row + body.
    */
   layout?: 'panel' | 'insightCard'

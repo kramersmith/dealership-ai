@@ -8,8 +8,12 @@ from app.models.enums import (
     AiCardKind,
     AiCardPriority,
     AiCardTemplate,
+    GapPriority,
     NegotiationStance,
 )
+
+# Valid priority labels on checklist items / open questions.
+GAP_PRIORITY_VALUES: frozenset[str] = frozenset(p.value for p in GapPriority)
 
 
 @dataclass(frozen=True)
@@ -64,11 +68,6 @@ PANEL_CARD_SPECS: dict[AiCardKind, PanelCardSpec] = {
         kind=AiCardKind.WHAT_CHANGED,
         template=AiCardTemplate.NUMBERS,
         title="What Changed",
-    ),
-    AiCardKind.WHAT_STILL_NEEDS_CONFIRMING: PanelCardSpec(
-        kind=AiCardKind.WHAT_STILL_NEEDS_CONFIRMING,
-        template=AiCardTemplate.CHECKLIST,
-        title="What Still Needs Confirming",
     ),
     AiCardKind.DEALER_READ: PanelCardSpec(
         kind=AiCardKind.DEALER_READ,
@@ -129,7 +128,6 @@ PANEL_CARD_KIND_ORDER = {
             AiCardKind.TRADE_OFF,
             AiCardKind.COMPARISON,
             AiCardKind.VEHICLE,
-            AiCardKind.WHAT_STILL_NEEDS_CONFIRMING,
             AiCardKind.CHECKLIST,
             AiCardKind.SAVINGS_SO_FAR,
             AiCardKind.SUCCESS,
@@ -334,15 +332,18 @@ def _normalize_phase_content(content: Any) -> dict[str, Any] | None:
 
 
 def _normalize_checklist_content(content: Any) -> dict[str, Any] | None:
+    """Checklist playbook rows (`items`) and/or information gaps (`open_questions`).
+
+    At least one of `items` or `open_questions` must be non-empty after normalization.
+    """
     if not isinstance(content, dict):
         return None
 
-    items = content.get("items")
-    if not isinstance(items, list):
-        return None
+    raw_items = content.get("items")
+    items_input: list[Any] = raw_items if isinstance(raw_items, list) else []
 
     normalized_items: list[dict[str, Any]] = []
-    for item in items:
+    for item in items_input:
         if not isinstance(item, dict):
             continue
         label = _as_string(item.get("label"))
@@ -356,14 +357,39 @@ def _normalize_checklist_content(content: Any) -> dict[str, Any] | None:
         if detail:
             normalized_item["detail"] = detail
         priority = _as_string(item.get("priority"))
-        if priority in {"high", "medium", "low"}:
+        if priority in GAP_PRIORITY_VALUES:
             normalized_item["priority"] = priority
         normalized_items.append(normalized_item)
 
-    if not normalized_items:
+    raw_oq = content.get("open_questions")
+    oq_input: list[Any] = raw_oq if isinstance(raw_oq, list) else []
+
+    normalized_open_questions: list[dict[str, Any]] = []
+    seen_oq: set[str] = set()
+    for item in oq_input:
+        if not isinstance(item, dict):
+            continue
+        label = _as_string(item.get("label"))
+        if not label:
+            continue
+        if label in seen_oq:
+            continue
+        seen_oq.add(label)
+        row: dict[str, Any] = {"label": label}
+        priority = _as_string(item.get("priority"))
+        if priority in GAP_PRIORITY_VALUES:
+            row["priority"] = priority
+        normalized_open_questions.append(row)
+
+    if not normalized_items and not normalized_open_questions:
         return None
 
-    return {"items": normalized_items}
+    out: dict[str, Any] = {}
+    if normalized_items:
+        out["items"] = normalized_items
+    if normalized_open_questions:
+        out["open_questions"] = normalized_open_questions
+    return out
 
 
 def _normalize_success_content(content: Any) -> dict[str, Any] | None:
@@ -511,10 +537,10 @@ def normalize_panel_card(raw_card: Any) -> dict[str, Any] | None:
 
     kind_value = _as_string(raw_card.get("kind"))
     if not kind_value:
-        legacy_template = _as_string(raw_card.get("template")) or _as_string(
+        template_or_type = _as_string(raw_card.get("template")) or _as_string(
             raw_card.get("type")
         )
-        if legacy_template in {
+        if template_or_type in {
             AiCardTemplate.VEHICLE.value,
             AiCardTemplate.NUMBERS.value,
             AiCardTemplate.WARNING.value,
@@ -523,7 +549,7 @@ def normalize_panel_card(raw_card: Any) -> dict[str, Any] | None:
             AiCardTemplate.COMPARISON.value,
             AiCardTemplate.SUCCESS.value,
         }:
-            kind_value = legacy_template
+            kind_value = template_or_type
 
     if kind_value not in VALID_PANEL_CARD_KINDS:
         return None
@@ -549,10 +575,7 @@ def normalize_panel_card(raw_card: Any) -> dict[str, Any] | None:
         content = _normalize_warning_content(raw_content)
     elif spec.kind == AiCardKind.NOTES:
         content = _normalize_notes_content(raw_content)
-    elif spec.kind in {
-        AiCardKind.CHECKLIST,
-        AiCardKind.WHAT_STILL_NEEDS_CONFIRMING,
-    }:
+    elif spec.kind == AiCardKind.CHECKLIST:
         content = _normalize_checklist_content(raw_content)
     elif spec.kind in {
         AiCardKind.SUCCESS,
@@ -585,6 +608,122 @@ def normalize_panel_card(raw_card: Any) -> dict[str, Any] | None:
         "content": content,
         "priority": priority_value,
     }
+
+
+def _highest_priority(cards: list[dict[str, Any]]) -> str:
+    """Return the most-important priority value across `cards` (lower rank wins)."""
+    default_priority = AiCardPriority.NORMAL.value
+    default_rank = PANEL_CARD_PRIORITY_ORDER[default_priority]
+    best_priority = default_priority
+    best_rank = default_rank
+    for card in cards:
+        priority = _as_string(card.get("priority")) or default_priority
+        rank = PANEL_CARD_PRIORITY_ORDER.get(priority, default_rank)
+        if rank < best_rank:
+            best_rank = rank
+            best_priority = priority
+    return best_priority
+
+
+def _copy_gap_row(
+    row: dict[str, Any], *, label: str, include_done: bool
+) -> dict[str, Any]:
+    """Build a checklist `items` or `open_questions` row from an already-normalized dict."""
+    entry: dict[str, Any] = {"label": label}
+    if include_done:
+        entry["done"] = bool(row.get("done", False))
+    detail = _as_string(row.get("detail"))
+    if detail:
+        entry["detail"] = detail
+    priority = _as_string(row.get("priority"))
+    if priority in GAP_PRIORITY_VALUES:
+        entry["priority"] = priority
+    return entry
+
+
+def _merge_duplicate_checklist_cards(
+    cards: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse multiple checklist cards into one, deduping rows by label (case-insensitive).
+
+    Inputs are already-normalized checklist cards (see `_normalize_checklist_content`),
+    so row shapes are trusted. `items` rows win over `open_questions` on label clash —
+    the playbook step subsumes the still-confirming question.
+    """
+    checklist_indices = [
+        index
+        for index, card in enumerate(cards)
+        if _as_string(card.get("kind")) == AiCardKind.CHECKLIST.value
+    ]
+    if len(checklist_indices) <= 1:
+        return cards
+
+    checklist_cards = [cards[index] for index in checklist_indices]
+    merged_items: list[dict[str, Any]] = []
+    merged_open_questions: list[dict[str, Any]] = []
+    seen_item_labels_cf: set[str] = set()
+    seen_oq_labels: set[str] = set()
+
+    for card in checklist_cards:
+        content = card.get("content")
+        if not isinstance(content, dict):
+            continue
+
+        raw_items = content.get("items")
+        if isinstance(raw_items, list):
+            for row in raw_items:
+                if not isinstance(row, dict):
+                    continue
+                label = _as_string(row.get("label"))
+                if not label:
+                    continue
+                label_cf = label.casefold()
+                if label_cf in seen_item_labels_cf:
+                    continue
+                seen_item_labels_cf.add(label_cf)
+                merged_items.append(_copy_gap_row(row, label=label, include_done=True))
+
+        raw_open_questions = content.get("open_questions")
+        if isinstance(raw_open_questions, list):
+            for row in raw_open_questions:
+                if not isinstance(row, dict):
+                    continue
+                label = _as_string(row.get("label"))
+                if not label or label in seen_oq_labels:
+                    continue
+                if label.casefold() in seen_item_labels_cf:
+                    continue
+                seen_oq_labels.add(label)
+                merged_open_questions.append(
+                    _copy_gap_row(row, label=label, include_done=False)
+                )
+
+    new_content: dict[str, Any] = {}
+    if merged_open_questions:
+        new_content["open_questions"] = merged_open_questions
+    if merged_items:
+        new_content["items"] = merged_items
+    if not new_content:
+        return cards
+
+    checklist_spec = PANEL_CARD_SPECS[AiCardKind.CHECKLIST]
+    merged_card: dict[str, Any] = {
+        "kind": checklist_spec.kind.value,
+        "template": checklist_spec.template.value,
+        "title": checklist_spec.title,
+        "content": new_content,
+        "priority": _highest_priority(checklist_cards),
+    }
+
+    first_checklist_index = checklist_indices[0]
+    checklist_index_set = set(checklist_indices)
+    result: list[dict[str, Any]] = []
+    for index, card in enumerate(cards):
+        if index == first_checklist_index:
+            result.append(merged_card)
+        elif index not in checklist_index_set:
+            result.append(card)
+    return result
 
 
 def _panel_card_dedupe_rank(card: dict[str, Any], index: int) -> tuple[int, int, int]:
@@ -648,6 +787,8 @@ def canonicalize_panel_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]
     """Deduplicate by identity, sort by kind/priority, then apply per-kind instance caps."""
     if not cards:
         return []
+
+    cards = _merge_duplicate_checklist_cards(cards)
 
     best_by_identity: dict[str, tuple[tuple[int, int, int], int, dict[str, Any]]] = {}
     for index, card in enumerate(cards):

@@ -50,7 +50,7 @@ The reconcile LLM pass is deleted, not flag-gated. Main chat becomes the
 sole source of structured state updates. The `InsightsFollowupJob.reconcile_status`
 column is retained to avoid a migration and always set to `SKIPPED` at
 job creation. `InsightsFollowupKind.LINKED_RECONCILE_PANEL` is kept for
-the same reason — the name is historical.
+the same reason — the name is kept for job-key stability.
 
 To close the structural-coverage gap reconcile was compensating for, the
 main-chat system prompt and the relevant tool descriptions gained
@@ -63,10 +63,10 @@ lives).
 
 Panel generation is split into two mechanisms:
 
-- **Deterministic render (no LLM)** — 10 of 14 card kinds are derivable
-  from deal state alone: `phase`, `numbers`, `warning`,
-  `what_still_needs_confirming`, `checklist`, `your_leverage`, `vehicle`,
-  `success`, `savings_so_far`, `notes`. A new
+- **Deterministic render (no LLM)** — 9 of 14 card kinds are derivable
+  from deal state alone: `phase`, `numbers`, `warning`, `checklist`
+  (playbook `items` plus gap-driven `open_questions` in one card),
+  `your_leverage`, `vehicle`, `success`, `savings_so_far`, `notes`. A new
   `apps/backend/app/services/panel_card_builder.py:build_rendered_panel_cards(deal_state_dict)`
   produces these cards as ~0ms pure dict construction.
 - **Narrow narrative synthesis (LLM)** — only 3 kinds need genuine

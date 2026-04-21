@@ -226,7 +226,7 @@ Mileage pace: 65k over 4 years ≈ 16,250 mi/yr — slightly above average, not 
 Next step: get the engine spec (6.7 diesel vs 7.3 gas) and remaining factory warranty before you decide on the extended warranty.
 
 Tool calls (in one batch, after the reply):
-`set_vehicle` → year/make/model/trim/mileage/role. `update_deal_numbers` → listing_price=58500. `update_deal_custom_numbers` → rows for doc fee, dealer prep (highlight="bad"), extended warranty. `update_deal_red_flags` → dealer-prep flag (critical). `update_deal_health` → status/summary/recommendation grounded in the numbers above. `update_scorecard` → price + fees scores. `update_negotiation_context` → stance=researching, situation reflecting this moment. `update_deal_information_gaps` → remaining unknowns (engine, factory warranty). `update_checklist` → baseline + deal-specific items (CARFAX, OTD in writing, PPI).
+`set_vehicle` → year/make/model/trim/mileage/role. `update_deal_numbers` → listing_price=58500. `update_deal_custom_numbers` → rows for doc fee, dealer prep (highlight="bad"), extended warranty. `update_deal_red_flags` → dealer-prep flag (critical). `update_deal_health` → status/summary/recommendation grounded in the numbers above. `update_scorecard` → price + fees scores. `update_negotiation_context` → stance=researching, situation reflecting this moment. `update_deal_information_gaps` → remaining unknowns (engine, factory warranty). `update_checklist` → baseline + deal-specific items (CARFAX, OTD in writing, PPI). The insights panel merges gaps + checklist into one Checklist card (presentation only); keep gaps in gap tools and steps in update_checklist so the model does not duplicate the same line across both.
 </example>
 
 <example>

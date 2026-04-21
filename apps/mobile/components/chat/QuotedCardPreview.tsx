@@ -52,12 +52,24 @@ function getSummaryLines(card: QuotedCard): string[] {
       const highlights = (cardContent.highlights as any[]) ?? []
       return highlights.slice(0, 2).map((item: any) => item.label ?? item.name ?? '')
     }
-    case 'checklist':
-    case 'what_still_needs_confirming': {
-      const items = (cardContent.items as any[]) ?? []
-      return items
-        .slice(0, 2)
-        .map((item: any) => `${item.done ? '\u2713' : '\u2022'} ${item.label ?? item.text ?? ''}`)
+    // Historical: `what_still_needs_confirming` (pre-merge) was a checklist-templated card
+    // with `items`. Older persisted QuotedCard payloads may still carry that kind string.
+    case 'what_still_needs_confirming' as any:
+    case 'checklist': {
+      const openQ: any[] = Array.isArray(cardContent.open_questions)
+        ? (cardContent.open_questions as any[])
+        : []
+      const items: any[] = Array.isArray(cardContent.items) ? (cardContent.items as any[]) : []
+      const lines: string[] = []
+      for (const item of openQ.slice(0, 2)) {
+        const label = item?.label ?? item?.text ?? ''
+        if (label) lines.push(`\u25CB ${label}`)
+      }
+      for (const item of items.slice(0, Math.max(0, 2 - lines.length))) {
+        const label = item?.label ?? item?.text ?? ''
+        if (label) lines.push(`${item.done ? '\u2713' : '\u2022'} ${label}`)
+      }
+      return lines
     }
     default:
       return []

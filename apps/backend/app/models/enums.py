@@ -148,7 +148,6 @@ class AiCardKind(StrEnum):
     CHECKLIST = "checklist"
     SUCCESS = "success"
     WHAT_CHANGED = "what_changed"
-    WHAT_STILL_NEEDS_CONFIRMING = "what_still_needs_confirming"
     DEALER_READ = "dealer_read"
     YOUR_LEVERAGE = "your_leverage"
     NEXT_BEST_MOVE = "next_best_move"

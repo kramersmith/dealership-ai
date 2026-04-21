@@ -2,7 +2,7 @@ import { Animated } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
 import { Check } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
-import { insightCardBodyProps } from '@/lib/insightsPanelTypography'
+import { insightCardBodyProps, insightCardSectionLabelProps } from '@/lib/insightsPanelTypography'
 import { CardTitle } from './CardTitle'
 import { useAnimatedNumber } from '@/hooks/useAnimatedValue'
 
@@ -11,18 +11,46 @@ interface ChecklistItem {
   done: boolean
 }
 
+interface OpenQuestionRow {
+  label: string
+}
+
 interface AiChecklistCardProps {
   title: string
   content: Record<string, any>
+}
+
+/** Same outer box as checklist checkboxes so rows align visually. */
+const CHECKLIST_ROW_MARKER_SIZE = 14
+
+function OpenQuestionRow({ item }: { item: OpenQuestionRow }) {
+  return (
+    <XStack gap="$2.5" alignItems="center" paddingVertical="$1.5">
+      <XStack
+        width={CHECKLIST_ROW_MARKER_SIZE}
+        height={CHECKLIST_ROW_MARKER_SIZE}
+        borderRadius={CHECKLIST_ROW_MARKER_SIZE / 2}
+        borderWidth={2}
+        borderColor="$borderColor"
+        backgroundColor="transparent"
+        alignItems="center"
+        justifyContent="center"
+        flexShrink={0}
+      />
+      <Text flex={1} {...insightCardBodyProps}>
+        {item.label}
+      </Text>
+    </XStack>
+  )
 }
 
 function ChecklistRow({ item }: { item: ChecklistItem }) {
   return (
     <XStack gap="$2.5" alignItems="center" paddingVertical="$1.5">
       <XStack
-        width={14}
-        height={14}
-        borderRadius={7}
+        width={CHECKLIST_ROW_MARKER_SIZE}
+        height={CHECKLIST_ROW_MARKER_SIZE}
+        borderRadius={CHECKLIST_ROW_MARKER_SIZE / 2}
         borderWidth={2}
         borderColor={item.done ? '$positive' : '$borderColor'}
         backgroundColor={item.done ? '$positive' : 'transparent'}
@@ -68,25 +96,44 @@ function AnimatedProgressBar({ progress }: { progress: number }) {
 }
 
 export function AiChecklistCard({ title, content }: AiChecklistCardProps) {
-  const items = (content.items as ChecklistItem[]) ?? []
+  const items: ChecklistItem[] = Array.isArray(content.items)
+    ? (content.items as ChecklistItem[])
+    : []
+  const openQuestions: OpenQuestionRow[] = Array.isArray(content.open_questions)
+    ? (content.open_questions as OpenQuestionRow[])
+    : []
 
-  if (items.length === 0) return null
+  if (items.length === 0 && openQuestions.length === 0) return null
 
   const doneCount = items.filter((item) => item.done).length
-  const progress = doneCount / items.length
+  const stepProgress = items.length > 0 ? doneCount / items.length : 0
+  const showBothSections = openQuestions.length > 0 && items.length > 0
 
   return (
     <AppCard compact>
       <YStack gap="$3">
-        <YStack gap="$1.5">
-          <CardTitle>{title}</CardTitle>
-          <AnimatedProgressBar progress={progress} />
-        </YStack>
-        <YStack gap="$0.5">
-          {items.map((item, index) => (
-            <ChecklistRow key={index} item={item} />
-          ))}
-        </YStack>
+        <CardTitle>{title}</CardTitle>
+        {openQuestions.length > 0 ? (
+          <YStack gap="$1.5">
+            <Text {...insightCardSectionLabelProps}>Still confirming</Text>
+            <YStack gap="$0.5">
+              {openQuestions.map((item, index) => (
+                <OpenQuestionRow key={`oq-${index}`} item={item} />
+              ))}
+            </YStack>
+          </YStack>
+        ) : null}
+        {items.length > 0 ? (
+          <YStack gap="$1.5">
+            {showBothSections ? <Text {...insightCardSectionLabelProps}>Your steps</Text> : null}
+            <AnimatedProgressBar progress={stepProgress} />
+            <YStack gap="$0.5">
+              {items.map((item, index) => (
+                <ChecklistRow key={`it-${index}`} item={item} />
+              ))}
+            </YStack>
+          </YStack>
+        ) : null}
       </YStack>
     </AppCard>
   )

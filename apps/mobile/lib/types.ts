@@ -224,7 +224,6 @@ export type AiCardKind =
   | 'checklist'
   | 'success'
   | 'what_changed'
-  | 'what_still_needs_confirming'
   | 'dealer_read'
   | 'your_leverage'
   | 'next_best_move'
