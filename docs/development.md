@@ -247,7 +247,7 @@ Logs are **JSON Lines** (one object per line). See `docs/logging-guidelines.md` 
 
 **Primary artifact for agents (avoid terminal captures):** Raw `docker compose logs` prefixes each line with the service name, which **breaks one-line JSON**. Do not ask coding agents to read logs from the terminal for analysis.
 
-1. **Live file (recommended for Docker Compose):** With the default stack, the backend sets **`LOG_LOCAL_NDJSON_PATH=logs/backend.ndjson`** so the process writes the **same** NDJSON records to **`apps/backend/logs/backend.ndjson`** on your machine (plain JSON per line, no prefix). Point agents at that path after reproducing a bug.
+1. **Live file (recommended for Docker Compose):** With the default stack, compose sets **`LOG_LOCAL_NDJSON_PATH=logs/backend.ndjson`** so the process writes the **same** NDJSON records to **`apps/backend/logs/backend.ndjson`** on your machine (plain JSON per line, no prefix). On startup the backend writes one **`Local NDJSON log sink ready`** line so the file reappears after you delete it. **Do not set `LOG_LOCAL_NDJSON_PATH=` empty in `apps/backend/.env`**—that overrides compose and disables the file sink (you would only see JSON on stderr).
 
 2. **Bounded slice:** Use `make backend-log-slice` when you need rows for a specific **`request_id`** or smaller excerpt.
 

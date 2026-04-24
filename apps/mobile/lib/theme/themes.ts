@@ -19,6 +19,10 @@ export const lightTheme = {
   colorHover: '#1C1E21',
   colorPress: '#3A3D42',
   colorFocus: '#1C1E21',
+  /** Supporting body copy — readable on `$backgroundStrong` / `$backgroundHover` (not placeholder-tier). */
+  colorSecondary: '#4B5058',
+  /** Metadata and subtitles — softer than primary, still ~WCAG AA on common surfaces. */
+  colorMuted: '#5C6169',
   borderColor: '#CED0D4',
   borderColorHover: '#2D88FF',
   borderColorFocus: '#2D88FF',
@@ -41,6 +45,10 @@ export const darkTheme = {
   colorHover: '#E4E6EB',
   colorPress: '#C8CCD1',
   colorFocus: '#E4E6EB',
+  /** Supporting body copy on dark cards — brighter than legacy muted for readability. */
+  colorSecondary: '#D1D5DB',
+  /** Metadata and subtitles — between primary and placeholder. */
+  colorMuted: '#C4C8CE',
   borderColor: '#3E4042',
   borderColorHover: '#2D88FF',
   borderColorFocus: '#2D88FF',

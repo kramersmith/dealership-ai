@@ -18,7 +18,7 @@ description: >-
 ## Where to read logs (in order)
 
 1. **`apps/backend/logs/backend.ndjson`** (recommended under Docker Compose)  
-   - Set via **`LOG_LOCAL_NDJSON_PATH`** (default in `docker-compose.yml`: `logs/backend.ndjson` inside the backend container → **`apps/backend/logs/backend.ndjson`** on the host).  
+   - Set via **`LOG_LOCAL_NDJSON_PATH`** (default in `docker-compose.yml`: `logs/backend.ndjson` inside the backend container → **`apps/backend/logs/backend.ndjson`** on the host). An empty **`LOG_LOCAL_NDJSON_PATH=` in `apps/backend/.env`** overrides compose and **turns the file off**. After restart, the first line is usually **`Local NDJSON log sink ready`**.  
    - Each line is a **single JSON object** with `timestamp`, `level`, `name`, `message`, `request_id`, HTTP fields, etc.
 
 2. **`make backend-log-slice`** (filtered excerpt from the Docker backend container)  

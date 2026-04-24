@@ -888,12 +888,22 @@ async def apply_extraction(
                         deal.current_offer,
                         deal.id,
                     )
+                old_phase = deal.phase
                 deal.phase = phase_val
                 applied_tools.append(
                     {"name": "update_deal_phase", "args": {"phase": phase_val}}
                 )
                 logger.debug(
                     "Updated deal phase: deal=%s, phase=%s", deal.id, phase_val
+                )
+                from app.services.recap.timeline_recorder import record_phase_change
+
+                await record_phase_change(
+                    db,
+                    session_id=deal_state.session_id,
+                    deal_id=deal.id,
+                    old_phase=str(old_phase),
+                    new_phase=str(phase_val),
                 )
         else:
             logger.warning("update_phase: no active deal found")

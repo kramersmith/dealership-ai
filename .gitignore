@@ -1,6 +1,7 @@
 memory/
 logs/
-apps/backend/logs/
+# Keep apps/backend/logs/ visible in the repo and IDEs; ignore only NDJSON sinks.
+apps/backend/logs/*.ndjson
 .env
 *.db
 *.db-journal

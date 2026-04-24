@@ -41,25 +41,16 @@ const CHATS_SHEET_MAX_WIDTH = CHATS_CONTENT_MAX_WIDTH + 2 * CHATS_EDGE_INSET
 /** Space below the search (list header) before section labels / first card. */
 const CHATS_LIST_BELOW_SEARCH_GAP = 12
 
-// ─── Section builder: active deals above, past deals below ───
-
-function buildSections(sessions: Session[]) {
-  const active: Session[] = []
-  const past: Session[] = []
-
-  for (const session of sessions) {
-    const phase = session.dealSummary?.phase
-    if (phase === 'closing') {
-      past.push(session)
-    } else {
-      active.push(session)
-    }
-  }
-
-  const sections: { title: string; data: Session[] }[] = []
-  if (active.length > 0) sections.push({ title: 'Active', data: active })
-  if (past.length > 0) sections.push({ title: 'Past', data: past })
-  return sections
+/** Most recently touched chat first (matches backend `updated_at` ordering). */
+function sessionsByRecency(sessions: Session[]): Session[] {
+  return [...sessions].sort((a, b) => {
+    const ta = Date.parse(a.updatedAt)
+    const tb = Date.parse(b.updatedAt)
+    const sa = Number.isNaN(ta) ? 0 : ta
+    const sb = Number.isNaN(tb) ? 0 : tb
+    if (sb !== sa) return sb - sa
+    return b.id.localeCompare(a.id)
+  })
 }
 
 // ─── Empty state ───
@@ -487,7 +478,10 @@ export default function SessionsScreen() {
   }
 
   const displaySessions = searchResults ?? sessions
-  const sections = buildSections(displaySessions)
+  const sections = useMemo(
+    () => [{ title: 'Chats', data: sessionsByRecency(displaySessions) }],
+    [displaySessions]
+  )
 
   const searchBarRow = useMemo(() => {
     if (sessions.length === 0) return null

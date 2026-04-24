@@ -6,6 +6,7 @@ export default function AppLayout() {
     <AuthGuard>
       <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
         <Stack.Screen name="chat" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="recap/[sessionId]" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="chats" />
         <Stack.Screen name="simulations" />
         <Stack.Screen name="sim/[id]" />

@@ -24,6 +24,8 @@ interface ScreenHeaderProps {
   onRightPress?: () => void
   /** Accessibility label for the right button */
   rightLabel?: string
+  /** When set, replaces the default single right icon (e.g. multiple HeaderIconButtons). */
+  rightContent?: ReactNode
   /** Trigger for the left icon entrance animation (e.g. isFocused). Default true. */
   iconTrigger?: boolean
 }
@@ -38,6 +40,7 @@ export function ScreenHeader({
   rightIcon,
   onRightPress,
   rightLabel,
+  rightContent,
   iconTrigger = true,
 }: ScreenHeaderProps) {
   const iconAnim = useIconEntrance(iconTrigger)
@@ -74,7 +77,17 @@ export function ScreenHeader({
           textAlign="center"
           numberOfLines={1}
         />,
-        rightIcon && onRightPress ? (
+        rightContent ? (
+          <Animated.View
+            key="hdr-right-custom"
+            style={{
+              opacity: iconAnim.opacity,
+              transform: [{ rotate: iconAnim.rotate }],
+            }}
+          >
+            {rightContent}
+          </Animated.View>
+        ) : rightIcon && onRightPress ? (
           <HeaderIconButton
             key="hdr-right"
             onPress={onRightPress}

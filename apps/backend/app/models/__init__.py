@@ -1,5 +1,7 @@
 from app.models.deal import Deal
+from app.models.deal_recap_generation import DealRecapGeneration
 from app.models.deal_state import DealState
+from app.models.deal_timeline_event import DealTimelineEvent
 from app.models.insights_followup_job import InsightsFollowupJob
 from app.models.message import Message
 from app.models.session import ChatSession
@@ -17,6 +19,8 @@ __all__ = [
     "ChatSession",
     "Message",
     "InsightsFollowupJob",
+    "DealRecapGeneration",
+    "DealTimelineEvent",
     "DealState",
     "Vehicle",
     "VehicleDecode",

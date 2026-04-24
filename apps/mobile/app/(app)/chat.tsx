@@ -19,6 +19,7 @@ import {
   LoadingIndicator,
   RoleGuard,
   ScreenHeader,
+  HeaderIconButton,
 } from '@/components/shared'
 import {
   MessageSquarePlus,
@@ -27,6 +28,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  History,
 } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
@@ -55,6 +57,10 @@ import type { BuyerContext, Message, VinAssistItem } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { getVehicleAwareHeaderTitleInfo } from '@/lib/headerTitles'
+import {
+  dealPhaseSuggestsRecapTimeline,
+  userMessageSuggestsPurchaseComplete,
+} from '@/lib/recapPurchasePrompt'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
@@ -79,7 +85,13 @@ import {
   InsightsPreviewItemChip,
   describePanelIconKindsForA11y,
 } from '@/components/insights-panel'
-import { ChatComposerOverlay, ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
+import {
+  ChatComposerOverlay,
+  ChatMessageList,
+  ChatInput,
+  ContextPicker,
+  RecapTimelinePromptBanner,
+} from '@/components/chat'
 
 function useMobileInsightsWidth() {
   const [width, setWidth] = useState(
@@ -279,6 +291,7 @@ export default function ChatScreen() {
   const clearSendError = useChatStore((state) => state.clearSendError)
   const [editDraft, setEditDraft] = useState('')
   const [editBranchConfirmOpen, setEditBranchConfirmOpen] = useState(false)
+  const [recapPromptDismissed, setRecapPromptDismissed] = useState(false)
   const editBranchConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null)
   const vinAssistItems = useChatStore((state) => state.vinAssistItems)
   /** True while a message is paused for VIN decode/confirm (avoids overlap with VIN assist UI). */
@@ -438,6 +451,10 @@ export default function ChatScreen() {
   const showContextPicker = !activeSessionId && !isLoading
 
   useEffect(() => {
+    setRecapPromptDismissed(false)
+  }, [activeSessionId])
+
+  useEffect(() => {
     if (!editingUserMessageId) {
       setEditDraft('')
       return
@@ -473,6 +490,29 @@ export default function ChatScreen() {
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
   const isDesktopChatActive = isDesktop && !showContextPicker
   const buyerContextForPreview = dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT
+
+  const lastUserMessageContent = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m?.role === 'user') return m.content ?? ''
+    }
+    return ''
+  }, [messages])
+
+  const activeDealPhaseForRecap = useMemo(() => {
+    if (!dealState?.activeDealId) return null
+    const d = dealState.deals.find((x) => x.id === dealState.activeDealId)
+    return d?.phase ?? null
+  }, [dealState])
+
+  const showRecapTimelinePrompt =
+    !!activeSessionId &&
+    !showContextPicker &&
+    !pendingVinIntercept &&
+    !editingUserMessageId &&
+    !recapPromptDismissed &&
+    (userMessageSuggestsPurchaseComplete(lastUserMessageContent) ||
+      dealPhaseSuggestsRecapTimeline(activeDealPhaseForRecap))
 
   const panelPreviewIconKinds = useMemo(
     () => getDedupedPanelIconKinds(dealState?.aiPanelCards),
@@ -680,6 +720,11 @@ export default function ChatScreen() {
     useChatStore.setState(CHAT_SESSION_RESET_STATE)
   }
 
+  const handleOpenRecap = useCallback(() => {
+    if (!activeSessionId) return
+    router.push(`/recap/${activeSessionId}`)
+  }, [activeSessionId, router])
+
   const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
   const previewItems = useMemo(
     () => getInsightsPreviewItems(dealState, dismissedFlagIds, buyerContextForPreview),
@@ -828,9 +873,22 @@ export default function ChatScreen() {
       onLeftPress={handleBack}
       leftLabel="Back to chats"
       title={headerTitle}
-      rightIcon={<MessageSquarePlus size={22} color="$color" />}
-      onRightPress={handleNewSession}
-      rightLabel="Start new chat"
+      rightContent={
+        activeSessionId ? (
+          <XStack gap="$2" alignItems="center">
+            <HeaderIconButton onPress={handleOpenRecap} accessibilityLabel="Deal recap timeline">
+              <History size={22} color="$color" />
+            </HeaderIconButton>
+            <HeaderIconButton onPress={handleNewSession} accessibilityLabel="Start new chat">
+              <MessageSquarePlus size={22} color="$color" />
+            </HeaderIconButton>
+          </XStack>
+        ) : (
+          <HeaderIconButton onPress={handleNewSession} accessibilityLabel="Start new chat">
+            <MessageSquarePlus size={22} color="$color" />
+          </HeaderIconButton>
+        )
+      }
     />
   )
 
@@ -1147,8 +1205,20 @@ export default function ChatScreen() {
         ) : null}
       </YStack>
     ) : null
+  const recapTimelinePromptNotice = showRecapTimelinePrompt ? (
+    <RecapTimelinePromptBanner
+      key="recap-timeline-prompt"
+      onOpenRecap={() => {
+        setRecapPromptDismissed(true)
+        router.push(`/recap/${activeSessionId}`)
+      }}
+      onDismiss={() => setRecapPromptDismissed(true)}
+    />
+  ) : null
+
   const composerOverlayNotices = (
     <>
+      {recapTimelinePromptNotice}
       {compactingNotice}
       {contextWarningNotice}
       {sendErrorNotice}

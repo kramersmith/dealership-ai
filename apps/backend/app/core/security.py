@@ -2,7 +2,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from jose import JWTError, jwt  # type: ignore[import-untyped]
+import jwt
+from jwt.exceptions import PyJWTError
 
 from app.core.config import settings
 
@@ -34,6 +35,6 @@ def decode_access_token(token: str) -> dict | None:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError:
+    except PyJWTError:
         logger.warning("Failed to decode access token")
         return None

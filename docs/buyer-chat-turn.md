@@ -1,6 +1,6 @@
 # Buyer chat turn lifecycle
 
-**Last updated:** 2026-04-20
+**Last updated:** 2026-04-21
 
 End-to-end flow for a single **buyer** message on `POST /api/chat/{session_id}/message` or `POST /api/chat/{session_id}/messages/{message_id}/branch`. Dealer simulation uses related chat infrastructure but different prompts and tools; this document is scoped to the **shared buyer turn** pipeline.
 
@@ -203,6 +203,7 @@ See [logging-harness.md](logging-harness.md), [logging-guidelines.md](logging-gu
 
 ## Related documentation
 
+- [deal-recap.md](deal-recap.md) — Post-deal recap timeline (`POST …/recap/generate` outside the chat SSE turn), share-preview redaction, and tool-sourced phase hints.
 - [architecture.md](architecture.md) — Monorepo map, step loop + panel cards section, operational notes.
 - [backend-endpoints.md](backend-endpoints.md) — API details.
 - [logging-harness.md](logging-harness.md) — `chat_turn_summary` and NDJSON workflow.

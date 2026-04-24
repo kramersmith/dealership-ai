@@ -146,6 +146,8 @@ def test_configure_logging_writes_local_ndjson_file(tmp_path) -> None:
     flush_logging_handlers()
     lines = log_file.read_text(encoding="utf-8").strip().splitlines()
     assert lines
+    bootstrap = json.loads(lines[0])
+    assert "Local NDJSON log sink ready" in bootstrap["message"]
     payload = json.loads(lines[-1])
     assert payload["message"] == "file_line_ok"
     assert payload["request_id"] == "req-ndjson-file-1"

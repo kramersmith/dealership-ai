@@ -15,7 +15,7 @@ Compose prefixes lines with `service  | `, which **invalidates** NDJSON. Prefer 
 
 ## Read these paths (in order)
 
-1. **`apps/backend/logs/backend.ndjson`** — clean JSON Lines; written when **`LOG_LOCAL_NDJSON_PATH`** is set (default in repo `docker-compose.yml`; optional in `apps/backend/.env` for `make dev-backend`).
+1. **`apps/backend/logs/backend.ndjson`** — clean JSON Lines; written when **`LOG_LOCAL_NDJSON_PATH`** is set (default in repo `docker-compose.yml`; optional in `apps/backend/.env` for `make dev-backend`). An empty **`LOG_LOCAL_NDJSON_PATH=` in `apps/backend/.env`** overrides compose and **turns the file off**. After restart, the first line is usually **`Local NDJSON log sink ready`**.
 
 2. **`make backend-log-slice REQUEST_ID=… OUT=logs/…`** — strips prefix; then read `OUT` or **`logs/agent-latest.ndjson`**.
 

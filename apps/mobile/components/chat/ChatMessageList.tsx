@@ -1,6 +1,7 @@
 import { useRef, useEffect, useMemo, memo, type ReactNode } from 'react'
 import { ScrollView, Animated } from 'react-native'
 import { YStack, XStack, Text, useTheme } from 'tamagui'
+import { appScrollViewChromeStyle } from '@/lib/appScrollViewStyle'
 import { palette } from '@/lib/theme/tokens'
 import type { Message, VinAssistItem } from '@/lib/types'
 import { isServerMessageId } from '@/stores/chatStore'
@@ -139,39 +140,6 @@ interface ChatMessageListProps {
   onBranchEditSubmitFromBubble?: () => void
 }
 
-function withAlpha(color: string, alpha: number) {
-  const normalizedAlpha = Math.max(0, Math.min(1, alpha))
-
-  if (color.startsWith('rgba(')) {
-    return color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, (_, r, g, b) => {
-      return `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${normalizedAlpha})`
-    })
-  }
-
-  if (color.startsWith('rgb(')) {
-    return color.replace(/rgb\(([^,]+),([^,]+),([^)]+)\)/, (_, r, g, b) => {
-      return `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${normalizedAlpha})`
-    })
-  }
-
-  if (color.startsWith('#')) {
-    const hex = color.slice(1)
-    const expanded =
-      hex.length === 3
-        ? hex
-            .split('')
-            .map((char) => char + char)
-            .join('')
-        : hex.slice(0, 6)
-    const r = parseInt(expanded.slice(0, 2), 16)
-    const g = parseInt(expanded.slice(2, 4), 16)
-    const b = parseInt(expanded.slice(4, 6), 16)
-    return `rgba(${r}, ${g}, ${b}, ${normalizedAlpha})`
-  }
-
-  return color
-}
-
 function EmptyState() {
   const opacity = useFadeIn(500)
 
@@ -261,12 +229,9 @@ export const ChatMessageList = memo(function ChatMessageList({
       }}
       style={
         {
-          flex: 1,
-          scrollbarWidth: 'thin',
-          scrollbarColor: `${withAlpha(
-            (theme.placeholderColor?.val as string) ?? palette.overlay,
-            scrollbarOpacity
-          )} transparent`,
+          ...appScrollViewChromeStyle((theme.placeholderColor?.val as string) ?? palette.overlay, {
+            scrollbarOpacity,
+          }),
         } as any
       }
       onContentSizeChange={() => {

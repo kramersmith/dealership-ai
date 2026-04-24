@@ -1,4 +1,4 @@
-import { Platform, type ViewStyle } from 'react-native'
+import { Platform, type Role, type ViewStyle } from 'react-native'
 import { YStack, useTheme, type YStackProps } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import { HoverLiftFrame } from './HoverLiftFrame'
@@ -23,7 +23,27 @@ export function AppCard({
   const theme = useTheme()
   const shadow = theme.shadowColor?.val ?? palette.overlay
 
-  const { width, maxWidth, minWidth, alignSelf, ...restProps } = props
+  const {
+    width,
+    maxWidth,
+    minWidth,
+    alignSelf,
+    accessibilityRole,
+    accessibilityLabel,
+    ...restProps
+  } = props
+
+  /** RN a11y props; on web map to DOM `role` / `aria-label` so React does not warn on unknown div attrs. */
+  const a11yStackProps =
+    Platform.OS === 'web'
+      ? ({
+          ...(accessibilityRole != null ? { role: accessibilityRole as Role } : {}),
+          ...(accessibilityLabel ? { 'aria-label': accessibilityLabel } : {}),
+        } as const)
+      : ({
+          ...(accessibilityRole != null ? { accessibilityRole } : {}),
+          ...(accessibilityLabel ? { accessibilityLabel } : {}),
+        } as const)
 
   const webSizesFrame =
     Platform.OS === 'web' &&
@@ -61,6 +81,7 @@ export function AppCard({
       maxWidth={webSizesFrame ? '100%' : maxWidth}
       minWidth={webSizesFrame && minWidth !== undefined ? '100%' : minWidth}
       alignSelf={webSizesFrame ? undefined : alignSelf}
+      {...a11yStackProps}
       {...restProps}
     >
       {children}

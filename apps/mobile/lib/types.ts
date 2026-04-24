@@ -307,6 +307,71 @@ export interface DealState {
   negotiationContext: NegotiationContext | null
 }
 
+// ─── Deal recap (timeline + savings + share preview) ───
+
+export interface DealRecapSavingsSnapshot {
+  firstOffer: number | null
+  currentOffer: number | null
+  concessionVsFirstOffer: number | null
+  monthlyPayment: number | null
+  aprPercent: number | null
+  loanTermMonths: number | null
+  estimatedTotalInterestDeltaUsd: number | null
+  assumptions: string[]
+  disclaimer: string
+}
+
+export interface DealRecapGenerationInfo {
+  id: string
+  createdAt: string
+  status: string
+  model: string | null
+}
+
+export interface DealRecapTimelineBeat {
+  id: string
+  sessionId: string
+  dealId: string | null
+  recapGenerationId: string | null
+  userMessageId: string | null
+  assistantMessageId: string | null
+  occurredAt: string
+  kind: string
+  payload: Record<string, unknown>
+  source: string
+  supersedesEventId: string | null
+  sortOrder: number
+}
+
+export interface DealRecap {
+  sessionId: string
+  activeDealId: string | null
+  generation: DealRecapGenerationInfo | null
+  beats: DealRecapTimelineBeat[]
+  savings: DealRecapSavingsSnapshot
+}
+
+export interface DealRecapRedactionProfile {
+  hideUserMessageQuotes: boolean
+  hideDealerName: boolean
+  hideDollarAmounts: boolean
+}
+
+export interface DealRecapPublicBeat {
+  id: string
+  occurredAt: string
+  kind: string
+  world: string
+  app: string
+  sortOrder: number
+}
+
+export interface DealRecapPublic {
+  sessionId: string
+  beats: DealRecapPublicBeat[]
+  savings: DealRecapSavingsSnapshot
+}
+
 // ─── Messages ───
 
 export interface ToolCall {
@@ -601,6 +666,32 @@ export interface ApiService {
     vehicleId: string,
     vin?: string
   ): Promise<VehicleIntelligence>
+
+  // Deal recap
+  getDealRecap(sessionId: string): Promise<DealRecap>
+  generateDealRecap(
+    sessionId: string,
+    options?: { dealId?: string | null; force?: boolean; redaction?: DealRecapRedactionProfile }
+  ): Promise<DealRecap>
+  addDealRecapTimelineEvent(
+    sessionId: string,
+    body: {
+      kind: string
+      world: string
+      app: string
+      occurredAt?: string | null
+      supersedesEventId?: string | null
+      dealId?: string | null
+    }
+  ): Promise<DealRecapTimelineBeat>
+  getDealRecapSharePreview(
+    sessionId: string,
+    redaction: DealRecapRedactionProfile
+  ): Promise<DealRecapPublic>
+  exportDealRecapJson(
+    sessionId: string,
+    redaction: DealRecapRedactionProfile
+  ): Promise<Record<string, unknown>>
 
   // Simulations
   getScenarios(): Promise<Scenario[]>

@@ -32,6 +32,12 @@
 - As a buyer, I want a "what am I forgetting?" prompt that asks me the right questions before I sign so I don't miss anything.
 - As a buyer, I want to upload a photo of the final contract and have the AI cross-check it against what was verbally agreed so I catch last-minute changes.
 
+### Deal recap (timeline + share)
+- As a buyer, I want a readable timeline of what happened at the dealership versus what the app did for me so I can remember the story and share it safely.
+- As a buyer, I want privacy-related switches to steer the next AI recap only, then regenerate, so the written story reflects what I’m comfortable sharing—without those switches re-filtering the screen or export until I run the model again.
+- As a buyer, I want Share & export to match the recap I already see (saved beats), and to save timeline edits before sharing so exports stay in sync.
+- As a buyer, I want “Generate Recap” to refresh the AI-written beats when I choose, without losing my edits when the model returns nothing useful (clear error instead of a blank timeline).
+
 ### Persistent UI (alongside chat)
 - As a buyer, I want to see what phase of the deal I'm in (Researching → At Dealership → Negotiating → F&I → Signing → Post-Purchase) so I always know where I am in the process.
 - As a buyer, I want to see my target price, walk-away price, and the dealer's current offer side-by-side so I can instantly judge any number they throw at me.

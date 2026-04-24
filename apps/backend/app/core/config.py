@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     LOG_CHAT_HARNESS_VERBOSITY: ChatHarnessVerbosity = _HARNESS_VERBOSITY_NORMAL
     LOG_CHAT_HARNESS_PREVIEW_MAX_CHARS: int = DEFAULT_PREVIEW_MAX_CHARS
     # Duplicate NDJSON log records to this path (plain JSON lines; no Docker prefix).
-    # Relative paths resolve against the process cwd (typically apps/backend).
+    # Relative paths resolve against the backend root (directory containing `app/`),
+    # same as Docker WORKDIR /app — not the process cwd.
     LOG_LOCAL_NDJSON_PATH: str = ""
     API_PREFIX: str = "/api"
     DATABASE_URL: str = "sqlite:///./dealership.db"

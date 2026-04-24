@@ -12,6 +12,10 @@ import type {
   ModelUsageSummary,
   SessionUsage,
   UserSettings,
+  DealRecap,
+  DealRecapPublic,
+  DealRecapRedactionProfile,
+  DealRecapTimelineBeat,
 } from './types'
 import { DEFAULT_BUYER_CONTEXT } from './constants'
 import { snakeToCamel } from './utils'
@@ -73,13 +77,16 @@ function extractHttpErrorMessage(
   const trimmed = responseText.trim()
   if (!trimmed) return fallback
 
-  const canExposeClientDetail = status >= 400 && status < 500
+  const structuredMessage = extractStructuredErrorMessage(trimmed)
 
-  if (!canExposeClientDetail) {
+  // 4xx: prefer JSON detail (FastAPI errors, validation messages when string-shaped).
+  if (status >= 400 && status < 500) {
+    if (structuredMessage) return structuredMessage
     return fallback
   }
 
-  const structuredMessage = extractStructuredErrorMessage(trimmed)
+  // 5xx / gateway: still show explicit JSON `detail` when the backend sent one (e.g. recap
+  // generation wraps failures as HTTPException 502). Proxy HTML bodies won't parse → fallback.
   if (structuredMessage) return structuredMessage
 
   return fallback
@@ -122,6 +129,86 @@ function mapUserSettings(rawSettings: any): UserSettings {
   const rawMode = rawSettings?.insights_update_mode
   return {
     insightsUpdateMode: rawMode === 'paused' || rawMode === 'manual' ? 'paused' : 'live',
+  }
+}
+
+function mapDealRecapSavings(raw: any): import('./types').DealRecapSavingsSnapshot {
+  return {
+    firstOffer: raw.first_offer ?? null,
+    currentOffer: raw.current_offer ?? null,
+    concessionVsFirstOffer: raw.concession_vs_first_offer ?? null,
+    monthlyPayment: raw.monthly_payment ?? null,
+    aprPercent: raw.apr_percent ?? null,
+    loanTermMonths: raw.loan_term_months ?? null,
+    estimatedTotalInterestDeltaUsd: raw.estimated_total_interest_delta_usd ?? null,
+    assumptions: raw.assumptions ?? [],
+    disclaimer: raw.disclaimer ?? '',
+  }
+}
+
+function normalizeTimelinePayload(rawPayload: unknown): Record<string, unknown> {
+  if (rawPayload == null) return {}
+  if (typeof rawPayload === 'string') {
+    try {
+      const p = JSON.parse(rawPayload)
+      if (p != null && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>
+    } catch {
+      return {}
+    }
+    return {}
+  }
+  if (typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
+    return rawPayload as Record<string, unknown>
+  }
+  return {}
+}
+
+function mapDealRecapTimelineBeat(raw: any): DealRecapTimelineBeat {
+  return {
+    id: raw.id,
+    sessionId: raw.session_id,
+    dealId: raw.deal_id ?? null,
+    recapGenerationId: raw.recap_generation_id ?? null,
+    userMessageId: raw.user_message_id ?? null,
+    assistantMessageId: raw.assistant_message_id ?? null,
+    occurredAt: raw.occurred_at,
+    kind: raw.kind,
+    payload: normalizeTimelinePayload(raw.payload),
+    source: raw.source,
+    supersedesEventId: raw.supersedes_event_id ?? null,
+    sortOrder: raw.sort_order ?? 0,
+  }
+}
+
+function mapDealRecap(raw: any): DealRecap {
+  return {
+    sessionId: raw.session_id,
+    activeDealId: raw.active_deal_id ?? null,
+    generation: raw.generation
+      ? {
+          id: raw.generation.id,
+          createdAt: raw.generation.created_at,
+          status: raw.generation.status,
+          model: raw.generation.model ?? null,
+        }
+      : null,
+    beats: (raw.beats ?? []).map(mapDealRecapTimelineBeat),
+    savings: mapDealRecapSavings(raw.savings ?? {}),
+  }
+}
+
+function mapDealRecapPublic(raw: any): DealRecapPublic {
+  return {
+    sessionId: raw.session_id,
+    beats: (raw.beats ?? []).map((b: any) => ({
+      id: b.id,
+      occurredAt: b.occurred_at,
+      kind: b.kind,
+      world: b.world ?? '',
+      app: b.app ?? '',
+      sortOrder: b.sort_order ?? 0,
+    })),
+    savings: mapDealRecapSavings(raw.savings ?? {}),
   }
 }
 
@@ -1369,6 +1456,86 @@ class ApiClient implements ApiService {
       body: JSON.stringify(vin ? { vin } : {}),
     })
     return mapVehicleIntelligence(res)
+  }
+
+  // ─── Deal recap ───
+
+  async getDealRecap(sessionId: string): Promise<DealRecap> {
+    const res = await request<any>(`/deal/${sessionId}/recap`)
+    return mapDealRecap(res)
+  }
+
+  async generateDealRecap(
+    sessionId: string,
+    options?: { dealId?: string | null; force?: boolean; redaction?: DealRecapRedactionProfile }
+  ): Promise<DealRecap> {
+    const res = await request<any>(`/deal/${sessionId}/recap/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        deal_id: options?.dealId ?? null,
+        force: options?.force ?? false,
+        ...(options?.redaction != null ? { redaction: options.redaction } : {}),
+      }),
+    })
+    return mapDealRecap(res)
+  }
+
+  async addDealRecapTimelineEvent(
+    sessionId: string,
+    body: {
+      kind: string
+      world: string
+      app: string
+      occurredAt?: string | null
+      supersedesEventId?: string | null
+      dealId?: string | null
+    }
+  ): Promise<DealRecapTimelineBeat> {
+    const res = await request<any>(`/deal/${sessionId}/recap/timeline-events`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: body.kind,
+        world: body.world,
+        app: body.app,
+        occurred_at: body.occurredAt ?? null,
+        supersedes_event_id: body.supersedesEventId ?? null,
+        deal_id: body.dealId ?? null,
+      }),
+    })
+    return mapDealRecapTimelineBeat(res)
+  }
+
+  async getDealRecapSharePreview(
+    sessionId: string,
+    redaction: DealRecapRedactionProfile
+  ): Promise<DealRecapPublic> {
+    const res = await request<any>(`/deal/${sessionId}/recap/share-preview`, {
+      method: 'POST',
+      body: JSON.stringify({
+        redaction: {
+          hide_user_message_quotes: redaction.hideUserMessageQuotes,
+          hide_dealer_name: redaction.hideDealerName,
+          hide_dollar_amounts: redaction.hideDollarAmounts,
+        },
+      }),
+    })
+    return mapDealRecapPublic(res)
+  }
+
+  async exportDealRecapJson(
+    sessionId: string,
+    redaction: DealRecapRedactionProfile
+  ): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>(`/deal/${sessionId}/recap/export`, {
+      method: 'POST',
+      body: JSON.stringify({
+        redaction: {
+          hide_user_message_quotes: redaction.hideUserMessageQuotes,
+          hide_dealer_name: redaction.hideDealerName,
+          hide_dollar_amounts: redaction.hideDollarAmounts,
+        },
+      }),
+    })
   }
 
   // ─── Simulations ───

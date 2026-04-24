@@ -96,6 +96,13 @@ def configure_logging(
             file_handler.addFilter(RequestContextFilter())
             file_handler.setFormatter(build_json_log_formatter())
             root.addHandler(file_handler)
+            # One immediate line so the host file exists after restart (not only after first request).
+            sink_log = logging.getLogger("app.logging_setup")
+            sink_log.info("Local NDJSON log sink ready (%s)", path.resolve())
+            try:
+                file_handler.flush()
+            except OSError:
+                pass
         except OSError:
             # Degrade gracefully: structured stderr logging still works even
             # if the local NDJSON sink cannot be created (permissions, RO FS,
