@@ -75,8 +75,8 @@ export default function SettingsScreen() {
               )}
 
               <SettingsRow onPress={handleLogout}>
-                <LogOut size={20} color="#f87171" />
-                <Text fontSize={15} fontWeight="600" color="#f87171">
+                <LogOut size={20} color={palette.dangerLight} />
+                <Text fontSize={15} fontWeight="600" color={palette.dangerLight}>
                   Sign Out
                 </Text>
               </SettingsRow>
@@ -113,7 +113,7 @@ function SettingsRow({ children, onPress }: { children: React.ReactNode; onPress
           borderRadius: 16,
           borderWidth: 1,
           borderColor: palette.ghostBorder,
-          backgroundColor: 'rgba(15, 23, 42, 0.60)',
+          backgroundColor: palette.copilotFrostedRail,
           paddingHorizontal: 16,
           paddingVertical: 14,
           ...(Platform.OS === 'web'

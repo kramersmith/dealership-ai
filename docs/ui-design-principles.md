@@ -165,10 +165,10 @@ Respect the user's reduced-motion preference. Use the shared `usePrefersReducedM
 
 All colors are defined in the Tamagui theme system, split into two files under `lib/theme/`:
 
-- **`tokens.ts`** -- Defines the raw color palette (`palette`) and maps palette values to semantic token names (`tokenColors`). This is the single source of truth for every color in the app.
-- **`themes.ts`** -- Defines dark and light themes by mapping token names to theme keys, plus semantic sub-themes (`danger`, `warning`, `success`) for status surfaces in both modes.
+- **`tokens.ts`** -- Defines the raw color palette (`palette`, including the copilot-prefixed slate/emerald/violet scales added in ADR 0027) and maps palette values to semantic token names (`tokenColors`). This is the single source of truth for every color in the app.
+- **`themes.ts`** -- Defines the active `dark_copilot` theme (Stitch-aligned slate-950 base, emerald primary, violet accents, frosted slate panels) plus semantic sub-themes (`danger`, `warning`, `success`) for status surfaces. The legacy `lightTheme` and `light_*` sub-themes remain as dead code pending a follow-up sweep — there is no runtime theme switch and no `themeStore` (see ADR 0027).
 
-The `tamagui.config.ts` file imports from these theme files and registers everything with Tamagui.
+The `tamagui.config.ts` file imports from these theme files and registers everything with Tamagui. Body and heading fonts are wired through `lib/theme/manropeFont.ts` (Manrope), and `app/_layout.tsx` hard-pins `defaultTheme="dark_copilot"`.
 
 ### Usage Rules
 
@@ -182,9 +182,9 @@ The `tamagui.config.ts` file imports from these theme files and registers everyt
 
 ### Adding New Colors
 
-1. Add the raw color to `palette` in `tokens.ts`.
+1. Add the raw color to `palette` in `tokens.ts` (use the `palette.copilot*` namespace for new copilot-identity surfaces).
 2. Map it to a semantic token name in `tokenColors`.
-3. Reference the token in `themes.ts` for both dark and light themes.
+3. Reference the token in `themes.ts` for the active `dark_copilot` theme. (The legacy `lightTheme` is dead code; do not add new entries to it.)
 4. If it represents a status, add or update the corresponding sub-theme.
 
 ---

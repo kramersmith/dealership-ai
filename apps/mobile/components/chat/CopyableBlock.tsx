@@ -66,10 +66,11 @@ export function CopyableBlock({ children, text }: CopyableBlockProps) {
         <TouchableOpacity
           onPress={handleCopy}
           activeOpacity={0.85}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           {...hoverHandlers}
           style={{
-            width: 32,
-            height: 32,
+            width: 44,
+            height: 44,
             alignItems: 'center',
             justifyContent: 'center',
           }}

@@ -9,7 +9,6 @@ import {
   getAssistantMarkdownColors,
 } from './markdownStyles'
 import { ChatMarkdown } from './markdownRenderer'
-import { AssistantAvatar } from './AssistantAvatar'
 
 interface StreamingBubbleProps {
   text: string

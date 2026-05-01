@@ -70,13 +70,15 @@ dealership-ai/
 │   │   │   ├── useDesktopPanelPreference.ts # Client-local localStorage for desktop panel collapsed state
 │   │   │   ├── useScreenWidth.ts # Responsive breakpoint hook
 │   │   │   └── useWebAriaHiddenFocusWorkaround.ts # RN Web modal focus/a11y shim
-│   │   ├── stores/              # Zustand: auth, chat (with client-side message queue), deal, simulation, theme, userSettings
+│   │   ├── stores/              # Zustand: auth, chat (with client-side message queue), deal, simulation, userSettings (themeStore removed in ADR 0027 — single `dark_copilot` theme)
 │   │   └── lib/
 │   │       ├── apiClient.ts     # HTTP client for FastAPI backend (shared SSE parser for send + branch)
 │   │       ├── theme/
-│   │       │   ├── tokens.ts    # Centralized color palette + token colors
-│   │       │   └── themes.ts    # Dark/light themes + semantic sub-themes (danger, warning, success)
-│   │       ├── constants.ts     # APP_NAME, WEB_FONT_FAMILY, buyer context defaults, deal phases, APR thresholds, TIMER_TIPS, SCORE_DESCRIPTIONS, MAX_INSIGHTS_PREVIEW_ITEMS, animation/layout constants
+│   │       │   ├── tokens.ts    # Centralized color palette (incl. `palette.copilot*` slate/emerald/violet scales) + token colors
+│   │       │   ├── themes.ts    # `dark_copilot` (active) + semantic sub-themes (danger, warning, success); legacy lightTheme retained as dead code per ADR 0027
+│   │       │   └── manropeFont.ts # Tamagui createFont builder for Manrope (body/heading) — wires @expo-google-fonts/manrope weights, with MANROPE_WEB_STACK fallback
+│   │       ├── constants.ts     # APP_NAME, WEB_FONT_FAMILY (Manrope), DISPLAY_FONT_FAMILY (Outfit), MONO_FONT_FAMILY (JetBrains Mono), buyer context defaults, deal phases, APR thresholds, TIMER_TIPS, SCORE_DESCRIPTIONS, MAX_INSIGHTS_PREVIEW_ITEMS, animation/layout constants
+│   │       ├── scrollbarStyles.ts # Web-only scrollbar styling helpers for chat rail / insights sidebar (slate scrollbars matching the copilot identity)
 │   │       ├── headerTitles.ts  # Vehicle-aware header title resolution
 │   │       ├── dev/mockPanelUpdates.ts # Dev-only mock panel updates for animation testing
 │   │       ├── dealComputations.ts # Derived deal metrics (savings, computeOfferDelta, getNextActionRecommendation)
@@ -89,7 +91,7 @@ dealership-ai/
 │   └── backend/                 # FastAPI backend
 │       ├── app/
 │       │   ├── main.py          # FastAPI app with lifespan handler
-│       │   ├── core/            # Config, security (JWT + bcrypt), deps, structured logging, request context
+│       │   ├── core/            # Config, security (JWT via PyJWT + bcrypt), deps, structured logging, request context
 │       │   ├── db/              # Session, base, seed users
 │       │   ├── models/          # SQLAlchemy ORM + enums (StrEnum)
 │       │   ├── schemas/         # Pydantic request/response

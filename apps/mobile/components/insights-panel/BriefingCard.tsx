@@ -14,7 +14,7 @@ interface BriefingCardProps {
 }
 
 const ACCENT_PURPLE = palette.copilotPurple
-const ACCENT_BLUE = '#60a5fa'
+const ACCENT_BLUE = palette.accentBlue
 const ACCENT_SLATE = palette.slate400
 const ACCENT_EMERALD = palette.copilotEmerald
 const ACCENT_WARNING = palette.copilotWarning

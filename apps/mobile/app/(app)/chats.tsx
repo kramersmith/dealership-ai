@@ -790,7 +790,7 @@ export default function SessionsScreen() {
                                   // clearly; let the heavier blur carry the
                                   // "frosted" feel and keep text behind
                                   // legibly soft (Apple-Mail-style).
-                                  backgroundColor: 'rgba(3, 7, 18, 0.55)',
+                                  backgroundColor: palette.copilotChromeFloat,
                                   borderBottomWidth: 1,
                                   borderBottomColor: palette.ghostBgSubtle,
                                   ...(Platform.OS === 'web'

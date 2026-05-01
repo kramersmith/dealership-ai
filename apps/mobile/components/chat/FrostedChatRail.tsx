@@ -20,7 +20,7 @@ export function FrostedChatRail({ children, style, edgeToEdge = false }: Frosted
     borderRadius: edgeToEdge ? 0 : 24,
     borderWidth: edgeToEdge ? 0 : 1,
     borderColor: palette.ghostBorder,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    backgroundColor: palette.copilotFrostedRail,
     overflow: 'hidden',
     flexDirection: 'column',
     ...(Platform.OS === 'web'

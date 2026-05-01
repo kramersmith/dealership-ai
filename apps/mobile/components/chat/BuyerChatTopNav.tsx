@@ -13,7 +13,6 @@ interface BuyerChatTopNavProps {
   onNewChat: () => void
   recapHrefAvailable: boolean
   onRecapPress?: () => void
-  isDesktop: boolean
   /** When provided, renders an insights-panel toggle button left of the new-chat icon. */
   onInsightsTogglePress?: () => void
   /** True when the insights panel is currently visible — hides the toggle button. */
@@ -27,7 +26,6 @@ export function BuyerChatTopNav({
   onNewChat,
   recapHrefAvailable,
   onRecapPress,
-  isDesktop,
   onInsightsTogglePress,
   isInsightsOpen,
   isInsightsAnalyzing,
@@ -77,7 +75,6 @@ export function BuyerChatTopNav({
           <InsightsToggleButton
             onPress={onInsightsTogglePress}
             isAnalyzing={!!isInsightsAnalyzing}
-            isDesktop={isDesktop}
           />
         ) : null}
         <HeaderIconButton onPress={onNewChat} accessibilityLabel="Start new chat">
@@ -99,8 +96,6 @@ function InsightsToggleButton({
 }: {
   onPress: () => void
   isAnalyzing: boolean
-  /** No longer used — kept in the prop type for caller compatibility. */
-  isDesktop?: boolean
 }) {
   const { isHovered, hoverHandlers } = useHoverState()
 
@@ -148,7 +143,7 @@ function InsightsToggleButton({
         }}
       >
         <Sparkles size={14} color={palette.copilotEmerald} />
-        <Text fontSize={13} fontWeight="600" color="#a7f3d0">
+        <Text fontSize={13} fontWeight="600" color={palette.copilotEmerald200}>
           Insights
         </Text>
         {isAnalyzing ? (

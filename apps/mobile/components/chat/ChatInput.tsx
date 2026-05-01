@@ -197,8 +197,10 @@ export function ChatInput({
   const showStopButton = isGenerating && !!onStop
   const sendDisabled = disabled || !hasText
   // Source composer: outer band p-4 border-t border-white/10 bg-slate-950/40
-  const composerBandBg = isCopilotChat ? 'rgba(2, 6, 23, 0.40)' : (palette.copilotChromeTray as any)
-  const composerBandBorder = isCopilotChat ? 'rgba(255, 255, 255, 0.16)' : '$borderColor'
+  const composerBandBg = isCopilotChat
+    ? palette.copilotInsightsDesktopPanel
+    : (palette.copilotChromeTray as any)
+  const composerBandBorder = isCopilotChat ? palette.copilotComposerHairline : '$borderColor'
 
   return (
     <YStack width="100%">
@@ -217,7 +219,7 @@ export function ChatInput({
             paddingBottom={10}
             // Lighter slate tint so the edit-mode banner reads as its own band
             // distinct from the composer below.
-            backgroundColor="rgba(51, 65, 85, 0.45)"
+            backgroundColor={palette.copilotComposerBannerBg}
             borderTopWidth={1}
             borderTopColor={palette.ghostBgHover}
           >

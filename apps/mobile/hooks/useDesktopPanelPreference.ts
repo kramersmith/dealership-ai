@@ -12,8 +12,9 @@ function readStoredDesktopPanelCollapsed(): boolean {
     // Clear any stale preference so the panel always defaults to expanded.
     // Earlier test runs may have collapsed it via the close button.
     window.localStorage.removeItem(DESKTOP_PANEL_STORAGE_KEY)
-  } catch {
-    // ignore
+  } catch (err) {
+    // Storage access blocked (private mode / quota); panel still defaults to expanded.
+    console.warn('[useDesktopPanelPreference] failed to clear stored preference:', err)
   }
 
   return false
@@ -51,8 +52,9 @@ export function useDesktopPanelPreference() {
       } else {
         window.localStorage.removeItem(DESKTOP_PANEL_STORAGE_KEY)
       }
-    } catch {
-      // Ignore storage write failures; the in-memory state still updates this session.
+    } catch (err) {
+      // In-memory state still updates this session; persistence is best-effort.
+      console.warn('[useDesktopPanelPreference] failed to persist preference:', err)
     }
   }, [])
 

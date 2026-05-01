@@ -3,6 +3,7 @@ import { YStack, Text, Theme } from 'tamagui'
 import { Scale } from '@tamagui/lucide-icons'
 import type { ComparisonTable as ComparisonTableType, DealComparison } from '@/lib/types'
 import { AppCard, ComparisonTable } from '@/components/shared'
+import { palette } from '@/lib/theme/tokens'
 import {
   insightCardBodyProps,
   insightCardEmphasisProps,
@@ -82,7 +83,10 @@ export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
     <AppCard
       gap="$2"
       header={
-        <CardTitle icon={<Scale size={12} color="#22d3ee" />} iconAccent="#22d3ee">
+        <CardTitle
+          icon={<Scale size={12} color={palette.accentCyan} />}
+          iconAccent={palette.accentCyan}
+        >
           {title}
         </CardTitle>
       }

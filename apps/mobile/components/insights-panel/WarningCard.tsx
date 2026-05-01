@@ -14,7 +14,7 @@ interface WarningCardProps {
 }
 
 const ACCENT_WARNING = palette.copilotWarning
-const ACCENT_DANGER = '#ef4444'
+const ACCENT_DANGER = palette.danger
 
 export function WarningCard({ title, content, priority }: WarningCardProps) {
   const severity = (content.severity as 'critical' | 'warning') ?? 'warning'

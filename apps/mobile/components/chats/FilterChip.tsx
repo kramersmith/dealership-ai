@@ -119,7 +119,7 @@ export function FilterChip<TValue extends string>({
                   width: 6,
                   height: 6,
                   borderRadius: 999,
-                  backgroundColor: '#34d399',
+                  backgroundColor: palette.copilotEmerald,
                   marginLeft: 2,
                 }}
               />
@@ -167,7 +167,7 @@ function Dropdown<TValue extends string>({
 }) {
   return (
     <YStack
-      backgroundColor="rgba(15, 23, 42, 0.95)"
+      backgroundColor={palette.copilotMenuFrost}
       borderRadius={12}
       borderWidth={1}
       borderColor={palette.ghostBorder}
@@ -182,12 +182,12 @@ function Dropdown<TValue extends string>({
           } as any)
         : {})}
     >
-      {options.map((opt) => (
+      {options.map((option) => (
         <DropdownRow
-          key={opt.value}
-          label={opt.label}
-          selected={opt.value === selected}
-          onPress={() => onSelect(opt.value)}
+          key={option.value}
+          label={option.label}
+          selected={option.value === selected}
+          onPress={() => onSelect(option.value)}
         />
       ))}
     </YStack>
@@ -211,11 +211,12 @@ function DropdownRow({
       accessibilityState={{ selected }}
       {...hoverHandlers}
       style={({ pressed }) => ({
-        height: 36,
+        minHeight: 44,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 12,
+        paddingVertical: 8,
         marginHorizontal: 4,
         borderRadius: 8,
         backgroundColor: isHovered ? palette.ghostBgSubtle : 'transparent',
@@ -230,7 +231,7 @@ function DropdownRow({
       >
         {label}
       </Text>
-      {selected ? <Check size={14} color="#34d399" /> : null}
+      {selected ? <Check size={14} color={palette.copilotEmerald} /> : null}
     </Pressable>
   )
 }

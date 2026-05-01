@@ -31,13 +31,13 @@ export function AssistantAvatar({ size = 'sm' }: { size?: AvatarSize }) {
       {...(Platform.OS === 'web'
         ? {
             style: {
-              background: `radial-gradient(circle at 30% 30%, #ede9fe 0%, ${palette.copilotAssistantAvatar} 55%, #7c3aed 100%)`,
+              background: `radial-gradient(circle at 30% 30%, ${palette.copilotAssistantHighlight} 0%, ${palette.copilotAssistantAvatar} 55%, ${palette.copilotAssistantGlowDeep} 100%)`,
               boxShadow: `0 0 ${dims.glow}px rgba(168, 85, 247, 0.45)`,
             },
           }
         : {
             backgroundColor: palette.copilotAssistantAvatar,
-            shadowColor: '#a855f7',
+            shadowColor: palette.copilotAssistantGlow,
             shadowOffset: { width: 0, height: 0 },
             shadowOpacity: 0.45,
             shadowRadius: dims.glow / 2,

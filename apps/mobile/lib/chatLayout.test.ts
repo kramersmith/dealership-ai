@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CHAT_PAGE_MAX_WIDTH_PX,
   CHAT_SCREEN_LAYOUT,
+  DESKTOP_INSIGHTS_MAX_PX,
+  DESKTOP_INSIGHTS_MIN_PX,
   getChatBottomPadding,
   getChatPageHorizontalPaddingPx,
   getChatPageVerticalPaddingPx,
@@ -10,6 +12,7 @@ import {
   getDesktopChatPageRailStyle,
   getDesktopChatRailStyle,
   getDesktopComposerReservePx,
+  getDesktopInsightsWidthPx,
   getWebQueuePreviewRightInsetPx,
 } from '@/lib/chatLayout'
 import { CHAT_VIEW_MAX_WIDTH, WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
@@ -53,6 +56,31 @@ describe('getDesktopChatPageRailStyle', () => {
 describe('CHAT_PAGE_MAX_WIDTH_PX', () => {
   it('matches Stitch example main max width', () => {
     expect(CHAT_PAGE_MAX_WIDTH_PX).toBe(1600)
+  })
+})
+
+describe('getDesktopInsightsWidthPx', () => {
+  it('uses 5/12 of inner width below the xl breakpoint (1024–1279px)', () => {
+    // 1100 * 5/12 = 458.33 -> 458, within [360, 560]
+    expect(getDesktopInsightsWidthPx(1100)).toBe(458)
+  })
+
+  it('uses 4/12 of inner width at or above xl (≥1280px)', () => {
+    // 1280 * 4/12 = 426.66 -> 427, within [360, 560]
+    expect(getDesktopInsightsWidthPx(1280)).toBe(427)
+  })
+
+  it('caps inner width at CHAT_PAGE_MAX_WIDTH_PX before applying the fraction', () => {
+    // Beyond 1600 the inner width is clamped to 1600, then * 4/12 = 533
+    expect(getDesktopInsightsWidthPx(2400)).toBe(533)
+  })
+
+  it('clamps to the min/max band on extreme screen widths', () => {
+    // Tiny desktop -> would compute below 360, clamps to min
+    expect(getDesktopInsightsWidthPx(800)).toBe(DESKTOP_INSIGHTS_MIN_PX)
+    // The configured fraction never produces > max with current constants, but
+    // verify the clamp upper-bound holds as a contract.
+    expect(getDesktopInsightsWidthPx(10_000)).toBeLessThanOrEqual(DESKTOP_INSIGHTS_MAX_PX)
   })
 })
 

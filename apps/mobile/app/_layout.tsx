@@ -46,16 +46,21 @@ export default function RootLayout() {
   })
 
   useEffect(() => {
-    if (error) throw error
+    if (error) {
+      // Don't crash the app on a font load failure — system / web fallbacks
+      // (see MANROPE_WEB_STACK) keep the UI legible. Logged for diagnostics.
+      console.warn('[RootLayout] font load failed; falling back to system fonts:', error)
+    }
   }, [error])
 
   useEffect(() => {
-    if (loaded) {
+    if (loaded || error) {
       SplashScreen.hideAsync()
     }
-  }, [loaded])
+  }, [loaded, error])
 
-  if (!loaded) return null
+  // Render once fonts have loaded OR after a load failure — never block forever on missing assets.
+  if (!loaded && !error) return null
 
   return (
     <TamaguiProvider config={config} defaultTheme={APP_THEME}>

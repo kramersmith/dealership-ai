@@ -1,64 +1,31 @@
-import { XStack, YStack, Text } from 'tamagui'
-import { DISPLAY_FONT_FAMILY } from '@/lib/constants'
 import type { BuyerContext, DealPhase, DealState } from '@/lib/types'
-import { palette } from '@/lib/theme/tokens'
+import { CopilotPageHero } from '@/components/shared/CopilotPageHero'
 
-function HeroHeadline({
-  buyerContext,
-  phase,
-  isDesktop,
-}: {
-  buyerContext: BuyerContext
+interface HeroCopy {
+  leading: string
+  accent: string
+  trailing: string
+}
+
+/**
+ * Resolve buyer-chat hero copy from negotiation phase + buyer context.
+ * Phase wins over context (e.g. once you're negotiating, the headline shifts
+ * away from the research-mode framing).
+ */
+function resolveBuyerHeroCopy(
+  buyerContext: BuyerContext,
   phase: DealPhase | null | undefined
-  isDesktop: boolean
-}) {
-  const titleSize = isDesktop ? 48 : 32
-  const lineHeight = Math.round(titleSize * 1.05)
-
-  const baseTextProps = {
-    fontSize: titleSize,
-    fontWeight: '300' as const,
-    color: '$color' as const,
-    lineHeight,
-    letterSpacing: isDesktop ? -1.4 : -0.8,
-    flexShrink: 1,
-    fontFamily: DISPLAY_FONT_FAMILY,
-  }
-  const accentProps = {
-    fontStyle: 'italic' as const,
-    fontWeight: '400' as const,
-    color: palette.copilotEmerald,
-    fontFamily: DISPLAY_FONT_FAMILY,
-  }
-
+): HeroCopy {
   if (phase === 'negotiation' || phase === 'closing') {
-    return (
-      <Text {...baseTextProps}>
-        Let&apos;s close this <Text {...accentProps}>deal</Text>.
-      </Text>
-    )
+    return { leading: "Let's close this", accent: 'deal', trailing: '.' }
   }
-
   if (buyerContext === 'reviewing_deal') {
-    return (
-      <Text {...baseTextProps}>
-        Let&apos;s decode this <Text {...accentProps}>deal</Text>.
-      </Text>
-    )
+    return { leading: "Let's decode this", accent: 'deal', trailing: '.' }
   }
   if (buyerContext === 'at_dealership') {
-    return (
-      <Text {...baseTextProps}>
-        You&apos;ve got <Text {...accentProps}>backup</Text>
-        {' — stay sharp.'}
-      </Text>
-    )
+    return { leading: "You've got", accent: 'backup', trailing: ' — stay sharp.' }
   }
-  return (
-    <Text {...baseTextProps}>
-      Let&apos;s find the <Text {...accentProps}>right car</Text>.
-    </Text>
-  )
+  return { leading: "Let's find the", accent: 'right car', trailing: '.' }
 }
 
 interface BuyerChatPageHeroProps {
@@ -68,14 +35,16 @@ interface BuyerChatPageHeroProps {
 }
 
 export function BuyerChatPageHero({ dealState, buyerContext, isDesktop }: BuyerChatPageHeroProps) {
-  const activeDeal = dealState?.deals?.find((d) => d.id === dealState.activeDealId) ?? null
+  const activeDeal = dealState?.deals?.find((deal) => deal.id === dealState.activeDealId) ?? null
   const phase = activeDeal?.phase ?? null
+  const copy = resolveBuyerHeroCopy(buyerContext, phase)
 
   return (
-    <XStack paddingBottom="$3">
-      <YStack gap="$2" flexShrink={1} minWidth={0} flex={1}>
-        <HeroHeadline buyerContext={buyerContext} phase={phase} isDesktop={isDesktop} />
-      </YStack>
-    </XStack>
+    <CopilotPageHero
+      leading={copy.leading}
+      accent={copy.accent}
+      trailing={copy.trailing}
+      isDesktop={isDesktop}
+    />
   )
 }

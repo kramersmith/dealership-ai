@@ -32,7 +32,7 @@ export function ModalGhostButton({
       accessibilityState={disabled ? { disabled: true } : undefined}
       {...hoverHandlers}
       style={({ pressed }) => ({
-        height: 40,
+        height: 44,
         minWidth: 88,
         flex,
         paddingHorizontal: 16,
@@ -84,9 +84,9 @@ export function ModalPrimaryButton({
   // White pill on dark bg → "depress" on hover (slight darken to slate-200);
   // red pill darkens to a deeper red. Both follow the same hover convention so
   // tapping/hovering feels consistent across the app.
-  const idleBg = isDanger ? '#ef4444' : palette.slate50
-  const hoverBg = isDanger ? '#dc2626' : palette.slate200
-  const textColor = isDanger ? '#ffffff' : palette.slate900
+  const idleBg = isDanger ? palette.danger : palette.slate50
+  const hoverBg = isDanger ? palette.dangerPressed : palette.slate200
+  const textColor = isDanger ? palette.white : palette.slate900
 
   return (
     <Pressable
@@ -97,7 +97,7 @@ export function ModalPrimaryButton({
       accessibilityState={disabled ? { disabled: true } : undefined}
       {...hoverHandlers}
       style={({ pressed }) => ({
-        height: 40,
+        height: 44,
         minWidth: 88,
         flex,
         paddingHorizontal: 16,

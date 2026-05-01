@@ -151,7 +151,7 @@ function PillNav({ tabs }: { tabs: CopilotNavTab[]; isDesktop: boolean }) {
 
   return (
     <XStack
-      backgroundColor="rgba(15, 23, 42, 0.60)"
+      backgroundColor={palette.copilotFrostedRail}
       borderWidth={1}
       borderColor={palette.ghostBorder}
       borderRadius={999}
@@ -189,6 +189,9 @@ function PillNav({ tabs }: { tabs: CopilotNavTab[]; isDesktop: boolean }) {
             accessibilityRole="button"
             accessibilityLabel={tab.label}
             accessibilityState={{ disabled: !interactive }}
+            // Inner pill is 32-tall for visual density; hitSlop=6 brings the
+            // tap target up to 44 vertically so it meets the touch-target rule.
+            hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
             style={({ pressed }) => ({
               ...baseStyle,
               opacity: tab.disabled ? 0.45 : pressed ? 0.85 : 1,

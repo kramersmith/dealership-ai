@@ -32,8 +32,6 @@ import {
 } from './markdownStyles'
 import { ChatMarkdown } from './markdownRenderer'
 import { QuotedCardPreview } from './QuotedCardPreview'
-import { AssistantAvatar, UserAvatar } from './AssistantAvatar'
-import { useUserInitial } from '@/hooks/useUserInitial'
 
 interface ChatBubbleProps {
   message: Message
@@ -298,7 +296,6 @@ export const ChatBubble = memo(function ChatBubble({
   const userVisibleBody =
     isUser && typeof editedBodyText === 'string' ? editedBodyText : message.content
   const isSystem = message.role === 'system'
-  const userInitial = useUserInitial()
   const prefersReducedMotion = usePrefersReducedMotion()
   const { opacity, translateY } = useSlideIn(skipAnimation || prefersReducedMotion ? 0 : 250)
   const theme = useTheme()

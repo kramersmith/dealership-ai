@@ -846,7 +846,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
     borderWidth: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.60)',
+    backgroundColor: palette.copilotFrostedRail,
     overflow: 'hidden',
   },
   cardHeader: {

@@ -66,7 +66,7 @@ export default function LoginScreen() {
               borderRadius: 24,
               borderWidth: 1,
               borderColor: palette.ghostBorder,
-              backgroundColor: 'rgba(15, 23, 42, 0.60)',
+              backgroundColor: palette.copilotFrostedRail,
               padding: 28,
               gap: 20,
               ...(Platform.OS === 'web'
@@ -184,7 +184,7 @@ export default function LoginScreen() {
               onPress={handleLogin}
               disabled={isLoading}
               pressStyle={{ backgroundColor: palette.slate200 }}
-              hoverStyle={{ backgroundColor: '#ffffff' }}
+              hoverStyle={{ backgroundColor: palette.white }}
             >
               <Button.Text color={palette.slate900} fontWeight="600">
                 {isLoading ? 'Signing in…' : 'Sign In'}

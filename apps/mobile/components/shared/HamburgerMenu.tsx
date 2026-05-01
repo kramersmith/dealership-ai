@@ -191,8 +191,8 @@ export function HamburgerMenu() {
               style={{ height: 44, maxHeight: 44 }}
             >
               <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal={16}>
-                <LogOut size={16} color="#f87171" />
-                <Text fontSize={14} color="#f87171" fontWeight="500">
+                <LogOut size={16} color={palette.dangerLight} />
+                <Text fontSize={14} color={palette.dangerLight} fontWeight="500">
                   Sign Out
                 </Text>
               </XStack>

@@ -434,7 +434,7 @@ export const InsightsPanel = memo(function InsightsPanel({
   const statusInline = (() => {
     const tone = isPausedMode
       ? { dot: palette.copilotWarning, text: palette.copilotWarning }
-      : { dot: palette.copilotEmerald, text: 'rgba(110, 231, 183, 0.95)' }
+      : { dot: palette.copilotEmerald, text: palette.copilotEmerald200Tint95 }
     const label = isPanelAnalyzing
       ? 'Updating now…'
       : isSettingsUpdating

@@ -23,6 +23,16 @@ export const palette = {
   warning: '#EAB308',
   danger: '#EF4444',
   dangerPressed: '#DC2626',
+  /** Lighter red used for inline icon/text accents on dark surfaces (red-400). */
+  dangerLight: '#f87171',
+  /** Cyan-400 — comparison-card accent. */
+  accentCyan: '#22d3ee',
+  /** Blue-400 — briefing-card neutral accent. */
+  accentBlue: '#60a5fa',
+  /** Violet glow for the assistant avatar (purple-400 shadow + purple-600 ring stop). */
+  copilotAssistantGlow: '#a855f7',
+  copilotAssistantGlowDeep: '#7c3aed',
+  copilotAssistantHighlight: '#ede9fe',
 
   /** For text/icons on colored surfaces (status pills, brand buttons). */
   white: '#FFFFFF',
@@ -92,6 +102,10 @@ export const palette = {
   copilotEmeraldBorder30: 'rgba(52, 211, 153, 0.30)',
   copilotEmeraldBorder40: 'rgba(52, 211, 153, 0.40)',
   copilotEmeraldBorder55: 'rgba(52, 211, 153, 0.55)',
+  /** Emerald-200 — high-contrast text on emerald-tinted surfaces (Insights pill label). */
+  copilotEmerald200: '#a7f3d0',
+  /** Emerald-200 with alpha — analyzing-state preview text on slate panels. */
+  copilotEmerald200Tint95: 'rgba(110, 231, 183, 0.95)',
   /** Source: bg-slate-800/60 + border-white/5 (assistant). */
   copilotChatAssistantBg: 'rgba(30, 41, 59, 0.6)',
   copilotChatAssistantBorder: 'rgba(255, 255, 255, 0.05)',
@@ -102,6 +116,23 @@ export const palette = {
   copilotChatUserText: '#ecfdf5',
   /** Main frosted chat column (slightly lifted from page bg). */
   copilotFrostedPanel: 'rgba(15, 23, 42, 0.9)',
+  /** Frosted-rail bg — slightly translucent slate-900 used by FrostedChatRail
+   *  and the CopilotTopNav pill-row backdrop. */
+  copilotFrostedRail: 'rgba(15, 23, 42, 0.6)',
+  /** Mobile insights sheet bg — denser frost than the chat rail. */
+  copilotInsightsMobileSheet: 'rgba(15, 23, 42, 0.92)',
+  /** Desktop insights side-panel bg — most translucent of the frost trio. */
+  copilotInsightsDesktopPanel: 'rgba(2, 6, 23, 0.40)',
+  /** Filter-chip dropdown menu bg (very opaque slate-900). */
+  copilotMenuFrost: 'rgba(15, 23, 42, 0.95)',
+  /** Soft slate-700 wash — secondary banner inside the composer (edit-mode). */
+  copilotComposerBannerBg: 'rgba(51, 65, 85, 0.45)',
+  /** Slightly stronger 1px hairline used by the chat composer top border. */
+  copilotComposerHairline: 'rgba(255, 255, 255, 0.16)',
+  /** Translucent slate-950 wash — used for floating chrome over scrolling
+   *  content (e.g. the chat-list search row backdrop) where heavier
+   *  backdrop blur carries the "frosted" feel. */
+  copilotChromeFloat: 'rgba(3, 7, 18, 0.55)',
   /** Hero “ACTIVE NEGOTIATION” pill. */
   copilotBadgeBg: 'rgba(124, 58, 237, 0.32)',
   copilotBadgeBorder: 'rgba(167, 139, 250, 0.4)',

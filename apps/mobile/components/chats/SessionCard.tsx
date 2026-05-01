@@ -168,7 +168,7 @@ export function SessionCard({
   const placeholderVal = (theme.placeholderColor?.val as string | undefined) ?? '#888'
   const colorVal = (theme.color?.val as string | undefined) ?? '#1C1E21'
   const bgStrong = isCopilotTheme
-    ? 'rgba(15, 23, 42, 0.60)'
+    ? palette.copilotFrostedRail
     : ((theme.backgroundStrong?.val as string | undefined) ?? '#fff')
   const borderCol = isCopilotTheme
     ? palette.ghostBorder

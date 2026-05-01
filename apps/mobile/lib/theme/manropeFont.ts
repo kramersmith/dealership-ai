@@ -48,16 +48,19 @@ export function createManropeFont(
   } = {}
 ) {
   const size = Object.fromEntries(
-    Object.entries({ ...defaultSizes, ...(font.size ?? {}) }).map(([k, v]) => [
-      k,
-      sizeSize(Number(v)),
+    Object.entries({ ...defaultSizes, ...(font.size ?? {}) }).map(([sizeKey, sizeValue]) => [
+      sizeKey,
+      sizeSize(Number(sizeValue)),
     ])
   ) as Record<string, number>
 
   const config: Record<string, unknown> = {
     family: isWeb ? MANROPE_WEB_STACK : 'Manrope',
     lineHeight: Object.fromEntries(
-      Object.entries(size).map(([k, v]) => [k, sizeLineHeight(Number(getVariableValue(v)))])
+      Object.entries(size).map(([sizeKey, sizeValue]) => [
+        sizeKey,
+        sizeLineHeight(Number(getVariableValue(sizeValue))),
+      ])
     ),
     weight: {
       4: '400',

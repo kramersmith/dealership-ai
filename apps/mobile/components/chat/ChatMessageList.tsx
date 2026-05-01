@@ -11,7 +11,6 @@ import { ChatBubble } from './ChatBubble'
 import { StreamingBubble } from './StreamingBubble'
 import { VinAssistCard } from './VinAssistCard'
 import { MultiVinAssistCard } from './MultiVinAssistCard'
-import { AssistantAvatar } from './AssistantAvatar'
 
 /** Returns the ID of a message that was just promoted from StreamingBubble,
  *  so ChatBubble can skip its entrance animation (the text was already visible). */

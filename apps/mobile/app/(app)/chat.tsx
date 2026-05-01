@@ -10,8 +10,6 @@ import {
   View,
   Animated,
   Dimensions,
-  Easing,
-  StyleSheet,
 } from 'react-native'
 import { YStack, XStack, Text, Theme } from 'tamagui'
 import {
@@ -24,16 +22,11 @@ import {
 import { Pause, Sparkles, X } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
-  APP_NAME,
   DEFAULT_BUYER_CONTEXT,
   INSIGHTS_COLLAPSED_PREVIEW_UPDATING,
   MAX_INSIGHTS_PREVIEW_ITEMS,
 } from '@/lib/constants'
-import {
-  getCollapsedPrimaryHeadline,
-  getDedupedPanelIconKinds,
-  getInsightsPreviewItems,
-} from '@/lib/insightsCollapsedPreview'
+import { getDedupedPanelIconKinds, getInsightsPreviewItems } from '@/lib/insightsCollapsedPreview'
 import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
 import { DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT } from '@/lib/dev/mockPanelUpdates'
 import {
@@ -42,7 +35,6 @@ import {
   getChatBottomPadding,
   getChatPageHorizontalPaddingPx,
   getChatPageVerticalPaddingPx,
-  getContextPickerBottomPadding,
   getDesktopChatPageRailStyle,
   getDesktopChatRailStyle,
   getDesktopInsightsWidthPx,
@@ -58,14 +50,7 @@ import { useDealStore } from '@/stores/dealStore'
 import { useUserSettingsStore } from '@/stores/userSettingsStore'
 import { useChat } from '@/hooks/useChat'
 import { useIconEntrance, useSlideIn } from '@/hooks/useAnimatedValue'
-import {
-  createFinishFlashSequence,
-  scheduleFinishFlashHaptic,
-  useBreathingPulseOverlay,
-  useSignatureEntranceAnimation,
-} from '@/hooks/useInsightsAnimations'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
-import { DESKTOP_INSIGHTS_WIDTH } from '@/hooks/useDesktopChatTransition'
 import { useDesktopInsightsShell } from '@/hooks/useDesktopInsightsShell'
 import { useDesktopPanelPreference } from '@/hooks/useDesktopPanelPreference'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
@@ -73,7 +58,6 @@ import {
   InsightsPanel,
   InsightPanelPreviewIcons,
   InsightsPreviewItemChip,
-  describePanelIconKindsForA11y,
 } from '@/components/insights-panel'
 import {
   BuyerChatHeader,
@@ -305,33 +289,11 @@ export default function ChatScreen() {
       ? getDesktopChatRailStyle()
       : getDesktopChatPageRailStyle()
     : undefined
-  // When the composer sits inside the FrostedChatRail (active session), the rail's
-  // own rounded edges define the composer's bounds. Its own band padding (16) handles
-  // the inset symmetrically. Only the context-picker mode uses page-shell padding.
-  const desktopComposerLeftPx = showContextPicker
-    ? CHAT_SCREEN_LAYOUT.desktopChatRailLeftGutterPx
-    : 0
 
   const panelPreviewIconKinds = useMemo(
     () => getDedupedPanelIconKinds(dealState?.aiPanelCards),
     [dealState?.aiPanelCards]
   )
-
-  const collapsedPrimaryHeadline = useMemo(
-    () => getCollapsedPrimaryHeadline(dealState, dismissedFlagIds, buyerContextForPreview),
-    [dealState, dismissedFlagIds, buyerContextForPreview]
-  )
-
-  const collapsedInsightsAccessibilityLabel = useMemo(() => {
-    const pausedPrefix =
-      insightsUpdateMode === 'paused' && !isPanelAnalyzing ? 'Insights updates paused. ' : ''
-    const updating = isPanelAnalyzing ? 'Insights panel is updating. ' : ''
-    const iconPart =
-      panelPreviewIconKinds.length > 0
-        ? `. Includes ${describePanelIconKindsForA11y(panelPreviewIconKinds)}`
-        : ''
-    return `${pausedPrefix}Open insights panel. ${updating}${collapsedPrimaryHeadline}${iconPart}`
-  }, [collapsedPrimaryHeadline, insightsUpdateMode, isPanelAnalyzing, panelPreviewIconKinds])
 
   const handleDesktopCollapsePress = useCallback(() => {
     setDesktopInsightsCollapsed(true)
@@ -859,11 +821,11 @@ export default function ChatScreen() {
       }
       return (
         <XStack alignItems="center" gap={6} flexShrink={0}>
-          <Pause size={12} color="#fbbf24" />
+          <Pause size={12} color={palette.copilotWarning} />
           <Text
             fontSize={11}
             fontWeight="600"
-            color="#fbbf24"
+            color={palette.copilotWarning}
             letterSpacing={0.6}
             textTransform="uppercase"
           >
@@ -983,7 +945,6 @@ export default function ChatScreen() {
           onNewChat={handleNewSession}
           recapHrefAvailable={DEAL_RECAP_ROUTE_ENABLED && !!activeSessionId}
           onRecapPress={handleRecapPress}
-          isDesktop={isDesktop}
           onInsightsTogglePress={showInsightsToggle ? handleInsightsTogglePress : undefined}
           isInsightsOpen={isInsightsPanelOpen}
           isInsightsAnalyzing={isPanelAnalyzing}
@@ -1030,7 +991,7 @@ export default function ChatScreen() {
               <View style={{ flex: 1, overflow: 'visible' }}>
                 <YStack
                   flex={1}
-                  backgroundColor="rgba(2, 6, 23, 0.40)"
+                  backgroundColor={palette.copilotInsightsDesktopPanel}
                   borderWidth={1}
                   borderColor={palette.ghostBorder}
                   borderRadius={CHAT_SCREEN_LAYOUT.desktopInsightsSheetRadiusPx}
@@ -1260,7 +1221,7 @@ export default function ChatScreen() {
               >
                 <YStack
                   flex={1}
-                  backgroundColor="rgba(15, 23, 42, 0.92)"
+                  backgroundColor={palette.copilotInsightsMobileSheet}
                   overflow="hidden"
                   {...(Platform.OS === 'web'
                     ? {

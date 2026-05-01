@@ -34,7 +34,7 @@ export function AppCard({
   // Source uses border-white/10 but our backdrop-blur softens it visually —
   // bumping to 14% so the card edges read as crisply as the source's.
   const cardBorder = isCopilotChat ? 'rgba(255, 255, 255, 0.14)' : '$borderColor'
-  const cardBackground = isCopilotChat ? 'rgba(15, 23, 42, 0.60)' : '$backgroundStrong'
+  const cardBackground = isCopilotChat ? palette.copilotFrostedRail : '$backgroundStrong'
 
   const { width, maxWidth, minWidth, alignSelf, ...restProps } = props
 

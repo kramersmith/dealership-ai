@@ -39,7 +39,7 @@ export default function RegisterScreen() {
               borderRadius: 24,
               borderWidth: 1,
               borderColor: palette.ghostBorder,
-              backgroundColor: 'rgba(15, 23, 42, 0.60)',
+              backgroundColor: palette.copilotFrostedRail,
               padding: 28,
               gap: 20,
               ...(Platform.OS === 'web'
@@ -137,7 +137,7 @@ export default function RegisterScreen() {
               onPress={handleRegister}
               disabled={isLoading}
               pressStyle={{ backgroundColor: palette.slate200 }}
-              hoverStyle={{ backgroundColor: '#ffffff' }}
+              hoverStyle={{ backgroundColor: palette.white }}
             >
               <Button.Text color={palette.slate900} fontWeight="600">
                 {isLoading ? 'Creating account…' : 'Create Account'}
@@ -178,12 +178,12 @@ function RoleToggle({
       size="$5"
       borderRadius={14}
       borderWidth={1}
-      backgroundColor={active ? palette.slate50 : 'rgba(15, 23, 42, 0.60)'}
+      backgroundColor={active ? palette.slate50 : palette.copilotFrostedRail}
       borderColor={active ? palette.slate50 : palette.ghostBorder}
       onPress={onPress}
       pressStyle={{ opacity: 0.85, scale: 0.98 }}
       hoverStyle={{
-        borderColor: active ? '#ffffff' : palette.copilotEmeraldBorder40,
+        borderColor: active ? palette.white : palette.copilotEmeraldBorder40,
       }}
     >
       <Button.Text color={active ? palette.slate900 : palette.slate200} fontWeight="600">
