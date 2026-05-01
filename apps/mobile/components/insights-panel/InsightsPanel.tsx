@@ -1,12 +1,14 @@
 import { useRef, useEffect, useCallback, useMemo, memo, useState, type ReactNode } from 'react'
 import { Animated, Easing, Platform, ScrollView } from 'react-native'
 import { YStack, XStack, Text, Button, useTheme } from 'tamagui'
-import { BarChart3, RefreshCw, Sparkles } from '@tamagui/lucide-icons'
+import { BarChart3, Pause, Play, RefreshCw, Sparkles } from '@tamagui/lucide-icons'
+import { HeaderIconButton } from '@/components/shared'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { api } from '@/lib/api'
-import { WEB_SCROLLBAR_GUTTER_PX } from '@/lib/constants'
+import { DISPLAY_FONT_FAMILY } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { webScrollbarStyle } from '@/lib/scrollbarStyles'
 import { palette } from '@/lib/theme/tokens'
 import type { AiPanelCard, DealState, QuotedCard, Vehicle } from '@/lib/types'
 import { orderedVisibleInsightCards } from '@/lib/insightsPanelCardOrder'
@@ -115,6 +117,52 @@ function EmptyState({ thinking }: { thinking: boolean }) {
   )
 }
 
+/**
+ * RefreshCw icon that spins continuously while `isSpinning` is true. Used in
+ * the InsightsPanel header so the refresh affordance keeps animating until
+ * the panel finishes updating. Honors reduced-motion (renders a static icon).
+ */
+function SpinningRefreshIcon({
+  isSpinning,
+  prefersReducedMotion,
+}: {
+  isSpinning: boolean
+  prefersReducedMotion: boolean
+}) {
+  const rotation = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    if (!isSpinning || prefersReducedMotion) {
+      rotation.stopAnimation(() => rotation.setValue(0))
+      return
+    }
+    rotation.setValue(0)
+    const loop = Animated.loop(
+      Animated.timing(rotation, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      })
+    )
+    loop.start()
+    return () => {
+      loop.stop()
+    }
+  }, [isSpinning, prefersReducedMotion, rotation])
+
+  const rotate = rotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  })
+
+  return (
+    <Animated.View style={{ transform: [{ rotate }] }}>
+      <RefreshCw size={16} color={palette.slate300} />
+    </Animated.View>
+  )
+}
+
 function PanelUpdatingBanner({
   visible,
   prefersReducedMotion,
@@ -168,7 +216,7 @@ function PanelUpdatingBanner({
         borderColor="$borderColor"
         backgroundColor="$brandSubtle"
       >
-        <Sparkles size={14} color="$brand" />
+        <Sparkles size={18} color="$brand" />
         <Text fontSize={12} fontWeight="600" color="$brand" flex={1}>
           Updating insights from your latest message...
         </Text>
@@ -236,10 +284,6 @@ export const InsightsPanel = memo(function InsightsPanel({
   const isSettingsUpdating = useUserSettingsStore((state) => state.isLoading)
   const prefersReducedMotion = usePrefersReducedMotion()
   const theme = useTheme()
-  const panelContentPaddingRight =
-    Platform.OS === 'web'
-      ? Math.max(0, INSIGHTS_CONTENT_HORIZONTAL_PADDING_PX - WEB_SCROLLBAR_GUTTER_PX)
-      : INSIGHTS_CONTENT_HORIZONTAL_PADDING_PX
 
   const panelOpacity = useRef(new Animated.Value(1)).current
   const panelTranslateY = useRef(new Animated.Value(0)).current
@@ -384,116 +428,109 @@ export const InsightsPanel = memo(function InsightsPanel({
   const toggleUpdateMode = useCallback(() => {
     setUpdateMode(isPausedMode ? 'live' : 'paused')
   }, [isPausedMode, setUpdateMode])
-  const updatesExplainer = isPanelAnalyzing
-    ? 'Updating now...'
-    : isSettingsUpdating
-      ? 'Saving...'
-      : isPausedMode
-        ? 'Paused · Refresh manually'
-        : 'Updates after each reply'
+  // Inline status badge next to the title — green "Updates after each reply" when
+  // live, slate "Paused · Refresh manually" when paused. Shows "Updating now…" /
+  // "Saving…" while in transition.
+  const statusInline = (() => {
+    const tone = isPausedMode
+      ? { dot: palette.copilotWarning, text: palette.copilotWarning }
+      : { dot: palette.copilotEmerald, text: 'rgba(110, 231, 183, 0.95)' }
+    const label = isPanelAnalyzing
+      ? 'Updating now…'
+      : isSettingsUpdating
+        ? 'Saving…'
+        : isPausedMode
+          ? 'Paused · Refresh manually'
+          : 'Updates after each reply'
+    return (
+      <XStack alignItems="center" gap={6} flexShrink={0}>
+        <YStack width={6} height={6} borderRadius={999} backgroundColor={tone.dot} />
+        <Text fontSize={11} fontWeight="500" color={tone.text} letterSpacing={0.2}>
+          {label}
+        </Text>
+      </XStack>
+    )
+  })()
+
   const panelHeaderControls = (
-    <XStack alignItems="center" gap="$2" flexShrink={0}>
-      <Button
-        size="$3"
-        minHeight={44}
-        minWidth={84}
-        paddingHorizontal="$3.5"
-        borderRadius="$5"
-        borderWidth={1}
-        borderColor={isPausedMode ? '$danger' : '$brand'}
-        backgroundColor={isPausedMode ? '$danger' : '$brand'}
+    <XStack alignItems="center" gap={2} flexShrink={0}>
+      <HeaderIconButton
         onPress={toggleUpdateMode}
         disabled={isSettingsUpdating}
-        hoverStyle={{
-          backgroundColor: '$backgroundHover',
-          borderColor: '$borderColor',
-        }}
-        pressStyle={{ opacity: 0.9 }}
-        {...(Platform.OS === 'web'
-          ? ({
-              'aria-label': isPausedMode
-                ? 'Resume live insights updates'
-                : 'Pause live insights updates',
-            } as any)
-          : {
-              accessibilityLabel: isPausedMode
-                ? 'Resume live insights updates'
-                : 'Pause live insights updates',
-            })}
+        accessibilityLabel={
+          isPausedMode ? 'Resume live insights updates' : 'Pause live insights updates'
+        }
       >
-        <Button.Text fontSize={11} color="$white" fontWeight="700">
-          {isPausedMode ? 'Paused' : 'Live'}
-        </Button.Text>
-      </Button>
-      <Button
-        size="$3"
-        width={44}
-        minWidth={44}
-        minHeight={44}
-        paddingHorizontal="$0"
-        borderRadius="$5"
-        backgroundColor="$brand"
+        {isPausedMode ? (
+          <Play size={16} color={palette.slate300} />
+        ) : (
+          <Pause size={16} color={palette.slate300} />
+        )}
+      </HeaderIconButton>
+      <HeaderIconButton
         onPress={refreshPanel}
         disabled={isRefreshingAfterInterruption || isPanelAnalyzing}
-        pressStyle={{ opacity: 0.85 }}
-        {...(Platform.OS === 'web'
-          ? ({ 'aria-label': 'Refresh insights now' } as any)
-          : { accessibilityLabel: 'Refresh insights now' })}
+        accessibilityLabel={
+          isPanelAnalyzing || isRefreshingAfterInterruption
+            ? 'Refreshing insights'
+            : 'Refresh insights now'
+        }
       >
-        <RefreshCw size={16} color="$white" />
-      </Button>
+        <SpinningRefreshIcon
+          isSpinning={isPanelAnalyzing || isRefreshingAfterInterruption}
+          prefersReducedMotion={prefersReducedMotion}
+        />
+      </HeaderIconButton>
       {headerAccessory ? headerAccessory : null}
     </XStack>
   )
+
   const panelHeader = (
     <XStack
       alignItems="center"
       justifyContent="space-between"
       gap="$3"
-      paddingHorizontal="$3"
-      paddingVertical="$2"
+      paddingHorizontal={20}
+      // Bottom: the control buttons carry a 44-px hit area (32-px visible
+      // chrome inside 6-px transparent margins), so the row already has
+      // built-in bottom breathing room — only a few pixels needed to seat the
+      // title against the border. Top: extra space so "Your deal at a glance"
+      // doesn't sit flush against the panel's top edge.
+      paddingTop={20}
+      paddingBottom={6}
       borderBottomWidth={1}
-      borderBottomColor="$borderColor"
-      backgroundColor="$backgroundStrong"
+      borderBottomColor={palette.ghostBorder}
+      backgroundColor="transparent"
     >
-      <YStack flex={1} minWidth={0} gap="$0.75">
+      <YStack flex={1} minWidth={0} gap={4}>
         <Text
-          fontSize={12}
-          fontWeight="700"
-          color="$placeholderColor"
-          textTransform="uppercase"
-          letterSpacing={1}
+          fontSize={18}
+          fontWeight="500"
+          color={palette.slate50}
+          lineHeight={22}
+          letterSpacing={-0.3}
+          fontFamily={DISPLAY_FONT_FAMILY}
+          numberOfLines={2}
         >
-          Insights
+          Your deal at a glance
         </Text>
-        <Text fontSize={11} color="$placeholderColor" lineHeight={15}>
-          {updatesExplainer}
-        </Text>
+        {statusInline}
       </YStack>
       {panelHeaderControls}
     </XStack>
   )
 
   return (
-    <YStack flex={1} backgroundColor="$backgroundStrong">
+    <YStack flex={1} backgroundColor="transparent">
       {panelHeader}
       <ScrollView
         showsVerticalScrollIndicator
-        style={
-          Platform.OS === 'web'
-            ? ({
-                flex: 1,
-                scrollbarWidth: 'thin',
-                scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
-              } as any)
-            : { flex: 1 }
-        }
+        style={{ flex: 1, ...webScrollbarStyle } as any}
         contentContainerStyle={{ flexGrow: 1 }}
       >
         <YStack
           flexGrow={1}
-          paddingLeft={INSIGHTS_CONTENT_HORIZONTAL_PADDING_PX}
-          paddingRight={panelContentPaddingRight}
+          paddingHorizontal={INSIGHTS_CONTENT_HORIZONTAL_PADDING_PX}
           paddingTop="$4"
           paddingBottom="$6"
           gap="$3"

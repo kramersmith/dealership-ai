@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { YStack, Text, Theme } from 'tamagui'
+import { Scale } from '@tamagui/lucide-icons'
 import type { ComparisonTable as ComparisonTableType, DealComparison } from '@/lib/types'
 import { AppCard, ComparisonTable } from '@/components/shared'
 import {
@@ -78,9 +79,14 @@ export function AiComparisonCard({ title, content }: AiComparisonCardProps) {
   if (!table) return null
 
   return (
-    <AppCard compact gap="$2">
-      <CardTitle>{title}</CardTitle>
-
+    <AppCard
+      gap="$2"
+      header={
+        <CardTitle icon={<Scale size={12} color="#22d3ee" />} iconAccent="#22d3ee">
+          {title}
+        </CardTitle>
+      }
+    >
       {summary ? <Text {...insightCardBodyProps}>{summary}</Text> : null}
 
       <ComparisonTable table={table} embedded />

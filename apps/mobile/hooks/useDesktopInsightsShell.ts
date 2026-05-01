@@ -18,6 +18,8 @@ interface UseDesktopInsightsShellArgs {
   onCollapseChange: (collapsed: boolean) => void
   onBackComplete: () => void
   onResetComplete: () => void
+  /** Live insights panel width — fed through to the chat-rail inset animation. */
+  insightsWidth?: number
 }
 
 export function useDesktopInsightsShell({
@@ -29,6 +31,7 @@ export function useDesktopInsightsShell({
   onCollapseChange,
   onBackComplete,
   onResetComplete,
+  insightsWidth,
 }: UseDesktopInsightsShellArgs) {
   const shellState = useMemo<DesktopPanelShellState>(() => {
     if (!enabled || !dealState) {
@@ -74,6 +77,7 @@ export function useDesktopInsightsShell({
     panelExpanded: shellState === 'expanded',
     onBackComplete,
     onResetComplete,
+    insightsWidth,
   })
 
   const collapsePanel = useCallback(() => {

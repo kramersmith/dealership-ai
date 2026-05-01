@@ -7,6 +7,8 @@ import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import type { BuyerContext } from '@/lib/types'
 import { useFadeIn, useSlideIn, useFocusBorder } from '@/hooks/useAnimatedValue'
 import { normalizeVinCandidate } from '@/stores/chatStore'
+import { DISPLAY_FONT_FAMILY } from '@/lib/constants'
+import { palette } from '@/lib/theme/tokens'
 
 interface ContextPickerProps {
   onSelect: (context: BuyerContext) => void
@@ -403,19 +405,37 @@ export function ContextPicker({ onSelect, onVinSubmit }: ContextPickerProps) {
   return (
     <Animated.View style={{ flex: 1, opacity }}>
       <YStack
-        flex={1}
         justifyContent="center"
         padding="$4"
-        gap="$4"
-        maxWidth={480}
+        gap="$5"
+        maxWidth={520}
         alignSelf="center"
         width="100%"
       >
         <YStack gap="$2" alignItems="center">
-          <Text fontSize={20} fontWeight="700" color="$color" textAlign="center">
-            How can I help?
+          <Text
+            fontSize={36}
+            fontWeight="300"
+            color={palette.slate50}
+            letterSpacing={-1}
+            lineHeight={42}
+            textAlign="center"
+            fontFamily={DISPLAY_FONT_FAMILY}
+          >
+            How can I{' '}
+            <Text
+              fontStyle="italic"
+              fontWeight="400"
+              color={palette.copilotEmerald}
+              fontFamily={DISPLAY_FONT_FAMILY}
+            >
+              help
+            </Text>
+            <Text color={palette.copilotEmerald} fontFamily={DISPLAY_FONT_FAMILY}>
+              ?
+            </Text>
           </Text>
-          <Text fontSize={14} color="$placeholderColor" textAlign="center">
+          <Text fontSize={14} color={palette.slate400} textAlign="center" lineHeight={20}>
             Select where you are in the process, or just start typing below.
           </Text>
         </YStack>

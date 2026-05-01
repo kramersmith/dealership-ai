@@ -1,7 +1,8 @@
 import { Animated } from 'react-native'
 import { XStack, YStack, Text, useTheme } from 'tamagui'
-import { Check } from '@tamagui/lucide-icons'
+import { Check, ListChecks } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
+import { palette } from '@/lib/theme/tokens'
 import { insightCardBodyProps, insightCardSectionLabelProps } from '@/lib/insightsPanelTypography'
 import { CardTitle } from './CardTitle'
 import { useAnimatedNumber } from '@/hooks/useAnimatedValue'
@@ -110,9 +111,17 @@ export function AiChecklistCard({ title, content }: AiChecklistCardProps) {
   const showBothSections = openQuestions.length > 0 && items.length > 0
 
   return (
-    <AppCard compact>
+    <AppCard
+      header={
+        <CardTitle
+          icon={<ListChecks size={12} color={palette.copilotEmerald} />}
+          iconAccent={palette.copilotEmerald}
+        >
+          {title}
+        </CardTitle>
+      }
+    >
       <YStack gap="$3">
-        <CardTitle>{title}</CardTitle>
         {openQuestions.length > 0 ? (
           <YStack gap="$1.5">
             <Text {...insightCardSectionLabelProps}>Still confirming</Text>

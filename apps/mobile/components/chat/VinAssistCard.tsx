@@ -1,9 +1,11 @@
 import { memo, useState, useCallback } from 'react'
+import { View } from 'react-native'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
 
 import type { VinAssistItem } from '@/lib/types'
-import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
-import { AppButton, AppCard } from '@/components/shared'
+import { CHAT_BUBBLE_MAX_WIDTH, DISPLAY_FONT_FAMILY, MONO_FONT_FAMILY } from '@/lib/constants'
+import { AppCard, ModalGhostButton, ModalPrimaryButton } from '@/components/shared'
+import { palette } from '@/lib/theme/tokens'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import { useChatStore } from '@/stores/chatStore'
 import { vinAssistVehicleLabel as vehicleLabel } from './vinAssistUtils'
@@ -36,204 +38,169 @@ export const VinAssistCard = memo(function VinAssistCard({ item }: { item: VinAs
     }
   }, [rejectVinAssist, item.id])
 
-  const btnFlex = isDesktop
-    ? ({ flex: 1, minWidth: 0 } as const)
-    : ({ width: '100%' as const } as const)
+  const showActions =
+    item.status === 'detected' ||
+    item.status === 'skipped' ||
+    item.status === 'failed' ||
+    item.status === 'rejected' ||
+    item.status === 'decoded'
+
+  const ActionRow = isDesktop ? XStack : YStack
+  const actionRowProps = isDesktop
+    ? { width: '100%', gap: 8, alignItems: 'stretch' as const, justifyContent: 'flex-end' as const }
+    : { gap: 8, width: '100%', alignItems: 'stretch' as const }
+  const actionFlex = isDesktop ? 1 : undefined
+
+  const headlineText =
+    item.status === 'decoded' || item.status === 'confirmed' ? vehicleLabel(item) : 'VIN detected'
+
+  const subText =
+    item.status === 'decoded'
+      ? 'We decoded this VIN. Confirm it before we use the vehicle identity in future advice.'
+      : item.status === 'confirmed'
+        ? 'Confirmed vehicle details will now ground future chat responses.'
+        : item.status === 'rejected'
+          ? 'We will keep treating this as a raw VIN unless you retry the decode.'
+          : item.status === 'failed'
+            ? (item.error ?? 'Decode failed. You can retry or keep going without decoding.')
+            : item.status === 'skipped'
+              ? 'You can keep chatting now and come back to decode this VIN any time.'
+              : 'We found a VIN in your message. Decode it now so the AI can give you vehicle-specific advice from the start.'
 
   return (
     <XStack paddingHorizontal="$3" paddingBottom="$3" justifyContent="center" width="100%">
-      <AppCard accent width="100%" maxWidth={CHAT_BUBBLE_MAX_WIDTH}>
-        <YStack gap="$3">
-          <YStack gap="$1">
-            <Text fontSize={12} fontWeight="700" color="$placeholderColor" letterSpacing={0.4}>
+      <AppCard
+        width="100%"
+        maxWidth={CHAT_BUBBLE_MAX_WIDTH}
+        backgroundColor="rgba(30, 41, 59, 0.80)"
+      >
+        <YStack gap={16}>
+          <YStack gap={6}>
+            <Text
+              fontSize={11}
+              fontWeight="600"
+              color={palette.copilotEmerald}
+              letterSpacing={1}
+              textTransform="uppercase"
+            >
               VIN Assist
             </Text>
-            <Text fontSize={15} fontWeight="700" color="$color">
-              {item.status === 'decoded' || item.status === 'confirmed'
-                ? vehicleLabel(item)
-                : 'VIN detected'}
+            <Text
+              fontSize={18}
+              fontWeight="600"
+              color={palette.slate50}
+              letterSpacing={-0.2}
+              fontFamily={DISPLAY_FONT_FAMILY}
+            >
+              {headlineText}
             </Text>
-            <Text fontSize={13} color="$placeholderColor" lineHeight={19}>
-              {item.status === 'decoded'
-                ? 'We decoded this VIN. Confirm it before we use the vehicle identity in future advice.'
-                : item.status === 'confirmed'
-                  ? 'Confirmed vehicle details will now ground future chat responses.'
-                  : item.status === 'rejected'
-                    ? 'We will keep treating this as a raw VIN unless you retry the decode.'
-                    : item.status === 'failed'
-                      ? (item.error ??
-                        'Decode failed. You can retry or keep going without decoding.')
-                      : item.status === 'skipped'
-                        ? 'You can keep chatting now and come back to decode this VIN any time.'
-                        : 'We found a VIN in your message. Decode it now so the AI can give you vehicle-specific advice from the start.'}
+            <Text fontSize={13} color={palette.slate400} lineHeight={19}>
+              {subText}
             </Text>
           </YStack>
 
-          <YStack gap="$1">
-            <Text fontSize={12} color="$placeholderColor">
+          <View
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: palette.ghostBgHover,
+              backgroundColor: 'rgba(2, 6, 23, 0.65)',
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              gap: 4,
+            }}
+          >
+            <Text
+              fontSize={11}
+              color={palette.slate500}
+              letterSpacing={0.6}
+              textTransform="uppercase"
+            >
               VIN
             </Text>
-            <Text fontSize={14} fontWeight="600" color="$color">
+            <Text
+              fontSize={14}
+              fontWeight="400"
+              color={palette.slate50}
+              fontFamily={MONO_FONT_FAMILY}
+              letterSpacing={0.4}
+            >
               {item.vin}
             </Text>
-          </YStack>
+          </View>
 
           {item.decodedVehicle ? (
-            <YStack gap="$1">
-              <Text fontSize={12} color="$placeholderColor">
+            <View
+              style={{
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: palette.copilotEmeraldBorder25,
+                backgroundColor: palette.copilotEmeraldMuted,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                gap: 4,
+              }}
+            >
+              <Text
+                fontSize={11}
+                color={palette.copilotEmerald}
+                letterSpacing={0.6}
+                textTransform="uppercase"
+              >
                 Decoded vehicle
               </Text>
-              <Text fontSize={14} fontWeight="600" color="$color">
+              <Text fontSize={14} fontWeight="700" color={palette.slate50}>
                 {vehicleLabel(item)}
               </Text>
               {item.decodedVehicle.partial ? (
-                <Text fontSize={12} color="$placeholderColor">
+                <Text fontSize={12} color={palette.slate400}>
                   Some details may be incomplete.
                 </Text>
               ) : null}
-            </YStack>
+            </View>
           ) : null}
 
           {item.status === 'decoding' ? (
             <XStack alignItems="center" gap="$2">
-              <Spinner size="small" color="$brand" />
-              <Text fontSize={13} color="$placeholderColor">
+              <Spinner size="small" color={palette.copilotEmerald} />
+              <Text fontSize={13} color={palette.slate400}>
                 Decoding VIN...
               </Text>
             </XStack>
           ) : null}
 
-          {item.status === 'detected' ||
-          item.status === 'skipped' ||
-          item.status === 'failed' ||
-          item.status === 'rejected' ? (
-            isDesktop && item.status === 'detected' ? (
-              <XStack width="100%" gap="$2" alignItems="stretch">
-                <AppButton
-                  minHeight={44}
-                  {...btnFlex}
-                  onPress={() => decodeVinAssist(item.id)}
-                  accessibilityLabel={`Decode VIN ${item.vin}`}
-                >
-                  Decode VIN
-                </AppButton>
-                <AppButton
-                  minHeight={44}
-                  {...btnFlex}
-                  variant="outline"
-                  onPress={() => skipVinAssist(item.id)}
-                  accessibilityLabel="Continue without decoding"
-                >
-                  Continue without decoding
-                </AppButton>
-              </XStack>
-            ) : (
-              <YStack gap="$2" width="100%" alignItems="stretch">
-                <AppButton
-                  minHeight={44}
-                  width="100%"
-                  onPress={() => decodeVinAssist(item.id)}
-                  accessibilityLabel={`Decode VIN ${item.vin}`}
-                >
-                  Decode VIN
-                </AppButton>
-                {item.status === 'detected' ? (
-                  <AppButton
-                    minHeight={44}
-                    width="100%"
-                    variant="outline"
-                    onPress={() => skipVinAssist(item.id)}
-                    accessibilityLabel="Continue without decoding"
-                  >
-                    Continue without decoding
-                  </AppButton>
-                ) : null}
-              </YStack>
-            )
+          {showActions && item.status !== 'decoded' ? (
+            <ActionRow {...actionRowProps}>
+              {item.status === 'detected' ? (
+                <ModalGhostButton flex={actionFlex} onPress={() => skipVinAssist(item.id)}>
+                  Skip
+                </ModalGhostButton>
+              ) : null}
+              <ModalPrimaryButton flex={actionFlex} onPress={() => decodeVinAssist(item.id)}>
+                {item.status === 'failed' || item.status === 'rejected'
+                  ? 'Retry decode'
+                  : 'Decode VIN'}
+              </ModalPrimaryButton>
+            </ActionRow>
           ) : null}
 
           {item.status === 'decoded' ? (
-            isDesktop ? (
-              <XStack width="100%" gap="$2" alignItems="stretch">
-                <AppButton
-                  minHeight={44}
-                  {...btnFlex}
-                  onPress={handleConfirm}
-                  disabled={confirming || rejecting}
-                  accessibilityLabel="Confirm decoded vehicle"
-                >
-                  {confirming ? (
-                    <XStack alignItems="center" gap="$2">
-                      <Spinner size="small" color="$white" />
-                      <Text color="$white" fontSize={14} fontWeight="600">
-                        Confirming...
-                      </Text>
-                    </XStack>
-                  ) : (
-                    'Yes, use this vehicle'
-                  )}
-                </AppButton>
-                <AppButton
-                  minHeight={44}
-                  {...btnFlex}
-                  variant="outline"
-                  onPress={handleReject}
-                  disabled={confirming || rejecting}
-                  accessibilityLabel="Reject decoded vehicle"
-                >
-                  {rejecting ? (
-                    <XStack alignItems="center" gap="$2">
-                      <Spinner size="small" color="$placeholderColor" />
-                      <Text color="$placeholderColor" fontSize={14}>
-                        Rejecting...
-                      </Text>
-                    </XStack>
-                  ) : (
-                    "No, that's not correct"
-                  )}
-                </AppButton>
-              </XStack>
-            ) : (
-              <YStack gap="$2" width="100%" alignItems="stretch">
-                <AppButton
-                  minHeight={44}
-                  width="100%"
-                  onPress={handleConfirm}
-                  disabled={confirming || rejecting}
-                  accessibilityLabel="Confirm decoded vehicle"
-                >
-                  {confirming ? (
-                    <XStack alignItems="center" gap="$2">
-                      <Spinner size="small" color="$white" />
-                      <Text color="$white" fontSize={14} fontWeight="600">
-                        Confirming...
-                      </Text>
-                    </XStack>
-                  ) : (
-                    'Yes, use this vehicle'
-                  )}
-                </AppButton>
-                <AppButton
-                  minHeight={44}
-                  width="100%"
-                  variant="outline"
-                  onPress={handleReject}
-                  disabled={confirming || rejecting}
-                  accessibilityLabel="Reject decoded vehicle"
-                >
-                  {rejecting ? (
-                    <XStack alignItems="center" gap="$2">
-                      <Spinner size="small" color="$placeholderColor" />
-                      <Text color="$placeholderColor" fontSize={14}>
-                        Rejecting...
-                      </Text>
-                    </XStack>
-                  ) : (
-                    "No, that's not correct"
-                  )}
-                </AppButton>
-              </YStack>
-            )
+            <ActionRow {...actionRowProps}>
+              <ModalGhostButton
+                flex={actionFlex}
+                onPress={handleReject}
+                disabled={confirming || rejecting}
+              >
+                {rejecting ? 'Rejecting…' : 'No, that’s not it'}
+              </ModalGhostButton>
+              <ModalPrimaryButton
+                flex={actionFlex}
+                onPress={handleConfirm}
+                disabled={confirming || rejecting}
+              >
+                {confirming ? 'Confirming…' : 'Yes, use this'}
+              </ModalPrimaryButton>
+            </ActionRow>
           ) : null}
         </YStack>
       </AppCard>

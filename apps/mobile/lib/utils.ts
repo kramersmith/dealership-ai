@@ -58,19 +58,32 @@ export function vehicleSummary(
 
 /** Strip markdown syntax for plain-text display (previews, summaries). */
 export function stripMarkdown(text: string): string {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, '$1') // bold
-    .replace(/__(.+?)__/g, '$1') // bold alt
-    .replace(/\*(.+?)\*/g, '$1') // italic
-    .replace(/_(.+?)_/g, '$1') // italic alt
-    .replace(/~~(.+?)~~/g, '$1') // strikethrough
-    .replace(/`(.+?)`/g, '$1') // inline code
-    .replace(/^#{1,6}\s+/gm, '') // headings
-    .replace(/^>\s?/gm, '') // blockquotes
-    .replace(/^[-*+]\s+/gm, '') // unordered lists
-    .replace(/^\d+\.\s+/gm, '') // ordered lists
-    .replace(/\[(.+?)\]\(.+?\)/g, '$1') // links
-    .replace(/!\[.*?\]\(.+?\)/g, '') // images
+  return (
+    text
+      // Block-level structures that don't read well as plain previews. Drop
+      // entire lines so the preview doesn't show "| Item | Amoun…" residue.
+      .replace(/```[\s\S]*?```/g, '') // fenced code blocks
+      .replace(/~~~[\s\S]*?~~~/g, '') // alt fenced code blocks
+      .replace(/^[ \t]*\|.*$/gm, '') // markdown table rows (any line starting with `|`)
+      .replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, '') // horizontal rules
+      // Inline / single-line markdown.
+      .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+      .replace(/__(.+?)__/g, '$1') // bold alt
+      .replace(/\*(.+?)\*/g, '$1') // italic
+      .replace(/_(.+?)_/g, '$1') // italic alt
+      .replace(/~~(.+?)~~/g, '$1') // strikethrough
+      .replace(/`(.+?)`/g, '$1') // inline code
+      .replace(/^#{1,6}\s+/gm, '') // headings
+      .replace(/^>\s?/gm, '') // blockquotes
+      .replace(/^[-*+]\s+/gm, '') // unordered lists
+      .replace(/^\d+\.\s+/gm, '') // ordered lists
+      .replace(/\[(.+?)\]\(.+?\)/g, '$1') // links
+      .replace(/!\[.*?\]\(.+?\)/g, '') // images
+      // Collapse runs of blank lines created by the deletions above so previews
+      // don't have giant gaps where a table or code block used to be.
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  )
 }
 
 // ─── Vehicle/Deal helpers ───

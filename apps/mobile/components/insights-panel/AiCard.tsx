@@ -68,9 +68,16 @@ function renderCardContent(card: AiPanelCard): React.ReactNode {
   }
   switch (card.template) {
     case 'briefing':
-      return <BriefingCard title={card.title} content={card.content} priority={card.priority} />
+      return (
+        <BriefingCard
+          title={card.title}
+          content={card.content}
+          priority={card.priority}
+          kind={card.kind}
+        />
+      )
     case 'numbers':
-      return <NumbersCard title={card.title} content={card.content} />
+      return <NumbersCard title={card.title} content={card.content} kind={card.kind} />
     case 'vehicle':
       return <AiVehicleCard title={card.title} content={card.content} />
     case 'warning':
@@ -187,7 +194,7 @@ export function AiCard({ card, onSendReply }: AiCardProps) {
     onSendReply != null && Platform.OS === 'web' ? (
       <HoverLiftFrame
         shadowColor={shadowColor}
-        borderRadius={12}
+        borderRadius={16}
         interactive
         layoutStyle={{ width: '100%' }}
       >

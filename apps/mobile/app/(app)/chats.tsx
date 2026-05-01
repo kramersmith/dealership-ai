@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  SectionList,
+  FlatList,
   RefreshControl,
   Animated,
   Platform,
@@ -11,55 +11,121 @@ import {
 } from 'react-native'
 import { useTheme, useThemeName } from 'tamagui'
 import {
+  CopilotPageHero,
+  CopilotTopNav,
   ThemedSafeArea,
   LoadingIndicator,
   RoleGuard,
   ConfirmModal,
   AppButton,
-  ScreenHeader,
 } from '@/components/shared'
 import { useRouter } from 'expo-router'
-import { MessageSquarePlus, Search, Settings, X } from '@tamagui/lucide-icons'
+import {
+  ArrowDownUp,
+  Calendar,
+  ListFilter,
+  MessageSquarePlus,
+  Search,
+  Settings,
+  X,
+} from '@tamagui/lucide-icons'
 import { useIsFocused } from '@react-navigation/native'
 import type { Session } from '@/lib/types'
-import { APP_NAME } from '@/lib/constants'
 import { useChatStore } from '@/stores/chatStore'
 import { useFocusEffect } from 'expo-router'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
-import { USE_NATIVE_DRIVER } from '@/lib/platform'
-import { SessionCard } from '@/components/chats'
+import { webScrollbarStyle } from '@/lib/scrollbarStyles'
+import { FilterChip, SessionCard, type FilterChipOption } from '@/components/chats'
+import { DEAL_PHASES } from '@/lib/constants'
+import type { DealPhase } from '@/lib/types'
 import { palette } from '@/lib/theme/tokens'
 
 /** Target width for search + cards (inside horizontal insets). */
-const CHATS_CONTENT_MAX_WIDTH = 480
+const CHATS_CONTENT_MAX_WIDTH = 720
 /**
- * Same horizontal inset on the search row and on SectionList rows so the column aligns while scrolling.
+ * Same horizontal inset on the search row and on FlatList rows so the column aligns while scrolling.
  * ScrollViews clip to their bounds — shadows must draw inside this inset, not only on outer wrappers.
  */
 const CHATS_EDGE_INSET = 24
 const CHATS_SHEET_MAX_WIDTH = CHATS_CONTENT_MAX_WIDTH + 2 * CHATS_EDGE_INSET
-/** Space below the search (list header) before section labels / first card. */
+/** Space below the search (list header) before the first card. */
 const CHATS_LIST_BELOW_SEARCH_GAP = 12
 
-// ─── Section builder: active deals above, past deals below ───
+// ─── Filter / Sort ───
 
-function buildSections(sessions: Session[]) {
-  const active: Session[] = []
-  const past: Session[] = []
+type SortKey = 'recent' | 'oldest' | 'title'
+/** "all" = no phase filter; otherwise a specific deal phase. */
+type PhaseFilter = 'all' | DealPhase
+/** `null` = any time; otherwise the rolling window in days from "now". */
+type DaysWindow = null | 7 | 14 | 30 | 60 | 90 | 180 | 365
 
-  for (const session of sessions) {
-    const phase = session.dealSummary?.phase
-    if (phase === 'closing') {
-      past.push(session)
-    } else {
-      active.push(session)
-    }
+const SORT_OPTIONS: readonly FilterChipOption<SortKey>[] = [
+  { value: 'recent', label: 'Most recent' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'title', label: 'Title A → Z' },
+] as const
+
+const PHASE_OPTIONS: readonly FilterChipOption<PhaseFilter>[] = [
+  { value: 'all', label: 'All phases' },
+  ...DEAL_PHASES.map((p) => ({ value: p.key, label: p.label }) as const),
+] as const
+
+const DAYS_WINDOW_OPTIONS: readonly FilterChipOption<string>[] = [
+  { value: 'any', label: 'Any time' },
+  { value: '7', label: 'Last 7 days' },
+  { value: '14', label: 'Last 14 days' },
+  { value: '30', label: 'Last 30 days' },
+  { value: '60', label: 'Last 60 days' },
+  { value: '90', label: 'Last 90 days' },
+  { value: '180', label: 'Last 6 months' },
+  { value: '365', label: 'Last year' },
+] as const
+
+function daysWindowToValue(window: DaysWindow): string {
+  return window === null ? 'any' : String(window)
+}
+
+function valueToDaysWindow(value: string): DaysWindow {
+  if (value === 'any') return null
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? (n as DaysWindow) : null
+}
+
+function sessionTimestamp(s: Session): number {
+  const t = Date.parse(s.updatedAt)
+  return Number.isFinite(t) ? t : 0
+}
+
+function applyFiltersAndSort(
+  sessions: Session[],
+  phase: PhaseFilter,
+  daysWindow: DaysWindow,
+  sort: SortKey
+): Session[] {
+  // Rolling window: keep sessions whose `updatedAt` falls within the last N
+  // days from "now" (inclusive of today). `null` = no date filter.
+  const windowFloor = daysWindow == null ? null : Date.now() - daysWindow * 24 * 60 * 60 * 1000
+
+  const filtered = sessions.filter((s) => {
+    if (phase !== 'all' && s.dealSummary?.phase !== phase) return false
+    if (windowFloor != null && sessionTimestamp(s) < windowFloor) return false
+    return true
+  })
+
+  const next = [...filtered]
+  switch (sort) {
+    case 'oldest':
+      next.sort((a, b) => sessionTimestamp(a) - sessionTimestamp(b))
+      break
+    case 'title':
+      next.sort((a, b) => (a.title ?? '').localeCompare(b.title ?? ''))
+      break
+    case 'recent':
+    default:
+      next.sort((a, b) => sessionTimestamp(b) - sessionTimestamp(a))
+      break
   }
-
-  const sections: { title: string; data: Session[] }[] = []
-  if (active.length > 0) sections.push({ title: 'Active', data: active })
-  if (past.length > 0) sections.push({ title: 'Past', data: past })
-  return sections
+  return next
 }
 
 // ─── Empty state ───
@@ -157,16 +223,19 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 function SearchBar({
   searchQuery,
   onChangeText,
-  isFocused,
+  total,
+  shown,
 }: {
   searchQuery: string
   onChangeText: (text: string) => void
-  isFocused: boolean
+  /** Right-aligned counter ("94 chats" / "12 of 94 chats") on the same row
+   *  as the "Conversations" label. Hidden when the parent has no totals to
+   *  show (e.g. empty state). */
+  total?: number
+  shown?: number
 }) {
   const theme = useTheme()
   const themeName = useThemeName()
-  const translateY = useRef(new Animated.Value(-32)).current
-  const opacity = useRef(new Animated.Value(0)).current
   const [isInputFocused, setIsInputFocused] = useState(false)
   const hasQuery = searchQuery.trim().length > 0
   const isDarkTheme = typeof themeName === 'string' && themeName.startsWith('dark')
@@ -196,29 +265,12 @@ function SearchBar({
   const whiteVal = (theme.white?.val as string | undefined) ?? '#ffffff'
   const bgHoverVal = (theme.backgroundHover?.val as string | undefined) ?? iconBackgroundColor
 
-  useEffect(() => {
-    if (!isFocused) return
-    translateY.setValue(-32)
-    opacity.setValue(0)
-    Animated.parallel([
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 280,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 220,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-    ]).start()
-  }, [opacity, translateY, isFocused])
-
+  // Static chrome — no entrance animation. Re-mounting the chats screen on
+  // back-navigation would otherwise replay the fade as a "flash"; pro chat-list
+  // surfaces (Linear / Notion / Slack / ChatGPT) render search statically.
   return (
-    <Animated.View
+    <View
       style={{
-        transform: [{ translateY }],
-        opacity,
         position: 'relative',
         zIndex: 1,
         paddingTop: 14,
@@ -227,17 +279,39 @@ function SearchBar({
     >
       {/* RN: VirtualizedList + Tamagui stacks breaks on web (AiVehicleCard). */}
       <View style={{ width: '100%', gap: 8 }}>
-        <RNText
+        <View
           style={{
-            fontSize: 11,
-            fontWeight: '700',
-            textTransform: 'uppercase',
-            letterSpacing: 1.2,
-            color: placeholderVal,
+            flexDirection: 'row',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: 8,
           }}
         >
-          Conversations
-        </RNText>
+          <RNText
+            style={{
+              fontSize: 11,
+              fontWeight: '700',
+              textTransform: 'uppercase',
+              letterSpacing: 1.2,
+              color: placeholderVal,
+            }}
+          >
+            Conversations
+          </RNText>
+          {total != null && total > 0 ? (
+            <RNText
+              style={{
+                fontSize: 12,
+                color: palette.slate500,
+                letterSpacing: 0.2,
+              }}
+            >
+              {shown != null && shown !== total
+                ? `${shown} of ${total} ${total === 1 ? 'chat' : 'chats'}`
+                : `${total} ${total === 1 ? 'chat' : 'chats'}`}
+            </RNText>
+          ) : null}
+        </View>
         <View
           style={{
             width: '100%',
@@ -349,7 +423,7 @@ function SearchBar({
           ) : null}
         </View>
       </View>
-    </Animated.View>
+    </View>
   )
 }
 
@@ -377,6 +451,9 @@ export default function SessionsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>('all')
+  const [daysWindow, setDaysWindow] = useState<DaysWindow>(null)
+  const [sortKey, setSortKey] = useState<SortKey>('recent')
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadSessionsWithError = useCallback(async () => {
@@ -486,8 +563,10 @@ export default function SessionsScreen() {
     }
   }
 
-  const displaySessions = searchResults ?? sessions
-  const sections = buildSections(displaySessions)
+  const displaySessions = useMemo(
+    () => applyFiltersAndSort(searchResults ?? sessions, phaseFilter, daysWindow, sortKey),
+    [searchResults, sessions, phaseFilter, daysWindow, sortKey]
+  )
 
   const searchBarRow = useMemo(() => {
     if (sessions.length === 0) return null
@@ -511,13 +590,55 @@ export default function SessionsScreen() {
             <SearchBar
               searchQuery={searchQuery}
               onChangeText={handleSearchChange}
-              isFocused={isFocused}
+              total={sessions.length}
+              shown={displaySessions.length}
             />
+            <View
+              style={{
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                gap: 8,
+                paddingTop: 8,
+              }}
+            >
+              <FilterChip
+                icon={ListFilter}
+                label="Status"
+                value={phaseFilter}
+                options={PHASE_OPTIONS}
+                onSelect={setPhaseFilter}
+                active={phaseFilter !== 'all'}
+              />
+              <FilterChip
+                icon={Calendar}
+                label="Last…"
+                value={daysWindowToValue(daysWindow)}
+                options={DAYS_WINDOW_OPTIONS}
+                onSelect={(v) => setDaysWindow(valueToDaysWindow(v))}
+                active={daysWindow !== null}
+              />
+              <FilterChip
+                icon={ArrowDownUp}
+                label="Sort By"
+                value={sortKey}
+                options={SORT_OPTIONS}
+                onSelect={setSortKey}
+                active={sortKey !== 'recent'}
+              />
+            </View>
           </View>
         </View>
       </View>
     )
-  }, [sessions.length, searchQuery, handleSearchChange, isFocused])
+  }, [
+    sessions.length,
+    displaySessions.length,
+    searchQuery,
+    handleSearchChange,
+    phaseFilter,
+    daysWindow,
+    sortKey,
+  ])
 
   const hasSearchQuery = searchQuery.trim().length > 0
   const showEmptyState = !isLoading && !loadError && sessions.length === 0 && !searchQuery
@@ -525,24 +646,76 @@ export default function SessionsScreen() {
     hasSearchQuery && !isSearching && !searchError && displaySessions.length === 0
   const showSearchError = hasSearchQuery && !isSearching && searchError
 
+  const topNav = (
+    <CopilotTopNav
+      leftIcon={<Settings size={20} color={palette.slate400} />}
+      onLeftPress={() => router.push('/(app)/settings')}
+      leftLabel="Settings"
+      rightIcon={<MessageSquarePlus size={20} color={palette.slate400} />}
+      onRightPress={handleNew}
+      rightLabel="Start new chat"
+      iconTrigger={isFocused}
+      paddingHorizontal={CHATS_EDGE_INSET}
+    />
+  )
+
+  const heroRow = (
+    <View
+      style={{
+        width: '100%',
+        alignItems: 'center',
+        paddingTop: 8,
+        paddingBottom: 4,
+      }}
+    >
+      <View
+        style={{
+          width: '100%',
+          maxWidth: CHATS_SHEET_MAX_WIDTH,
+          paddingHorizontal: CHATS_EDGE_INSET,
+        }}
+      >
+        <CopilotPageHero
+          leading="Pick up a"
+          accent="conversation"
+          description={
+            sessions.length > 0
+              ? 'Resume an active deal or start a fresh chat.'
+              : 'Start a new chat to get help with your car deal.'
+          }
+          isDesktop={false}
+          caption={null}
+        />
+      </View>
+    </View>
+  )
+
+  // Build the unified data array consumed by FlatList: hero first (scrolls
+  // away with content), then the search/filters/count row pinned via
+  // `stickyHeaderIndices`, then the session cards. Putting all three in one
+  // typed list lets `stickyHeaderIndices` reference the search row by index
+  // (FlatList's sticky behavior counts data items, not ListHeaderComponent).
+  type ChatsListItem =
+    | { kind: 'hero' }
+    | { kind: 'searchRow' }
+    | { kind: 'session'; session: Session; index: number }
+
+  const chatsListItems: ChatsListItem[] = [
+    { kind: 'hero' },
+    { kind: 'searchRow' },
+    ...displaySessions.map((session, index) => ({
+      kind: 'session' as const,
+      session,
+      index,
+    })),
+  ]
+
   return (
     <RoleGuard role="buyer">
       <ThemedSafeArea edges={['top']} style={{ overflow: 'visible' }}>
         <View style={{ flex: 1, backgroundColor: (theme.background?.val as string) ?? '#fff' }}>
           {[
-            <ScreenHeader
-              key="chats-header"
-              leftIcon={<Settings size={22} color="$color" />}
-              onLeftPress={() => router.push('/(app)/settings')}
-              leftLabel="Settings"
-              title={APP_NAME}
-              titleKey={`${APP_NAME}-${isFocused ? 'focused' : 'blurred'}`}
-              scrambleActive={isFocused}
-              iconTrigger={isFocused}
-              rightIcon={<MessageSquarePlus size={22} color="$color" />}
-              onRightPress={handleNew}
-              rightLabel="Start new chat"
-            />,
+            <View key="chats-nav">{topNav}</View>,
             <View key="chats-body" style={{ flex: 1, overflow: 'visible' }}>
               {isLoading && sessions.length === 0 ? (
                 <LoadingIndicator message="Loading your chats..." />
@@ -557,13 +730,17 @@ export default function SessionsScreen() {
                     overflow: 'visible',
                   }}
                 >
+                  {showSearchError || showEmptySearch ? heroRow : null}
                   {(showSearchError || showEmptySearch) && searchBarRow}
                   {showSearchError ? (
                     <ErrorState onRetry={() => handleSearchChange(searchQuery)} />
                   ) : showEmptySearch ? (
                     <EmptySearchState query={searchQuery} />
                   ) : showEmptyState ? (
-                    <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
+                    <>
+                      {heroRow}
+                      <EmptySessionsState onNewChat={() => router.push('/(app)/chat')} />
+                    </>
                   ) : (
                     <View
                       style={{
@@ -574,93 +751,97 @@ export default function SessionsScreen() {
                         overflow: 'visible',
                       }}
                     >
-                      <SectionList
-                        sections={sections}
-                        keyExtractor={(item) => item.id}
+                      <FlatList<ChatsListItem>
+                        data={chatsListItems}
+                        keyExtractor={(item, index) =>
+                          item.kind === 'session' ? item.session.id : `${item.kind}-${index}`
+                        }
                         removeClippedSubviews={false}
-                        ListHeaderComponent={searchBarRow ? () => searchBarRow : undefined}
+                        // Pin the search/filters/count row (index 1) so it
+                        // stays at the top while the hero (index 0) and
+                        // session cards scroll under it.
+                        stickyHeaderIndices={[1]}
                         style={
-                          Platform.OS === 'web'
-                            ? ({
-                                flex: 1,
-                                minHeight: 0,
-                                width: '100%',
-                                backgroundColor: 'transparent',
-                                scrollbarWidth: 'thin',
-                                scrollbarColor: `${theme.placeholderColor?.val ?? palette.overlay} transparent`,
-                              } as any)
-                            : {
-                                flex: 1,
-                                minHeight: 0,
-                                width: '100%',
-                                backgroundColor: 'transparent',
-                              }
+                          {
+                            flex: 1,
+                            minHeight: 0,
+                            width: '100%',
+                            backgroundColor: 'transparent',
+                            ...webScrollbarStyle,
+                          } as any
                         }
                         contentContainerStyle={{
                           flexGrow: 1,
                           backgroundColor: 'transparent',
                           paddingBottom: 16,
                         }}
-                        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-                        renderSectionHeader={({ section }) =>
-                          sections.length > 1 ? (
-                            <View style={{ width: '100%', alignItems: 'center' }}>
+                        renderItem={({ item }) => {
+                          if (item.kind === 'hero') return heroRow
+                          if (item.kind === 'searchRow') {
+                            // Frosted-glass sticky surface: cards underneath
+                            // fade out softly behind the search row instead
+                            // of hard-cutting at a solid edge. The faint
+                            // bottom border carries the "above this is more
+                            // content" cue without needing a scroll listener.
+                            return (
+                              <View
+                                style={{
+                                  // Lower bg opacity so cards show through
+                                  // clearly; let the heavier blur carry the
+                                  // "frosted" feel and keep text behind
+                                  // legibly soft (Apple-Mail-style).
+                                  backgroundColor: 'rgba(3, 7, 18, 0.55)',
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: palette.ghostBgSubtle,
+                                  ...(Platform.OS === 'web'
+                                    ? ({
+                                        backdropFilter: 'blur(16px) saturate(1.1)',
+                                        WebkitBackdropFilter: 'blur(16px) saturate(1.1)',
+                                      } as any)
+                                    : {}),
+                                }}
+                              >
+                                {searchBarRow}
+                              </View>
+                            )
+                          }
+                          return (
+                            <View
+                              style={{
+                                width: '100%',
+                                alignItems: 'center',
+                                // First card gets extra top inset so it sits
+                                // visibly below the sticky search row instead
+                                // of crashing into its hairline border.
+                                paddingTop: item.index === 0 ? 20 : 0,
+                                paddingBottom: 12,
+                                ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
+                              }}
+                            >
                               <View
                                 style={{
                                   width: '100%',
                                   maxWidth: CHATS_SHEET_MAX_WIDTH,
                                   paddingHorizontal: CHATS_EDGE_INSET,
+                                  ...(Platform.OS === 'web'
+                                    ? { overflow: 'visible' as const }
+                                    : {}),
                                 }}
                               >
-                                <RNText
-                                  style={{
-                                    fontSize: 12,
-                                    fontWeight: '600',
-                                    color:
-                                      (theme.placeholderColor?.val as string | undefined) ??
-                                      palette.overlay,
-                                    textTransform: 'uppercase',
-                                    letterSpacing: 0.5,
-                                    marginBottom: 8,
-                                    marginTop: 12,
-                                  }}
-                                >
-                                  {section.title}
-                                </RNText>
+                                <SessionCard
+                                  session={item.session}
+                                  index={item.index}
+                                  onSelect={handleSelect}
+                                  onDelete={setDeleteTarget}
+                                  isFocused={isFocused}
+                                />
                               </View>
                             </View>
-                          ) : null
-                        }
-                        renderItem={({ item, index }) => (
-                          <View
-                            style={{
-                              width: '100%',
-                              alignItems: 'center',
-                              ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
-                            }}
-                          >
-                            <View
-                              style={{
-                                width: '100%',
-                                maxWidth: CHATS_SHEET_MAX_WIDTH,
-                                paddingHorizontal: CHATS_EDGE_INSET,
-                                ...(Platform.OS === 'web' ? { overflow: 'visible' as const } : {}),
-                              }}
-                            >
-                              <SessionCard
-                                session={item}
-                                index={index}
-                                onSelect={handleSelect}
-                                onDelete={setDeleteTarget}
-                                isFocused={isFocused}
-                              />
-                            </View>
-                          </View>
-                        )}
+                          )
+                        }}
                         refreshControl={
                           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
                         }
-                        stickySectionHeadersEnabled={false}
                       />
                     </View>
                   )}

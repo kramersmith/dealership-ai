@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo, memo, type ReactNode } from 'react'
 import { ScrollView, Animated } from 'react-native'
-import { YStack, XStack, Text, useTheme } from 'tamagui'
+import { YStack, XStack, Text, useTheme, useThemeName } from 'tamagui'
 import { palette } from '@/lib/theme/tokens'
 import type { Message, VinAssistItem } from '@/lib/types'
 import { isServerMessageId } from '@/stores/chatStore'
@@ -11,6 +11,7 @@ import { ChatBubble } from './ChatBubble'
 import { StreamingBubble } from './StreamingBubble'
 import { VinAssistCard } from './VinAssistCard'
 import { MultiVinAssistCard } from './MultiVinAssistCard'
+import { AssistantAvatar } from './AssistantAvatar'
 
 /** Returns the ID of a message that was just promoted from StreamingBubble,
  *  so ChatBubble can skip its entrance animation (the text was already visible). */
@@ -37,8 +38,10 @@ function TypingIndicator() {
   const dot3 = useRef(new Animated.Value(0)).current
   const fadeIn = useFadeIn(200)
   const theme = useTheme()
+  const themeName = useThemeName()
+  const isCopilotChat = themeName === 'dark_copilot'
   const { isDesktop } = useScreenWidth()
-  const dotColor = theme.placeholderColor?.val as string
+  const dotColor = isCopilotChat ? palette.copilotPurple : (theme.placeholderColor?.val as string)
   const railHorizontalPadding = isDesktop ? '$0' : '$4'
 
   useEffect(() => {
@@ -66,29 +69,46 @@ function TypingIndicator() {
 
   return (
     <Animated.View style={{ opacity: fadeIn }}>
-      <YStack padding={railHorizontalPadding} alignItems="flex-start" paddingLeft="$6">
-        <XStack
-          backgroundColor="$backgroundStrong"
+      <XStack padding={railHorizontalPadding} alignItems="flex-start" paddingLeft="$6">
+        <YStack
+          flex={isCopilotChat ? 1 : undefined}
+          backgroundColor={
+            isCopilotChat ? (palette.copilotChatAssistantBg as any) : '$backgroundStrong'
+          }
           borderRadius={16}
           paddingHorizontal="$3"
           paddingVertical="$2.5"
-          gap="$1.5"
-          alignItems="center"
+          borderWidth={isCopilotChat ? 1 : 0}
+          borderColor={isCopilotChat ? (palette.copilotChatAssistantBorder as any) : 'transparent'}
+          gap="$2"
         >
-          {[dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View
-              key={i}
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: 4,
-                backgroundColor: dotColor,
-                transform: [{ translateY: dot }],
-              }}
-            />
-          ))}
-        </XStack>
-      </YStack>
+          <XStack gap="$1.5" alignItems="center">
+            {[dot1, dot2, dot3].map((dot, i) => (
+              <Animated.View
+                key={i}
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: dotColor,
+                  transform: [{ translateY: dot }],
+                }}
+              />
+            ))}
+          </XStack>
+          {isCopilotChat ? (
+            <Text
+              fontSize={11}
+              fontStyle="italic"
+              color="$placeholderColor"
+              lineHeight={16}
+              numberOfLines={2}
+            >
+              Reviewing your deal context…
+            </Text>
+          ) : null}
+        </YStack>
+      </XStack>
     </Animated.View>
   )
 }
@@ -258,6 +278,9 @@ export const ChatMessageList = memo(function ChatMessageList({
         justifyContent: 'flex-end',
         paddingTop: topPadding,
         paddingBottom: bottomPadding,
+        // Source message list uses `px-5` so bubbles have 20px breathing room
+        // from the chat-card edges (assistant on the left, user on the right).
+        paddingHorizontal: 20,
       }}
       style={
         {

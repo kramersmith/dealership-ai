@@ -13,7 +13,6 @@ export { TipCard } from './TipCard'
 export { NotesCard } from './NotesCard'
 export { AiChecklistCard } from './AiChecklistCard'
 export { SuccessCard } from './SuccessCard'
-export { DesktopInsightsDockControl } from './DesktopInsightsDockControl'
 export {
   InsightPanelPreviewIcons,
   MAX_PANEL_PREVIEW_ICONS,

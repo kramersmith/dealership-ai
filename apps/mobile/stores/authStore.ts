@@ -5,6 +5,7 @@ import { useUserSettingsStore } from '@/stores/userSettingsStore'
 
 interface AuthState {
   userId: string | null
+  email: string | null
   role: 'buyer' | 'dealer' | null
   isAuthenticated: boolean
   isLoading: boolean
@@ -19,6 +20,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>((set) => ({
   userId: null,
+  email: null,
   role: 'buyer',
   isAuthenticated: false,
   isLoading: false,
@@ -30,6 +32,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const result = await api.login(email, password)
       set({
         userId: result.userId,
+        email,
         role: result.role as 'buyer' | 'dealer',
         isAuthenticated: true,
         isLoading: false,
@@ -49,6 +52,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const result = await api.register(email, password, role)
       set({
         userId: result.userId,
+        email,
         role: result.role as 'buyer' | 'dealer',
         isAuthenticated: true,
         isLoading: false,
@@ -64,7 +68,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: () => {
     setAuthToken(null)
-    set({ userId: null, role: null, isAuthenticated: false, error: null })
+    set({ userId: null, email: null, role: null, isAuthenticated: false, error: null })
     useUserSettingsStore.getState().reset()
   },
 

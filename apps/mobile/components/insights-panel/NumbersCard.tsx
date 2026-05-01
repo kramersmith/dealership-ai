@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { Animated } from 'react-native'
 import { XStack, YStack, Text } from 'tamagui'
+import { Target } from '@tamagui/lucide-icons'
 import { AppCard } from '@/components/shared'
 import {
   insightCardBodyProps,
@@ -8,6 +9,8 @@ import {
   insightCardSecondaryProps,
   insightCardSectionLabelProps,
 } from '@/lib/insightsPanelTypography'
+import { palette } from '@/lib/theme/tokens'
+import type { AiCardKind } from '@/lib/types'
 import { CardTitle } from './CardTitle'
 
 // ─── Types ───
@@ -28,6 +31,7 @@ interface NumberGroup {
 interface NumbersCardProps {
   title: string
   content: Record<string, any>
+  kind?: AiCardKind
 }
 
 function formatGroupLabel(key: string): string | null {
@@ -144,16 +148,13 @@ function AnimatedCounter({
   const prevTargetRef = useRef(targetValue)
 
   useEffect(() => {
-    // Only animate if the value actually changed
     if (prevTargetRef.current === targetValue) return
     prevTargetRef.current = targetValue
 
-    // Clean up previous listener
     if (listenerRef.current) {
       animValue.removeListener(listenerRef.current)
     }
 
-    // Add listener to update display text during animation
     listenerRef.current = animValue.addListener(({ value: v }) => {
       setDisplayText(`${prefix}${formatNumber(v, hasDecimals)}${suffix}`)
     })
@@ -161,10 +162,9 @@ function AnimatedCounter({
     Animated.timing(animValue, {
       toValue: targetValue,
       duration: MORPH_DURATION,
-      useNativeDriver: false, // text content requires JS driver
+      useNativeDriver: false,
     }).start(({ finished }) => {
       if (finished) {
-        // Ensure final value is exact
         setDisplayText(`${prefix}${formatNumber(targetValue, hasDecimals)}${suffix}`)
       }
     })
@@ -177,7 +177,6 @@ function AnimatedCounter({
     }
   }, [targetValue, prefix, suffix, hasDecimals, animValue])
 
-  // Update display when prefix/suffix changes without animation
   useEffect(() => {
     setDisplayText(`${prefix}${formatNumber(targetValue, hasDecimals)}${suffix}`)
   }, [prefix, suffix, hasDecimals, targetValue])
@@ -212,7 +211,107 @@ function NumberRowItem({ row }: { row: NumberRow }) {
   )
 }
 
+// ─── Deal Overview Header ───
+
+function findRow(rows: NumberRow[], field: string): NumberRow | undefined {
+  return rows.find((row) => row.field === field)
+}
+
+function rowToNumeric(row: NumberRow | undefined): number | null {
+  if (!row) return null
+  const parsed = parseFormattedNumber(row.value)
+  return parsed.isNumeric ? parsed.numeric : null
+}
+
+function formatSignedDelta(delta: number): { label: string; isSavings: boolean } {
+  // Delta = current_offer - msrp (negative = below MSRP = good)
+  const isSavings = delta <= 0
+  const abs = Math.abs(Math.round(delta))
+  const formatted = `$${abs.toLocaleString('en-US')}`
+  return { label: `${delta < 0 ? '-' : delta > 0 ? '+' : ''}${formatted}`, isSavings }
+}
+
+function DealOverviewHeader({
+  currentOffer,
+  msrp,
+  listingPrice,
+  target,
+}: {
+  currentOffer: NumberRow
+  msrp?: NumberRow
+  listingPrice?: NumberRow
+  target?: NumberRow
+}) {
+  const offerNumeric = rowToNumeric(currentOffer)
+  const msrpRow = msrp ?? listingPrice
+  const msrpNumeric = rowToNumeric(msrpRow)
+  const targetNumeric = rowToNumeric(target)
+
+  const delta = offerNumeric != null && msrpNumeric != null ? offerNumeric - msrpNumeric : null
+  const deltaInfo = delta != null ? formatSignedDelta(delta) : null
+
+  // Progress: 0 at MSRP, 1 at target (or further). Closer to target = fuller bar.
+  let progress = 0
+  if (offerNumeric != null && msrpNumeric != null && targetNumeric != null) {
+    const span = msrpNumeric - targetNumeric
+    if (span > 0) {
+      progress = Math.max(0, Math.min(1, (msrpNumeric - offerNumeric) / span))
+    }
+  } else if (offerNumeric != null && msrpNumeric != null && offerNumeric < msrpNumeric) {
+    // No target — show partial fill proportional to MSRP discount up to 10%
+    progress = Math.min(1, (msrpNumeric - offerNumeric) / (msrpNumeric * 0.1))
+  }
+
+  return (
+    <YStack gap="$2">
+      <XStack justifyContent="space-between" alignItems="flex-start" gap="$3">
+        <YStack flex={1} minWidth={0} gap="$0.5">
+          <Text {...insightCardSectionLabelProps}>Current offer</Text>
+          <AnimatedNumberValue value={currentOffer.value} fontSize={26} fontWeight="800" />
+        </YStack>
+        {deltaInfo ? (
+          <YStack alignItems="flex-end" gap="$0.5">
+            <Text {...insightCardSectionLabelProps}>vs MSRP</Text>
+            <Text
+              fontSize={20}
+              fontWeight="800"
+              color={deltaInfo.isSavings ? '$positive' : '$danger'}
+            >
+              {deltaInfo.label}
+            </Text>
+          </YStack>
+        ) : null}
+      </XStack>
+
+      {progress > 0 ? (
+        <YStack
+          height={4}
+          borderRadius={3}
+          backgroundColor="rgba(148, 163, 184, 0.18)"
+          overflow="hidden"
+        >
+          <YStack
+            height={4}
+            borderRadius={3}
+            backgroundColor={palette.copilotEmerald}
+            style={{ width: `${Math.round(progress * 100)}%` } as any}
+          />
+        </YStack>
+      ) : null}
+
+      {target || msrpRow ? (
+        <XStack justifyContent="space-between" alignItems="center">
+          <Text {...insightCardSecondaryProps}>{target ? `Target ${target.value}` : ' '}</Text>
+          <Text {...insightCardSecondaryProps}>{msrpRow ? `MSRP ${msrpRow.value}` : ' '}</Text>
+        </XStack>
+      ) : null}
+    </YStack>
+  )
+}
+
 // ─── Numbers Card ───
+
+const HEADER_FIELDS = new Set(['current_offer', 'msrp', 'listing_price', 'your_target'])
 
 export function NumbersCard({ title, content }: NumbersCardProps) {
   const groups = (content.groups as NumberGroup[]) ?? []
@@ -224,28 +323,70 @@ export function NumbersCard({ title, content }: NumbersCardProps) {
 
   if (allGroups.length === 0) return null
 
+  // Detect Deal Overview shape: a single default group containing current_offer + (msrp|listing_price|your_target)
+  const flatRows: NumberRow[] = groups.length > 0 ? groups.flatMap((group) => group.rows) : rows
+  const currentOffer = findRow(flatRows, 'current_offer')
+  const msrp = findRow(flatRows, 'msrp')
+  const listingPrice = findRow(flatRows, 'listing_price')
+  const target = findRow(flatRows, 'your_target')
+  const showOverviewHeader =
+    !!currentOffer && (!!msrp || !!listingPrice || !!target) && groups.length === 0
+
+  const remainingRows = showOverviewHeader
+    ? flatRows.filter((row) => !row.field || !HEADER_FIELDS.has(row.field))
+    : null
+
   return (
-    <AppCard compact>
+    <AppCard
+      header={
+        <CardTitle
+          icon={<Target size={12} color={palette.copilotEmerald} />}
+          iconAccent={palette.copilotEmerald}
+        >
+          {title}
+        </CardTitle>
+      }
+    >
       <YStack gap="$3">
-        <CardTitle>{title}</CardTitle>
         {summary ? <Text {...insightCardBodyProps}>{summary}</Text> : null}
 
-        {allGroups.map((group, gi) => {
-          const groupLabel = formatGroupLabel(group.key)
-          return (
-            <YStack key={group.key}>
-              {gi > 0 && <YStack height={1} backgroundColor="$borderColor" marginVertical="$2" />}
-              {groupLabel ? (
-                <Text {...insightCardSectionLabelProps} paddingBottom="$1">
-                  {groupLabel}
-                </Text>
-              ) : null}
-              {group.rows.map((row) => (
-                <NumberRowItem key={row.label} row={row} />
-              ))}
-            </YStack>
-          )
-        })}
+        {showOverviewHeader && currentOffer ? (
+          <DealOverviewHeader
+            currentOffer={currentOffer}
+            msrp={msrp}
+            listingPrice={listingPrice}
+            target={target}
+          />
+        ) : null}
+
+        {showOverviewHeader && remainingRows && remainingRows.length > 0 ? (
+          <YStack paddingTop="$2" borderTopWidth={1} borderTopColor="$borderColor" opacity={0.95}>
+            {remainingRows.map((row) => (
+              <NumberRowItem key={`${row.field ?? row.label}`} row={row} />
+            ))}
+          </YStack>
+        ) : null}
+
+        {!showOverviewHeader
+          ? allGroups.map((group, gi) => {
+              const groupLabel = formatGroupLabel(group.key)
+              return (
+                <YStack key={group.key}>
+                  {gi > 0 && (
+                    <YStack height={1} backgroundColor="$borderColor" marginVertical="$2" />
+                  )}
+                  {groupLabel ? (
+                    <Text {...insightCardSectionLabelProps} paddingBottom="$1">
+                      {groupLabel}
+                    </Text>
+                  ) : null}
+                  {group.rows.map((row) => (
+                    <NumberRowItem key={row.label} row={row} />
+                  ))}
+                </YStack>
+              )
+            })
+          : null}
       </YStack>
     </AppCard>
   )

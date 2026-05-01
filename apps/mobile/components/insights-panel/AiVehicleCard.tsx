@@ -4,13 +4,14 @@ import {
   Text as RNText,
   TextInput,
   StyleSheet,
-  Platform,
   TouchableOpacity,
   ActivityIndicator,
   Animated,
 } from 'react-native'
 import { useTheme } from 'tamagui'
-import { AlertTriangle, ChevronDown, Check } from '@tamagui/lucide-icons'
+import { AlertTriangle, Car, ChevronDown, Check } from '@tamagui/lucide-icons'
+import { palette } from '@/lib/theme/tokens'
+import { MONO_FONT_FAMILY } from '@/lib/constants'
 import { formatMileage, formatCurrency } from '@/lib/utils'
 import { useDealStore } from '@/stores/dealStore'
 import { useChatStore, normalizeVinCandidate } from '@/stores/chatStore'
@@ -731,7 +732,10 @@ export function AiVehicleCard({ title, content, collapsedByDefault = false }: Ai
 
   const colors: Colors = {
     bgColor: theme.backgroundStrong?.val as string,
-    sectionBgColor: theme.backgroundHover?.val as string,
+    // Carved-in inset surface for sub-sections (Specs / Title Check / Market
+    // Value). Slightly darker than the card itself so it reads as nested,
+    // matching the rgba slate-950 wells used elsewhere in the new design.
+    sectionBgColor: 'rgba(2, 6, 23, 0.5)',
     borderColor: theme.borderColor?.val as string,
     borderColorHover: theme.borderColorHover?.val as string,
     textColor: theme.color?.val as string,
@@ -747,28 +751,26 @@ export function AiVehicleCard({ title, content, collapsedByDefault = false }: Ai
   const hasVin = !!vehicle.vin
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: colors.bgColor,
-          borderColor: colors.borderColor,
-          ...(Platform.OS === 'web'
-            ? { boxShadow: `0 1px 3px ${colors.shadowColor}, 0 1px 2px ${colors.shadowColor}` }
-            : {
-                shadowColor: colors.shadowColor,
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 1,
-                shadowRadius: 3,
-                elevation: 2,
-              }),
-        } as any,
-      ]}
-    >
-      <View style={styles.content}>
-        {/* Vehicle Identity */}
-        <RNText style={[styles.label, { color: colors.mutedColor }]}>{label}</RNText>
+    <View style={[styles.card, { borderColor: palette.ghostBorder }]}>
+      {/* Card header with divider */}
+      <View style={styles.cardHeader}>
+        <View
+          style={[
+            styles.iconTile,
+            {
+              backgroundColor: 'rgba(52, 211, 153, 0.10)',
+              borderColor: palette.copilotEmeraldBorder30,
+            },
+          ]}
+        >
+          <Car size={12} color={palette.copilotEmerald} />
+        </View>
+        <RNText style={[styles.titleHeadline, { color: palette.slate100, flex: 1 }]}>
+          {label}
+        </RNText>
+      </View>
 
+      <View style={styles.content}>
         <View style={styles.specsSection}>
           {name ? <RNText style={[styles.name, { color: colors.textColor }]}>{name}</RNText> : null}
           {specs ? (
@@ -842,18 +844,48 @@ export function AiVehicleCard({ title, content, collapsedByDefault = false }: Ai
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
     borderWidth: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.60)',
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
   content: {
     gap: 12,
+    padding: 16,
+  },
+  iconTile: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   label: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '800',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.7,
+  },
+  titleHeadline: {
+    fontSize: 13,
+    fontWeight: '500',
+    letterSpacing: -0.1,
+  },
+  aiLiveTag: {
+    fontSize: 9,
+    fontWeight: '500',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
   },
   specsSection: {
     gap: 6,
@@ -867,12 +899,15 @@ const styles = StyleSheet.create({
   },
   vin: {
     fontSize: 12,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    letterSpacing: 0.4,
+    fontFamily: MONO_FONT_FAMILY,
   },
   // Intelligence sections
   section: {
-    borderRadius: 8,
+    borderRadius: 10,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: palette.ghostBgSubtle,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1010,7 +1045,8 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     paddingHorizontal: 12,
     fontSize: 14,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    fontFamily: MONO_FONT_FAMILY,
+    letterSpacing: 0.4,
     minHeight: 44,
     outlineWidth: 0,
   } as any,

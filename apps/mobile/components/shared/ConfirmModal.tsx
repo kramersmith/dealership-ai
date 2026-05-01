@@ -2,10 +2,11 @@ import { useRef, useEffect } from 'react'
 import { Modal, TouchableOpacity, Animated, Platform, View } from 'react-native'
 import { YStack, XStack, Text } from 'tamagui'
 import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
-import { palette } from '@/lib/theme/tokens'
+import { DISPLAY_FONT_FAMILY } from '@/lib/constants'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
-import { AppButton } from './AppButton'
+import { palette } from '@/lib/theme/tokens'
+import { ModalGhostButton, ModalPrimaryButton } from './ModalButtons'
 
 interface ConfirmModalProps {
   visible: boolean
@@ -78,11 +79,17 @@ export function ConfirmModal({
       <TouchableOpacity
         style={{
           flex: 1,
-          backgroundColor: palette.overlay,
+          backgroundColor: 'rgba(2, 6, 23, 0.72)',
           justifyContent: 'center',
           alignItems: 'center',
           paddingHorizontal: 16,
           ...modalWebFontFamilyStyle(),
+          ...(Platform.OS === 'web'
+            ? ({
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+              } as any)
+            : null),
         }}
         activeOpacity={1}
         onPress={onCancel}
@@ -90,43 +97,46 @@ export function ConfirmModal({
         <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{ width: '100%' }}>
           <Animated.View style={{ transform: [{ scale }], opacity: contentOpacity, width: '100%' }}>
             <YStack
-              backgroundColor="$backgroundStrong"
-              borderRadius="$4"
-              padding="$5"
+              backgroundColor="rgba(15, 23, 42, 0.92)"
+              borderRadius={20}
+              padding={24}
               width="100%"
-              maxWidth={320}
+              maxWidth={400}
               alignSelf="center"
-              gap="$4"
+              gap={20}
               borderWidth={1}
-              borderColor="$borderColor"
+              borderColor={palette.ghostBorder}
+              {...(Platform.OS === 'web'
+                ? ({
+                    style: {
+                      backdropFilter: 'blur(20px) saturate(1.15)',
+                      WebkitBackdropFilter: 'blur(20px) saturate(1.15)',
+                    },
+                  } as any)
+                : {})}
             >
-              <YStack gap="$2">
-                <Text fontSize={18} fontWeight="700" color="$color">
+              <YStack gap={8}>
+                <Text
+                  fontSize={20}
+                  fontWeight="600"
+                  color={palette.slate50}
+                  letterSpacing={-0.3}
+                  fontFamily={DISPLAY_FONT_FAMILY}
+                >
                   {title}
                 </Text>
-                <Text fontSize={14} color="$placeholderColor" lineHeight={20}>
+                <Text fontSize={14} color={palette.slate400} lineHeight={20}>
                   {message}
                 </Text>
               </YStack>
 
-              <XStack gap="$3" justifyContent="flex-end">
-                <AppButton
-                  variant="ghost"
-                  compact
-                  onPress={onCancel}
-                  minWidth={80}
-                  {...(Platform.OS === 'web' ? ({ id: webCancelDomId } as any) : {})}
-                >
+              <XStack gap={12} justifyContent="flex-end">
+                <ModalGhostButton onPress={onCancel} webDomId={webCancelDomId}>
                   Cancel
-                </AppButton>
-                <AppButton
-                  variant={confirmVariant === 'primary' ? 'primary' : 'danger'}
-                  compact
-                  onPress={onConfirm}
-                  minWidth={80}
-                >
+                </ModalGhostButton>
+                <ModalPrimaryButton variant={confirmVariant} onPress={onConfirm}>
                   {confirmLabel}
-                </AppButton>
+                </ModalPrimaryButton>
               </XStack>
             </YStack>
           </Animated.View>

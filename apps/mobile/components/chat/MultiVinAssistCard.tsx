@@ -4,7 +4,7 @@ import { YStack, XStack, Text, Spinner } from 'tamagui'
 import { ScanLine } from '@tamagui/lucide-icons'
 
 import type { VinAssistItem } from '@/lib/types'
-import { CHAT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
+import { CHAT_BUBBLE_MAX_WIDTH, MONO_FONT_FAMILY } from '@/lib/constants'
 import { AppButton, AppCard } from '@/components/shared'
 import { CardTitle } from '@/components/insights-panel/CardTitle'
 import { useFadeIn } from '@/hooks/useAnimatedValue'
@@ -77,7 +77,9 @@ function StatusChip({ status }: { status: VinAssistItem['status'] }) {
   )
 }
 
-const vinFont = Platform.OS === 'web' ? ('monospace' as const) : undefined
+// All VIN renderings across the app share the JetBrains Mono stack so VINs
+// read as machine-encoded identifiers. See `MONO_FONT_FAMILY` in lib/constants.
+const vinFont = MONO_FONT_FAMILY
 
 /** One section inside the single VIN-assist card (not a nested card). */
 const VinAssistSection = memo(function VinAssistSection({

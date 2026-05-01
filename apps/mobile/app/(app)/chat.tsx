@@ -6,35 +6,27 @@ import {
   TouchableOpacity,
   Pressable,
   Modal,
+  ScrollView,
   View,
   Animated,
   Dimensions,
   Easing,
   StyleSheet,
 } from 'react-native'
-import { YStack, XStack, Text, Theme, useTheme, useThemeName, Button } from 'tamagui'
+import { YStack, XStack, Text, Theme } from 'tamagui'
 import {
   ConfirmModal,
-  ThemedSafeArea,
+  HeaderIconButton,
   LoadingIndicator,
   RoleGuard,
-  ScreenHeader,
+  ThemedSafeArea,
 } from '@/components/shared'
-import {
-  MessageSquarePlus,
-  Pause,
-  Sparkles,
-  X,
-  ChevronLeft,
-  ChevronRight,
-} from '@tamagui/lucide-icons'
+import { Pause, Sparkles, X } from '@tamagui/lucide-icons'
 import { palette } from '@/lib/theme/tokens'
 import {
   APP_NAME,
   DEFAULT_BUYER_CONTEXT,
   INSIGHTS_COLLAPSED_PREVIEW_UPDATING,
-  MOBILE_INSIGHTS_WIDTH_RATIO,
-  MOBILE_INSIGHTS_MAX_WIDTH,
   MAX_INSIGHTS_PREVIEW_ITEMS,
 } from '@/lib/constants'
 import {
@@ -45,16 +37,21 @@ import {
 import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
 import { DEV_COLLAPSE_DESKTOP_INSIGHTS_EVENT } from '@/lib/dev/mockPanelUpdates'
 import {
+  CHAT_PAGE_MAX_WIDTH_PX,
   CHAT_SCREEN_LAYOUT,
   getChatBottomPadding,
+  getChatPageHorizontalPaddingPx,
+  getChatPageVerticalPaddingPx,
   getContextPickerBottomPadding,
+  getDesktopChatPageRailStyle,
   getDesktopChatRailStyle,
+  getDesktopInsightsWidthPx,
   getWebQueuePreviewRightInsetPx,
 } from '@/lib/chatLayout'
 import type { BuyerContext, Message, VinAssistItem } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
+import { webScrollbarStyle } from '@/lib/scrollbarStyles'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
-import { getVehicleAwareHeaderTitleInfo } from '@/lib/headerTitles'
 import { useRouter } from 'expo-router'
 import { useChatStore } from '@/stores/chatStore'
 import { useDealStore } from '@/stores/dealStore'
@@ -74,24 +71,34 @@ import { useDesktopPanelPreference } from '@/hooks/useDesktopPanelPreference'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
 import {
   InsightsPanel,
-  DesktopInsightsDockControl,
   InsightPanelPreviewIcons,
   InsightsPreviewItemChip,
   describePanelIconKindsForA11y,
 } from '@/components/insights-panel'
-import { ChatComposerOverlay, ChatMessageList, ChatInput, ContextPicker } from '@/components/chat'
+import {
+  BuyerChatHeader,
+  BuyerChatPageHero,
+  BuyerChatTopNav,
+  ChatComposerOverlay,
+  ChatMessageList,
+  ChatInput,
+  ContextPicker,
+  FrostedChatRail,
+  QueuePreviewCard,
+} from '@/components/chat'
+
+/** Set true when `recap/[sessionId]` is registered in `(app)/_layout.tsx`. */
+const DEAL_RECAP_ROUTE_ENABLED = false
 
 function useMobileInsightsWidth() {
-  const [width, setWidth] = useState(
-    Math.min(
-      Dimensions.get('window').width * MOBILE_INSIGHTS_WIDTH_RATIO,
-      MOBILE_INSIGHTS_MAX_WIDTH
-    )
-  )
+  // The insights panel is a full-width takeover sheet on mobile — covers the
+  // chat below entirely so the user can scan everything without competing
+  // with the chat thread peeking through.
+  const [width, setWidth] = useState(Dimensions.get('window').width)
 
   useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      setWidth(Math.min(window.width * MOBILE_INSIGHTS_WIDTH_RATIO, MOBILE_INSIGHTS_MAX_WIDTH))
+      setWidth(window.width)
     })
     return () => subscription.remove()
   }, [])
@@ -144,117 +151,28 @@ const EDIT_BRANCH_CONFIRM_MESSAGE =
   'If there are replies after this message, they will be removed. Deal and vehicle details stored for this chat will be cleared. Your shopping situation (such as researching or at the dealership) is kept.'
 const EDIT_BRANCH_CONFIRM_CONTINUE_LABEL = 'Continue'
 const EDIT_BRANCH_CONFIRM_CANCEL_DOM_ID = 'edit-branch-confirm-cancel'
-const QUEUE_PREVIEW_EXIT_MS = 220
 const MAX_QUEUE_PREVIEW_CARDS = 3
-
-function QueuePreviewCard({
-  content,
-  exiting,
-  prefersReducedMotion,
-}: {
-  content: string
-  exiting: boolean
-  prefersReducedMotion: boolean
-}) {
-  const opacity = useRef(new Animated.Value(prefersReducedMotion ? 1 : 0)).current
-  const translateY = useRef(new Animated.Value(prefersReducedMotion ? 0 : 8)).current
-  const scale = useRef(new Animated.Value(1)).current
-
-  useEffect(() => {
-    if (prefersReducedMotion) {
-      opacity.setValue(exiting ? 0 : 1)
-      translateY.setValue(0)
-      scale.setValue(1)
-      return
-    }
-    if (exiting) {
-      Animated.parallel([
-        Animated.timing(opacity, {
-          toValue: 0,
-          duration: QUEUE_PREVIEW_EXIT_MS,
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-        Animated.timing(translateY, {
-          toValue: -8,
-          duration: QUEUE_PREVIEW_EXIT_MS,
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-        Animated.timing(scale, {
-          toValue: 0.98,
-          duration: QUEUE_PREVIEW_EXIT_MS,
-          useNativeDriver: USE_NATIVE_DRIVER,
-        }),
-      ]).start()
-      return
-    }
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 180,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 180,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-      Animated.timing(scale, {
-        toValue: 1,
-        duration: 180,
-        useNativeDriver: USE_NATIVE_DRIVER,
-      }),
-    ]).start()
-  }, [exiting, opacity, prefersReducedMotion, scale, translateY])
-
-  return (
-    <Animated.View
-      style={{
-        opacity,
-        transform: [{ translateY }, { scale }],
-        width: Platform.OS === 'web' ? CHAT_SCREEN_LAYOUT.webQueuePreviewCardWidthPx : undefined,
-        alignSelf: 'flex-end',
-      }}
-    >
-      <YStack
-        maxWidth={Platform.OS === 'web' ? undefined : '78%'}
-        width={Platform.OS === 'web' ? '100%' : undefined}
-        backgroundColor="$backgroundHover"
-        borderWidth={1}
-        borderColor="$borderColor"
-        borderRadius="$4"
-        paddingHorizontal="$3"
-        paddingVertical="$2"
-      >
-        <Text fontSize={11} color="$placeholderColor" lineHeight={16}>
-          Queued
-        </Text>
-        <Text fontSize={13} lineHeight={19} color="$color" numberOfLines={2}>
-          {content}
-        </Text>
-      </YStack>
-    </Animated.View>
-  )
-}
+const QUEUE_PREVIEW_EXIT_MS = 220
 
 export default function ChatScreen() {
   const activeSessionId = useChatStore((state) => state.activeSessionId)
-  const activeSessionTitle = useChatStore(
-    (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.title
-  )
+  const activeSession = useChatStore((state) => {
+    const id = state.activeSessionId
+    if (!id) return null
+    return state.sessions.find((session) => session.id === id) ?? null
+  })
+  const activeSessionTitle = activeSession?.title
   const createSession = useChatStore((state) => state.createSession)
   const addGreeting = useChatStore((state) => state.addGreeting)
 
-  const { isDesktop } = useScreenWidth()
+  const { width: windowWidth, isDesktop } = useScreenWidth()
+
   const router = useRouter()
   const isCreating = useRef(false)
-  const theme = useTheme()
-  const themeName = useThemeName()
-  const isDarkTheme = typeof themeName === 'string' && themeName.startsWith('dark')
   const mobileInsightsWidth = useMobileInsightsWidth()
   const [isInsightsOpen, setIsInsightsOpen] = useState(false)
 
   const [isInsightsVisible, setIsInsightsVisible] = useState(false)
-  const [mobileInsightsPreviewHeight, setMobileInsightsPreviewHeight] = useState(0)
   const [desktopComposerTrayHeight, setDesktopComposerTrayHeight] = useState(0)
   const insightsSlide = useRef(new Animated.Value(mobileInsightsWidth)).current
   const insightsBackdropOpacity = useRef(new Animated.Value(0)).current
@@ -314,118 +232,6 @@ export default function ChatScreen() {
     require('@/lib/dev/mockPanelUpdates')
   }, [])
 
-  /** Opaque-only stops so RN never interpolates through alpha (avoids “see-through” flashes). */
-  const insightsPreviewStripBg = useMemo(() => {
-    const idle = (theme.backgroundStrong?.val as string) ?? '#242526'
-    const brandWash = isDarkTheme
-      ? ((theme.brandSubtle?.val as string) ?? palette.brandSubtle)
-      : palette.brandSubtleLight
-    const finishPeak = isDarkTheme ? palette.brandFinishPeakDark : palette.brandFinishPeakLight
-    return { idle, brandWash, finishPeak }
-  }, [isDarkTheme, theme.backgroundStrong?.val, theme.brandSubtle?.val])
-
-  /** 0–1 drives brand overlay opacity while analyzing. */
-  const insightsPulseOverlayAnim = useBreathingPulseOverlay(isPanelAnalyzing, prefersReducedMotion)
-
-  /**
-   * Finish / idle strip emphasis (opaque hex interpolate). 0 = idle, 1 = brand wash,
-   * 1.5 = brighter finish peak. Held at 1 while analyzing so the steady wash doesn't flicker.
-   */
-  const insightsEmphasisAnim = useRef(new Animated.Value(isPanelAnalyzing ? 1 : 0)).current
-  /** Subtle “lift” on the finish flash (native transform only — outer wrapper). */
-  const insightsStripScaleAnim = useRef(new Animated.Value(1)).current
-  /** Finish-only border “ring” (1 → ~2.5 → 1); avoids animating width during the live pulse. */
-  const insightsStripBorderWidthAnim = useRef(new Animated.Value(1)).current
-  /** Brief sparkle opacity settle after analysis (native opacity). */
-  const insightsSparkleOpacityAnim = useRef(new Animated.Value(1)).current
-  const insightsFinishFlashRef = useRef<Animated.CompositeAnimation | null>(null)
-  const previousPanelAnalyzingRef = useRef(isPanelAnalyzing)
-
-  useEffect(() => {
-    const wasAnalyzing = previousPanelAnalyzingRef.current
-    previousPanelAnalyzingRef.current = isPanelAnalyzing
-
-    insightsFinishFlashRef.current?.stop()
-    insightsFinishFlashRef.current = null
-
-    if (isPanelAnalyzing) {
-      // Steady-state during analysis: brand wash + neutral scale/border.
-      insightsEmphasisAnim.setValue(1)
-      insightsStripScaleAnim.setValue(1)
-      insightsStripBorderWidthAnim.setValue(1)
-      insightsSparkleOpacityAnim.setValue(1)
-      return
-    }
-
-    // Reset to idle when never analyzed (or under reduced motion).
-    if (!wasAnalyzing || prefersReducedMotion) {
-      insightsEmphasisAnim.setValue(0)
-      insightsStripScaleAnim.setValue(1)
-      insightsStripBorderWidthAnim.setValue(1)
-      insightsSparkleOpacityAnim.setValue(1)
-      return
-    }
-
-    // Finish flash on analyzing → idle transition.
-    insightsEmphasisAnim.setValue(1)
-    insightsStripScaleAnim.setValue(1)
-    insightsStripBorderWidthAnim.setValue(1)
-    insightsSparkleOpacityAnim.setValue(1)
-
-    const cancelHaptic = scheduleFinishFlashHaptic()
-
-    const finishFlash = createFinishFlashSequence({
-      scaleAnim: insightsStripScaleAnim,
-      borderWidthAnim: insightsStripBorderWidthAnim,
-      scaleTo: 1.012,
-      borderWidthTo: 2.5,
-      scaleUsesNativeDriver: true,
-      riseExtras: [
-        Animated.timing(insightsEmphasisAnim, {
-          toValue: 1.5,
-          duration: 320,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: false,
-        }),
-      ],
-      fallExtras: [
-        Animated.timing(insightsEmphasisAnim, {
-          toValue: 0,
-          duration: 980,
-          easing: Easing.bezier(0.4, 0, 0.2, 1),
-          useNativeDriver: false,
-        }),
-        Animated.sequence([
-          Animated.timing(insightsSparkleOpacityAnim, {
-            toValue: 0.86,
-            duration: 240,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(insightsSparkleOpacityAnim, {
-            toValue: 1,
-            duration: 560,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-        ]),
-      ],
-    })
-    insightsFinishFlashRef.current = finishFlash
-    finishFlash.start()
-
-    return () => {
-      cancelHaptic()
-    }
-  }, [
-    insightsEmphasisAnim,
-    insightsSparkleOpacityAnim,
-    insightsStripBorderWidthAnim,
-    insightsStripScaleAnim,
-    isPanelAnalyzing,
-    prefersReducedMotion,
-  ])
-
   const webQueuePreviewRightInsetPx = getWebQueuePreviewRightInsetPx(Platform.OS)
 
   // Mobile entrance animation — fade + slide up when the chat screen mounts
@@ -465,14 +271,46 @@ export default function ChatScreen() {
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [editingUserMessageId, editBranchConfirmOpen, cancelEditUserMessage, showContextPicker])
 
-  const headerTitleInfo = useMemo(
-    () => getVehicleAwareHeaderTitleInfo(activeSessionTitle, dealState, APP_NAME),
-    [activeSessionTitle, dealState]
-  )
-  const headerTitle = showContextPicker ? 'New Chat' : headerTitleInfo.title
+  // Click-away: when editing, any pointerdown outside the editing bubble or the
+  // composer area exits edit mode.
+  useEffect(() => {
+    if (
+      Platform.OS !== 'web' ||
+      !editingUserMessageId ||
+      showContextPicker ||
+      editBranchConfirmOpen ||
+      typeof document === 'undefined'
+    ) {
+      return
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Element | null
+      if (!target || typeof target.closest !== 'function') return
+      // Inside the editing bubble or the composer area → leave edit mode alone.
+      if (target.closest('#chat-edit-target, #chat-composer-area')) return
+      cancelEditUserMessage()
+    }
+    document.addEventListener('mousedown', onPointerDown, true)
+    return () => document.removeEventListener('mousedown', onPointerDown, true)
+  }, [editingUserMessageId, editBranchConfirmOpen, cancelEditUserMessage, showContextPicker])
+
   const showMobileInsightsToggle = !isDesktop && !!dealState && !showContextPicker
   const isDesktopChatActive = isDesktop && !showContextPicker
   const buyerContextForPreview = dealState?.buyerContext ?? DEFAULT_BUYER_CONTEXT
+
+  const pageShellPaddingH = getChatPageHorizontalPaddingPx(windowWidth)
+  const pageShellPaddingV = getChatPageVerticalPaddingPx(windowWidth)
+  const desktopChatRailStyle = isDesktop
+    ? showContextPicker
+      ? getDesktopChatRailStyle()
+      : getDesktopChatPageRailStyle()
+    : undefined
+  // When the composer sits inside the FrostedChatRail (active session), the rail's
+  // own rounded edges define the composer's bounds. Its own band padding (16) handles
+  // the inset symmetrically. Only the context-picker mode uses page-shell padding.
+  const desktopComposerLeftPx = showContextPicker
+    ? CHAT_SCREEN_LAYOUT.desktopChatRailLeftGutterPx
+    : 0
 
   const panelPreviewIconKinds = useMemo(
     () => getDedupedPanelIconKinds(dealState?.aiPanelCards),
@@ -519,6 +357,7 @@ export default function ChatScreen() {
     useChatStore.setState(CHAT_SESSION_RESET_STATE)
   }, [])
 
+  const desktopInsightsWidth = useMemo(() => getDesktopInsightsWidthPx(windowWidth), [windowWidth])
   const desktopShell = useDesktopInsightsShell({
     dealState,
     enabled: isDesktopChatActive,
@@ -528,6 +367,7 @@ export default function ChatScreen() {
     onCollapseChange: setDesktopInsightsCollapsed,
     onBackComplete: navigateBackOrChats,
     onResetComplete: resetDesktopChatShell,
+    insightsWidth: desktopInsightsWidth,
   })
   const { transition: desktopTransition } = desktopShell
   const desktopPanelCollapseEntrance = useIconEntrance(desktopShell.shellState === 'expanded')
@@ -680,68 +520,26 @@ export default function ChatScreen() {
     useChatStore.setState(CHAT_SESSION_RESET_STATE)
   }
 
-  const mobileChatTopInset = showMobileInsightsToggle ? mobileInsightsPreviewHeight + 8 : 8
-  const previewItems = useMemo(
-    () => getInsightsPreviewItems(dealState, dismissedFlagIds, buyerContextForPreview),
-    [dealState, dismissedFlagIds, buyerContextForPreview]
-  )
+  const handleRecapPress = useCallback(() => {
+    if (!DEAL_RECAP_ROUTE_ENABLED || !activeSessionId) return
+    // Cast: the recap route is registered conditionally; expo-router's
+    // typed `Href` only knows about routes present at build time. Reachable
+    // only when `DEAL_RECAP_ROUTE_ENABLED` is flipped on.
+    router.push(`/(app)/recap/${activeSessionId}` as any)
+  }, [activeSessionId, router])
 
-  const insightsPreviewContentSignature = useMemo(() => {
-    if (isPanelAnalyzing) return 'analyzing'
-    if (insightsUpdateMode === 'paused') return 'paused'
-    const slice = previewItems.slice(0, MAX_INSIGHTS_PREVIEW_ITEMS)
-    const parts = slice.map((item) => {
-      switch (item.type) {
-        case 'health':
-          return `h:${item.status}`
-        case 'flag':
-          return `f:${item.label}`
-        case 'savings':
-          return `s:${item.label}`
-        case 'flagCount':
-          return `c:${item.count}`
-        case 'text':
-          return `t:${item.label}`
-        default:
-          return 'u'
-      }
-    })
-    return `live:${parts.join('·')}|${panelPreviewIconKinds.join(',')}`
-  }, [isPanelAnalyzing, insightsUpdateMode, panelPreviewIconKinds, previewItems])
+  // The mobile insights preview strip is gone; the chat just has a small,
+  // fixed top inset above the first message.
+  const mobileChatTopInset = 8
 
-  const {
-    opacityAnim: insightsPreviewContentOpacityAnim,
-    translateYAnim: insightsPreviewContentTranslateYAnim,
-  } = useSignatureEntranceAnimation(insightsPreviewContentSignature, prefersReducedMotion)
-
-  const desktopChatRailStyle = isDesktop ? getDesktopChatRailStyle() : undefined
-  const composerTrayStyle = isDesktop
-    ? ({
-        marginHorizontal: CHAT_SCREEN_LAYOUT.desktopComposerTrayInsetPx,
-        marginBottom: CHAT_SCREEN_LAYOUT.desktopComposerTrayBottomPx,
-        borderRadius: CHAT_SCREEN_LAYOUT.desktopComposerTrayRadiusPx,
-        borderWidth: 1,
-        borderColor: theme.borderColor?.val as string,
-        backgroundColor: theme.backgroundStrong?.val as string,
-        overflow: 'hidden',
-        boxShadow: `0 10px 26px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
-      } as const)
-    : ({
-        marginHorizontal: CHAT_SCREEN_LAYOUT.mobileComposerTrayInsetPx,
-        marginBottom: 0,
-        paddingBottom: CHAT_SCREEN_LAYOUT.mobileComposerTrayBottomPx,
-        borderTopLeftRadius: CHAT_SCREEN_LAYOUT.mobileComposerTrayRadiusPx,
-        borderTopRightRadius: CHAT_SCREEN_LAYOUT.mobileComposerTrayRadiusPx,
-        borderTopWidth: 1,
-        borderTopColor: theme.borderColor?.val as string,
-        backgroundColor: theme.backgroundStrong?.val as string,
-        overflow: 'hidden',
-        shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.2,
-        shadowRadius: 20,
-        elevation: 10,
-      } as any)
+  // Source composer is a flat band integrated at the bottom of the chat card —
+  // its own border-top + bg-slate-950/40 carries the visual chrome, no outer dock.
+  const composerTrayStyle = {
+    marginHorizontal: 0,
+    marginBottom: 0,
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  } as any
   const sendErrorText =
     sendError && editingUserMessageId
       ? `${sendError} Edit the highlighted message and send again.`
@@ -812,224 +610,40 @@ export default function ChatScreen() {
     return () => clearTimeout(timeout)
   }, [queuedRenderableItems, prefersReducedMotion])
 
+  // Insights toggle handler — desktop expands the side panel, mobile opens
+  // the slide-in modal. Declared above the chat header so the header's
+  // tap-target wrapper can call it directly.
+  const handleInsightsTogglePress = useCallback(() => {
+    if (isDesktop) {
+      handleDesktopExpandPress()
+    } else {
+      setIsInsightsOpen(true)
+    }
+  }, [handleDesktopExpandPress, isDesktop])
+
+  // Inline insights preview — replaces the old phase progress bar in the chat
+  // header. Renders the same context as the panel's collapsed strip
+  // (analyzing / paused / preview chips + panel kind icons) so the user has
+  // deal context at a glance without the panel open.
+  const headerInsightsPreviewItems = useMemo(
+    () =>
+      dealState ? getInsightsPreviewItems(dealState, dismissedFlagIds, buyerContextForPreview) : [],
+    [dealState, dismissedFlagIds, buyerContextForPreview]
+  )
+
   if (isLoading && messages.length === 0) {
     return (
       <RoleGuard role="buyer">
-        <ThemedSafeArea>
-          <LoadingIndicator message="Loading deal..." />
-        </ThemedSafeArea>
+        <Theme name="dark_copilot">
+          <ThemedSafeArea>
+            <YStack flex={1} backgroundColor="$background">
+              <LoadingIndicator message="Loading deal..." />
+            </YStack>
+          </ThemedSafeArea>
+        </Theme>
       </RoleGuard>
     )
   }
-
-  const header = (
-    <ScreenHeader
-      leftIcon={<ChevronLeft size={24} color="$color" />}
-      onLeftPress={handleBack}
-      leftLabel="Back to chats"
-      title={headerTitle}
-      rightIcon={<MessageSquarePlus size={22} color="$color" />}
-      onRightPress={handleNewSession}
-      rightLabel="Start new chat"
-    />
-  )
-
-  const mobileInsightsPreview =
-    showMobileInsightsToggle && dealState ? (
-      <Pressable
-        onPress={() => setIsInsightsOpen(true)}
-        accessibilityRole="button"
-        accessibilityLabel={collapsedInsightsAccessibilityLabel}
-        style={({ pressed }) => ({
-          marginHorizontal: 12,
-          marginTop: 8,
-          marginBottom: 6,
-          height: 44,
-          opacity: pressed ? 0.94 : 1,
-          transform: [{ scale: pressed ? 0.992 : 1 }],
-          borderWidth: 0,
-          ...(Platform.OS === 'web'
-            ? {
-                outlineWidth: 0,
-                boxShadow: 'none',
-                appearance: 'none',
-                cursor: 'pointer',
-              }
-            : null),
-        })}
-      >
-        <Animated.View
-          style={{
-            width: '100%',
-            transform: [{ scale: insightsStripScaleAnim }],
-          }}
-        >
-          <Animated.View
-            style={[
-              {
-                width: '100%',
-                height: 44,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                paddingHorizontal: 10,
-                overflow: 'hidden',
-                borderRadius: 14,
-                position: 'relative',
-                ...(Platform.OS === 'web'
-                  ? ({
-                      boxShadow: `0 8px 28px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
-                    } as any)
-                  : isPanelAnalyzing
-                    ? {
-                        shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
-                        shadowOffset: { width: 0, height: 6 },
-                        shadowOpacity: 0.22,
-                        shadowRadius: 16,
-                        elevation: 8,
-                      }
-                    : {
-                        shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
-                        shadowOffset: { width: 0, height: 6 },
-                        shadowOpacity: insightsEmphasisAnim.interpolate({
-                          inputRange: [0, 1, 1.5],
-                          outputRange: [0.14, 0.24, 0.38],
-                        }),
-                        shadowRadius: 16,
-                        elevation: 8,
-                      }),
-              },
-              isPanelAnalyzing
-                ? {
-                    borderWidth: 1,
-                    backgroundColor: insightsPreviewStripBg.brandWash,
-                    borderColor: palette.brand,
-                  }
-                : {
-                    borderWidth: insightsStripBorderWidthAnim,
-                    backgroundColor: insightsEmphasisAnim.interpolate({
-                      inputRange: [0, 1, 1.5],
-                      outputRange: [
-                        insightsPreviewStripBg.idle,
-                        insightsPreviewStripBg.brandWash,
-                        insightsPreviewStripBg.finishPeak,
-                      ],
-                    }),
-                    borderColor: insightsEmphasisAnim.interpolate({
-                      inputRange: [0, 1, 1.5],
-                      outputRange: [
-                        (theme.borderColor?.val as string) ?? '#3E4042',
-                        palette.brand,
-                        palette.brandLight,
-                      ],
-                    }),
-                  },
-            ]}
-          >
-            {isPanelAnalyzing && !prefersReducedMotion ? (
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  StyleSheet.absoluteFillObject,
-                  {
-                    borderRadius: 14,
-                    backgroundColor: palette.brand,
-                    opacity: insightsPulseOverlayAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.07, 0.24],
-                    }),
-                  },
-                ]}
-              />
-            ) : null}
-            <XStack flexShrink={0} alignItems="center" justifyContent="center">
-              <Animated.View style={{ opacity: insightsSparkleOpacityAnim }}>
-                <Sparkles
-                  size={22}
-                  color={
-                    insightsUpdateMode === 'paused' && !isPanelAnalyzing
-                      ? '$placeholderColor'
-                      : '$brand'
-                  }
-                />
-              </Animated.View>
-            </XStack>
-            <XStack flex={1} minWidth={0} overflow="hidden">
-              <Animated.View
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'flex-start',
-                  gap: 10,
-                  opacity: insightsPreviewContentOpacityAnim,
-                  transform: [{ translateY: insightsPreviewContentTranslateYAnim }],
-                }}
-              >
-                {isPanelAnalyzing ? (
-                  <XStack flex={1} alignItems="center" minWidth={0}>
-                    <Text
-                      fontSize={13}
-                      fontWeight="700"
-                      lineHeight={18}
-                      color="$color"
-                      numberOfLines={1}
-                      flex={1}
-                      minWidth={0}
-                    >
-                      {INSIGHTS_COLLAPSED_PREVIEW_UPDATING}
-                    </Text>
-                  </XStack>
-                ) : insightsUpdateMode === 'paused' ? (
-                  <XStack
-                    flex={1}
-                    alignItems="center"
-                    justifyContent="center"
-                    minWidth={0}
-                    gap="$1.5"
-                  >
-                    <Text
-                      fontSize={13}
-                      fontWeight="700"
-                      lineHeight={18}
-                      color="$placeholderColor"
-                      numberOfLines={1}
-                      flexShrink={1}
-                      minWidth={0}
-                    >
-                      Paused
-                    </Text>
-                    <Pause size={14} color="$placeholderColor" />
-                  </XStack>
-                ) : (
-                  previewItems
-                    .slice(0, MAX_INSIGHTS_PREVIEW_ITEMS)
-                    .map((item, index) => (
-                      <InsightsPreviewItemChip key={`${item.type}:${index}`} item={item} />
-                    ))
-                )}
-                {insightsUpdateMode !== 'paused' || isPanelAnalyzing ? (
-                  panelPreviewIconKinds.length > 0 ? (
-                    <InsightPanelPreviewIcons kinds={panelPreviewIconKinds} />
-                  ) : null
-                ) : null}
-              </Animated.View>
-            </XStack>
-            <XStack opacity={0.85} flexShrink={0} alignItems="center" justifyContent="center">
-              <ChevronRight
-                size={18}
-                color={
-                  insightsUpdateMode === 'paused' && !isPanelAnalyzing
-                    ? '$placeholderColor'
-                    : '$brand'
-                }
-              />
-            </XStack>
-          </Animated.View>
-        </Animated.View>
-      </Pressable>
-    ) : null
 
   const compactingNotice = isCompacting ? (
     <YStack paddingHorizontal="$3" paddingVertical="$2" backgroundColor="$backgroundHover">
@@ -1104,7 +718,9 @@ export default function ChatScreen() {
           ? 'Or just tell me what\u2019s going on'
           : editingUserMessageId
             ? 'Edit your message\u2026'
-            : undefined
+            : isDesktop
+              ? 'Ask your copilot\u2026 (e.g., \u2018Is $86,900 a good OTD price?\u2019)'
+              : 'Ask your copilot\u2026'
       }
       controlledText={editingUserMessageId ? editDraft : null}
       onControlledTextChange={editingUserMessageId ? setEditDraft : undefined}
@@ -1155,77 +771,224 @@ export default function ChatScreen() {
     </>
   )
 
+  const messagesPane = (
+    <YStack flex={1} position="relative" minHeight={0}>
+      <ChatMessageList
+        messages={messages}
+        vinAssistItems={vinAssistItems}
+        isSending={isSending}
+        isRetrying={isRetrying}
+        streamingText={streamingText}
+        topPadding={mobileChatTopInset}
+        bottomPadding={chatBottomPadding}
+        scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
+        onStartEditUserMessage={canBranchEdit ? startEditUserMessage : undefined}
+        editingUserMessageId={editingUserMessageId}
+        editingDraft={editDraft}
+        onEditingUserMessageDraftChange={setEditDraft}
+        onBranchEditSubmitFromBubble={() => {
+          const trimmedEditDraft = editDraft.trim()
+          if (!trimmedEditDraft) return
+          void handleDirectSend(trimmedEditDraft)
+        }}
+      />
+    </YStack>
+  )
+
+  const chatComposerOverlay = (
+    <ChatComposerOverlay
+      isDesktop={isDesktop}
+      composerTrayStyle={composerTrayStyle}
+      notices={composerOverlayNotices}
+      queuePreview={queuePreview}
+      composer={composerControl}
+      onComposerHeightChange={handleDesktopComposerTrayHeightChange}
+    />
+  )
+
   const chatColumn = (
-    <View style={[{ flex: 1, overflow: 'hidden', position: 'relative' }, desktopChatRailStyle]}>
+    <View style={[{ flex: 1, overflow: 'hidden', minHeight: 0 }, desktopChatRailStyle]}>
       {showContextPicker ? (
-        <View
-          style={{
-            flex: 1,
+        <ScrollView
+          style={{ flex: 1, ...webScrollbarStyle } as any}
+          contentContainerStyle={{
+            flexGrow: 1,
             justifyContent: 'center',
-            overflow: 'auto' as any,
-            paddingBottom: getContextPickerBottomPadding({
-              isDesktop,
-              desktopComposerTrayHeight,
-            }),
+            // Trailing inset lives in the scroll content (not the picker's
+            // YStack) so it actually extends the scrollable area below the
+            // last card before the composer. Padding inside a flex:1 YStack
+            // collapses when content overflows.
+            paddingBottom: 32,
           }}
+          showsVerticalScrollIndicator
         >
           <ContextPicker onSelect={handleContextSelect} onVinSubmit={handleVinSubmit} />
-        </View>
+        </ScrollView>
       ) : (
-        <YStack flex={1} position="relative">
-          <ChatMessageList
-            messages={messages}
-            vinAssistItems={vinAssistItems}
-            isSending={isSending}
-            isRetrying={isRetrying}
-            streamingText={streamingText}
-            topPadding={mobileChatTopInset}
-            bottomPadding={chatBottomPadding}
-            scrollbarOpacity={isDesktop ? desktopTransition.scrollbarOpacity : 1}
-            onStartEditUserMessage={canBranchEdit ? startEditUserMessage : undefined}
-            editingUserMessageId={editingUserMessageId}
-            editingDraft={editDraft}
-            onEditingUserMessageDraftChange={setEditDraft}
-            onBranchEditSubmitFromBubble={() => {
-              const trimmedEditDraft = editDraft.trim()
-              if (!trimmedEditDraft) return
-              void handleDirectSend(trimmedEditDraft)
-            }}
-          />
-          {mobileInsightsPreview ? (
-            <YStack
-              position="absolute"
-              top={0}
-              left={0}
-              right={0}
-              zIndex={2}
-              style={{ pointerEvents: 'box-none' } as any}
-            >
-              <YStack
-                onLayout={(event) => {
-                  const nextHeight = Math.ceil(event.nativeEvent.layout.height)
-                  if (nextHeight !== mobileInsightsPreviewHeight) {
-                    setMobileInsightsPreviewHeight(nextHeight)
-                  }
-                }}
-                style={{ pointerEvents: 'box-none' } as any}
-              >
-                {mobileInsightsPreview}
-              </YStack>
-            </YStack>
-          ) : null}
-        </YStack>
+        <View style={{ flex: 1, minHeight: 0 }}>{messagesPane}</View>
       )}
-      <ChatComposerOverlay
-        isDesktop={isDesktop}
-        desktopLeftPx={CHAT_SCREEN_LAYOUT.desktopChatRailLeftGutterPx}
-        desktopRightPx={webQueuePreviewRightInsetPx}
-        composerTrayStyle={composerTrayStyle}
-        notices={composerOverlayNotices}
-        queuePreview={queuePreview}
-        composer={composerControl}
-        onDesktopComposerTrayHeightChange={handleDesktopComposerTrayHeightChange}
+      {chatComposerOverlay}
+    </View>
+  )
+
+  const isInsightsPanelOpen = isDesktop ? desktopShell.shellState === 'expanded' : isInsightsOpen
+
+  // Build the right-side preview content. The chat header on mobile is the
+  // tap-target for opening the insights panel; the discoverable Sparkles
+  // affordance for that lives in the header's `leftSlot`
+  // (rendered before the title, on the left).
+  const headerInsightsPreview = (() => {
+    if (!dealState) return null
+    if (isPanelAnalyzing) {
+      return (
+        <Text fontSize={11} fontWeight="700" color="$color" letterSpacing={0.4}>
+          {INSIGHTS_COLLAPSED_PREVIEW_UPDATING}
+        </Text>
+      )
+    }
+    if (insightsUpdateMode === 'paused') {
+      // Mobile: a single explanatory line takes the row (the title is hidden,
+      // and the brief "PAUSED" tag would be redundant with the leading icon
+      // mute). Desktop keeps the compact tag since it still has the title.
+      if (!isDesktop) {
+        return (
+          <Text fontSize={13} color={palette.slate400} lineHeight={18} flexShrink={1}>
+            Insights are paused. Refresh manually.
+          </Text>
+        )
+      }
+      return (
+        <XStack alignItems="center" gap={6} flexShrink={0}>
+          <Pause size={12} color="#fbbf24" />
+          <Text
+            fontSize={11}
+            fontWeight="600"
+            color="#fbbf24"
+            letterSpacing={0.6}
+            textTransform="uppercase"
+          >
+            Paused
+          </Text>
+        </XStack>
+      )
+    }
+    return (
+      <XStack alignItems="center" gap={10} flexShrink={0} flexWrap="wrap">
+        {headerInsightsPreviewItems.slice(0, MAX_INSIGHTS_PREVIEW_ITEMS).map((item, index) => (
+          <InsightsPreviewItemChip key={`${item.type}:${index}`} item={item} />
+        ))}
+        {panelPreviewIconKinds.length > 0 ? (
+          <InsightPanelPreviewIcons kinds={panelPreviewIconKinds} />
+        ) : null}
+      </XStack>
+    )
+  })()
+
+  // Mobile-only Sparkles icon on the left of the header — visual affordance
+  // for "tap to open insights". Desktop puts the labeled pill in the navbar
+  // instead, so it's omitted there. Muted color when paused (since the
+  // panel isn't actively updating, the emerald accent reads as misleading).
+  const headerLeadingIcon =
+    !isDesktop && !!dealState ? (
+      <Sparkles
+        size={16}
+        color={insightsUpdateMode === 'paused' ? palette.slate500 : palette.copilotEmerald}
       />
+    ) : null
+
+  // Hide the title whenever the right-side content can stand on its own:
+  //  - Live / analyzing on any viewport (preview chips carry the context).
+  //  - Paused on mobile (the "Insights are paused. Refresh manually." line
+  //    needs the row width to read cleanly).
+  // Paused on desktop keeps the title since the right slot is just a brief
+  // "PAUSED" tag and the title remains a useful anchor.
+  const hideHeaderTitle = !!dealState && (insightsUpdateMode !== 'paused' || !isDesktop)
+
+  // On mobile the entire chat header is the open-insights surface; on desktop
+  // the labeled pill in the top nav handles it instead, so the header stays
+  // non-interactive there.
+  const headerWrapsAsButton = !isDesktop && !!dealState && !isInsightsPanelOpen
+
+  const buyerChatHeaderEl = (
+    <BuyerChatHeader
+      embedded
+      sessionTitle={activeSessionTitle}
+      previewLine={null}
+      isDesktop={isDesktop}
+      leftSlot={headerLeadingIcon}
+      rightSlot={headerInsightsPreview}
+      hideTitle={hideHeaderTitle}
+    />
+  )
+
+  const sessionFrostedChatBody = (
+    <FrostedChatRail style={{ flex: 1, minHeight: 0 }} edgeToEdge={!isDesktop}>
+      {headerWrapsAsButton ? (
+        <Pressable
+          onPress={handleInsightsTogglePress}
+          accessibilityRole="button"
+          accessibilityLabel="Open insights panel"
+          style={({ pressed }) => ({
+            opacity: pressed ? 0.85 : 1,
+            ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : null),
+          })}
+        >
+          {buyerChatHeaderEl}
+        </Pressable>
+      ) : (
+        buyerChatHeaderEl
+      )}
+      <View style={{ flex: 1, minHeight: 0 }}>{messagesPane}</View>
+      {chatComposerOverlay}
+    </FrostedChatRail>
+  )
+
+  const sessionChatRail = (
+    <View
+      style={[
+        { flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 },
+        desktopChatRailStyle,
+      ]}
+    >
+      {sessionFrostedChatBody}
+    </View>
+  )
+
+  // Desktop keeps the labeled "Insights" pill in the top nav. Mobile drops
+  // the navbar pill entirely — the chat header itself becomes the
+  // tap-to-open-insights surface (with a small Sparkles icon as the
+  // affordance).
+  const showInsightsToggle = !!dealState && !showContextPicker && isDesktop
+
+  const sessionTopNav = (
+    <View
+      style={{
+        width: '100%',
+        borderBottomWidth: 1,
+        borderBottomColor: palette.ghostBgHover,
+        backgroundColor: palette.copilotBackground,
+      }}
+    >
+      <View
+        style={{
+          width: '100%',
+          // Constant horizontal inset matching the chats list / settings /
+          // simulations top navs so the back + new-chat icons sit at the same
+          // x-position regardless of screen width.
+          paddingHorizontal: 24,
+        }}
+      >
+        <BuyerChatTopNav
+          onBack={handleBack}
+          onNewChat={handleNewSession}
+          recapHrefAvailable={DEAL_RECAP_ROUTE_ENABLED && !!activeSessionId}
+          onRecapPress={handleRecapPress}
+          isDesktop={isDesktop}
+          onInsightsTogglePress={showInsightsToggle ? handleInsightsTogglePress : undefined}
+          isInsightsOpen={isInsightsPanelOpen}
+          isInsightsAnalyzing={isPanelAnalyzing}
+        />
+      </View>
     </View>
   )
 
@@ -1243,275 +1006,293 @@ export default function ChatScreen() {
   )
 
   if (isDesktop) {
+    // The dock launcher renders inside the chat header (next to the phase
+    // progress bar) via `headerDockLauncher` — see `sessionFrostedChatBody`.
+    const desktopSessionChrome = (
+      <>
+        <BuyerChatPageHero dealState={dealState} buyerContext={buyerContextForPreview} isDesktop />
+      </>
+    )
+
+    const desktopChatDockAndPanel = (
+      <>
+        {desktopTransition.isInsightsVisible && desktopTransition.insightsDealState ? (
+          <Animated.View
+            style={{
+              width: desktopInsightsWidth,
+              flexShrink: 0,
+              minHeight: 0,
+              opacity: desktopTransition.insightsOpacity,
+              transform: [{ translateX: desktopTransition.insightsTranslateX }],
+            }}
+          >
+            <View style={{ width: '100%', flex: 1 }}>
+              <View style={{ flex: 1, overflow: 'visible' }}>
+                <YStack
+                  flex={1}
+                  backgroundColor="rgba(2, 6, 23, 0.40)"
+                  borderWidth={1}
+                  borderColor={palette.ghostBorder}
+                  borderRadius={CHAT_SCREEN_LAYOUT.desktopInsightsSheetRadiusPx}
+                  overflow="hidden"
+                  {...(Platform.OS === 'web'
+                    ? {
+                        style: {
+                          backdropFilter: 'blur(20px) saturate(1.15)',
+                          WebkitBackdropFilter: 'blur(20px) saturate(1.15)',
+                        },
+                      }
+                    : {})}
+                >
+                  <InsightsPanel
+                    dealStateOverride={desktopTransition.insightsDealState}
+                    headerAccessory={
+                      <HeaderIconButton
+                        onPress={handleDesktopCollapsePress}
+                        accessibilityLabel="Collapse insights panel"
+                      >
+                        <Animated.View
+                          style={{
+                            opacity: desktopPanelCollapseEntrance.opacity,
+                            transform: [{ rotate: desktopPanelCollapseEntrance.rotate }],
+                          }}
+                        >
+                          <X size={16} color={palette.slate300} />
+                        </Animated.View>
+                      </HeaderIconButton>
+                    }
+                  />
+                </YStack>
+              </View>
+            </View>
+          </Animated.View>
+        ) : null}
+      </>
+    )
+
     return (
       <RoleGuard role="buyer">
-        <ThemedSafeArea edges={['top']}>
-          <YStack flex={1} backgroundColor="$background">
-            {header}
-
-            <View style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-              <Animated.View
+        <Theme name="dark_copilot">
+          <ThemedSafeArea edges={['top']}>
+            <YStack flex={1} backgroundColor="$background">
+              {sessionTopNav}
+              <View
                 style={{
                   flex: 1,
-                  marginRight: desktopTransition.chatInset,
-                  opacity: desktopTransition.chatOpacity,
+                  width: '100%',
+                  maxWidth: CHAT_PAGE_MAX_WIDTH_PX,
+                  alignSelf: 'center',
+                  minHeight: 0,
                 }}
               >
-                {chatColumn}
-              </Animated.View>
-
-              {desktopShell.shellState !== 'expanded' ? (
-                <DesktopInsightsDockControl
-                  shellState={desktopShell.shellState}
-                  collapsedPrimaryText={collapsedPrimaryHeadline}
-                  panelIconKinds={panelPreviewIconKinds}
-                  collapsedPreviewAccessibilityLabel={collapsedInsightsAccessibilityLabel}
-                  insightsUpdateMode={insightsUpdateMode}
-                  prefersReducedMotion={prefersReducedMotion}
-                  launcherOpacity={desktopShell.launcherOpacity}
-                  launcherTranslateX={desktopShell.launcherTranslateX}
-                  topOffsetPx={CHAT_SCREEN_LAYOUT.desktopDockTopOffsetPx}
-                  rightOffsetPx={CHAT_SCREEN_LAYOUT.desktopDockRightOffsetPx}
-                  onExpandPress={handleDesktopExpandPress}
-                />
-              ) : null}
-
-              {/* AI Insights Panel — right sidebar on desktop */}
-              {desktopTransition.isInsightsVisible && desktopTransition.insightsDealState ? (
-                <Animated.View
+                <View
                   style={{
-                    position: 'absolute',
-                    top: CHAT_SCREEN_LAYOUT.desktopInsightsSheetInsetPx,
-                    right: 0,
-                    bottom: CHAT_SCREEN_LAYOUT.desktopInsightsSheetInsetPx,
-                    width: DESKTOP_INSIGHTS_WIDTH,
-                    opacity: desktopTransition.insightsOpacity,
-                    transform: [{ translateX: desktopTransition.insightsTranslateX }],
+                    flex: 1,
+                    minHeight: 0,
+                    paddingHorizontal: pageShellPaddingH,
+                    paddingTop: pageShellPaddingV,
+                    paddingBottom: pageShellPaddingV,
                   }}
                 >
-                  <View
-                    style={{
-                      width: '100%',
-                      flex: 1,
-                      paddingLeft: CHAT_SCREEN_LAYOUT.desktopInsightsSheetGapPx,
-                    }}
-                  >
-                    <View style={{ flex: 1, overflow: 'visible' }}>
-                      <YStack
-                        flex={1}
-                        backgroundColor="$backgroundStrong"
-                        borderLeftWidth={1}
-                        borderLeftColor="$borderColor"
-                        borderTopLeftRadius={CHAT_SCREEN_LAYOUT.desktopInsightsSheetRadiusPx}
-                        borderBottomLeftRadius={CHAT_SCREEN_LAYOUT.desktopInsightsSheetRadiusPx}
-                        overflow="hidden"
-                        {...(Platform.OS === 'web'
-                          ? {
-                              style: {
-                                boxShadow: `-10px 0 24px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
-                              },
-                            }
-                          : {
-                              shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
-                              shadowOffset: { width: -6, height: 0 },
-                              shadowOpacity: 0.18,
-                              shadowRadius: 16,
-                              elevation: 8,
-                            })}
-                      >
-                        <InsightsPanel
-                          dealStateOverride={desktopTransition.insightsDealState}
-                          headerAccessory={
-                            <Button
-                              size="$3"
-                              width={44}
-                              minWidth={44}
-                              minHeight={44}
-                              paddingHorizontal="$0"
-                              borderRadius="$5"
-                              backgroundColor="$backgroundHover"
-                              borderWidth={1}
-                              borderColor="$borderColor"
-                              onPress={handleDesktopCollapsePress}
-                              hoverStyle={{
-                                backgroundColor: '$backgroundPress',
-                                borderColor: '$borderColorHover',
-                              }}
-                              pressStyle={{ opacity: 0.85 }}
-                              {...(Platform.OS === 'web'
-                                ? ({ 'aria-label': 'Collapse insights panel' } as any)
-                                : { accessibilityLabel: 'Collapse insights panel' })}
-                            >
-                              <Animated.View
-                                style={{
-                                  opacity: desktopPanelCollapseEntrance.opacity,
-                                  transform: [{ rotate: desktopPanelCollapseEntrance.rotate }],
-                                }}
-                              >
-                                <X size={18} color="$color" />
-                              </Animated.View>
-                            </Button>
-                          }
-                        />
-                      </YStack>
+                  {showContextPicker ? (
+                    <View
+                      style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}
+                    >
+                      <View style={{ flex: 1, minHeight: 0 }}>{chatColumn}</View>
                     </View>
-                  </View>
-                </Animated.View>
-              ) : null}
-            </View>
-          </YStack>
-        </ThemedSafeArea>
-        {editBranchConfirmModal}
+                  ) : (
+                    <>
+                      {desktopSessionChrome}
+                      <View
+                        style={{
+                          flex: 1,
+                          flexDirection: 'row',
+                          gap: CHAT_SCREEN_LAYOUT.desktopInsightsSheetGapPx,
+                          minHeight: 0,
+                          position: 'relative',
+                        }}
+                      >
+                        <Animated.View
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            minHeight: 0,
+                            opacity: desktopTransition.chatOpacity,
+                          }}
+                        >
+                          {sessionChatRail}
+                        </Animated.View>
+                        {desktopChatDockAndPanel}
+                      </View>
+                    </>
+                  )}
+                </View>
+              </View>
+            </YStack>
+          </ThemedSafeArea>
+          {editBranchConfirmModal}
+        </Theme>
       </RoleGuard>
     )
   }
 
   return (
     <RoleGuard role="buyer">
-      <ThemedSafeArea edges={['top']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
-        >
-          <YStack flex={1} backgroundColor="$background">
-            {header}
-            <Animated.View
-              style={{
-                flex: 1,
-                opacity: mobileEntrance.opacity,
-                transform: [{ translateY: mobileEntrance.translateY }],
-              }}
-            >
-              {chatColumn}
-            </Animated.View>
-          </YStack>
-        </KeyboardAvoidingView>
-
-        <Modal
-          visible={showMobileInsightsToggle && isInsightsVisible}
-          transparent
-          animationType="none"
-          onRequestClose={() => setIsInsightsOpen(false)}
-          onShow={() =>
-            focusDomElementByIdsAfterModalShow(
-              'chat-mobile-insights-close',
-              'chat-mobile-insights-focus-root'
-            )
-          }
-        >
-          <View style={{ flex: 1, ...modalWebFontFamilyStyle() } as any}>
-            {Platform.OS === 'web' ? (
+      <Theme name="dark_copilot">
+        <ThemedSafeArea edges={['top']}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+            <YStack flex={1} backgroundColor="$background">
+              {sessionTopNav}
               <View
-                {...({
-                  id: 'chat-mobile-insights-focus-root',
-                  tabIndex: -1,
-                } as any)}
-                style={{
-                  position: 'absolute',
-                  width: 1,
-                  height: 1,
-                  opacity: 0,
-                  overflow: 'hidden',
-                  pointerEvents: 'none',
-                }}
-              />
-            ) : null}
-            <Animated.View
-              style={{
-                position: 'absolute',
-                top: 0,
-                right: 0,
-                bottom: 0,
-                left: 0,
-                opacity: insightsBackdropOpacity,
-              }}
-            >
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={() => setIsInsightsOpen(false)}
                 style={{
                   flex: 1,
-                  backgroundColor: palette.overlay,
+                  width: '100%',
+                  maxWidth: CHAT_PAGE_MAX_WIDTH_PX,
+                  alignSelf: 'center',
+                  minHeight: 0,
                 }}
-              />
-            </Animated.View>
-
-            <Animated.View
-              style={{
-                position: 'absolute',
-                top: CHAT_SCREEN_LAYOUT.mobileInsightsSheetInsetPx,
-                right: 0,
-                bottom: CHAT_SCREEN_LAYOUT.mobileInsightsSheetInsetPx,
-                width: mobileInsightsWidth,
-                transform: [{ translateX: insightsSlide }],
-              }}
-            >
-              <YStack
-                flex={1}
-                backgroundColor="$backgroundStrong"
-                borderLeftWidth={1}
-                borderLeftColor="$borderColor"
-                borderTopLeftRadius={CHAT_SCREEN_LAYOUT.mobileInsightsSheetRadiusPx}
-                borderBottomLeftRadius={CHAT_SCREEN_LAYOUT.mobileInsightsSheetRadiusPx}
-                overflow="hidden"
-                {...(Platform.OS === 'web'
-                  ? {
-                      style: {
-                        boxShadow: `-8px 0 24px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
-                      },
-                    }
-                  : {
-                      shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
-                      shadowOffset: { width: -4, height: 0 },
-                      shadowOpacity: 0.24,
-                      shadowRadius: 18,
-                      elevation: 12,
-                    })}
               >
-                <ThemedSafeArea edges={['top', 'bottom']}>
-                  <YStack flex={1} backgroundColor="$backgroundStrong">
-                    <YStack flex={1}>
-                      {dealState ? (
-                        <InsightsPanel
-                          headerAccessory={
-                            <Button
-                              size="$3"
-                              width={44}
-                              minWidth={44}
-                              minHeight={44}
-                              paddingHorizontal="$0"
-                              borderRadius="$5"
-                              backgroundColor="$backgroundHover"
-                              borderWidth={1}
-                              borderColor="$borderColor"
-                              onPress={() => setIsInsightsOpen(false)}
-                              hoverStyle={{
-                                backgroundColor: '$backgroundPress',
-                                borderColor: '$borderColorHover',
-                              }}
-                              pressStyle={{ opacity: 0.85 }}
-                              {...(Platform.OS === 'web'
-                                ? ({
-                                    id: 'chat-mobile-insights-close',
-                                    'aria-label': 'Close insights',
-                                  } as any)
-                                : { accessibilityLabel: 'Close insights' })}
-                            >
-                              <X size={18} color="$color" />
-                            </Button>
-                          }
-                        />
-                      ) : null}
-                    </YStack>
-                  </YStack>
-                </ThemedSafeArea>
-              </YStack>
-            </Animated.View>
-          </View>
-        </Modal>
-      </ThemedSafeArea>
-      {editBranchConfirmModal}
+                <View
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    paddingHorizontal: pageShellPaddingH,
+                    paddingTop: pageShellPaddingV,
+                    paddingBottom: pageShellPaddingV,
+                  }}
+                >
+                  {showContextPicker ? (
+                    <Animated.View
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        opacity: mobileEntrance.opacity,
+                        transform: [{ translateY: mobileEntrance.translateY }],
+                      }}
+                    >
+                      {chatColumn}
+                    </Animated.View>
+                  ) : (
+                    // Mobile active session: skip the page hero ("Let's find
+                    // the right car.") so the chat rail (with its session
+                    // title + phase progress strip) acts as the persistent
+                    // context header. Linear / Slack / Notion all use this
+                    // single-strip pattern on mobile to maximize chat
+                    // vertical space.
+                    <Animated.View
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        opacity: mobileEntrance.opacity,
+                        transform: [{ translateY: mobileEntrance.translateY }],
+                      }}
+                    >
+                      {sessionChatRail}
+                    </Animated.View>
+                  )}
+                </View>
+              </View>
+            </YStack>
+          </KeyboardAvoidingView>
+
+          <Modal
+            visible={showMobileInsightsToggle && isInsightsVisible}
+            transparent
+            animationType="none"
+            onRequestClose={() => setIsInsightsOpen(false)}
+            onShow={() =>
+              focusDomElementByIdsAfterModalShow(
+                'chat-mobile-insights-close',
+                'chat-mobile-insights-focus-root'
+              )
+            }
+          >
+            <View style={{ flex: 1, ...modalWebFontFamilyStyle() } as any}>
+              {Platform.OS === 'web' ? (
+                <View
+                  {...({
+                    id: 'chat-mobile-insights-focus-root',
+                    tabIndex: -1,
+                  } as any)}
+                  style={{
+                    position: 'absolute',
+                    width: 1,
+                    height: 1,
+                    opacity: 0,
+                    overflow: 'hidden',
+                    pointerEvents: 'none',
+                  }}
+                />
+              ) : null}
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
+                  opacity: insightsBackdropOpacity,
+                }}
+              >
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => setIsInsightsOpen(false)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: palette.overlay,
+                  }}
+                />
+              </Animated.View>
+
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  top: CHAT_SCREEN_LAYOUT.mobileInsightsSheetInsetPx,
+                  right: 0,
+                  bottom: CHAT_SCREEN_LAYOUT.mobileInsightsSheetInsetPx,
+                  width: mobileInsightsWidth,
+                  transform: [{ translateX: insightsSlide }],
+                }}
+              >
+                <YStack
+                  flex={1}
+                  backgroundColor="rgba(15, 23, 42, 0.92)"
+                  overflow="hidden"
+                  {...(Platform.OS === 'web'
+                    ? {
+                        style: {
+                          backdropFilter: 'blur(20px) saturate(1.15)',
+                          WebkitBackdropFilter: 'blur(20px) saturate(1.15)',
+                        },
+                      }
+                    : {})}
+                >
+                  <ThemedSafeArea edges={['top', 'bottom']}>
+                    {dealState ? (
+                      <InsightsPanel
+                        headerAccessory={
+                          <HeaderIconButton
+                            onPress={() => setIsInsightsOpen(false)}
+                            accessibilityLabel="Close insights"
+                            webDomId="chat-mobile-insights-close"
+                          >
+                            <X size={16} color={palette.slate300} />
+                          </HeaderIconButton>
+                        }
+                      />
+                    ) : null}
+                  </ThemedSafeArea>
+                </YStack>
+              </Animated.View>
+            </View>
+          </Modal>
+        </ThemedSafeArea>
+        {editBranchConfirmModal}
+      </Theme>
     </RoleGuard>
   )
 }

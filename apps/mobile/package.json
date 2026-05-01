@@ -13,6 +13,9 @@
     "format:check": "prettier --check app/ components/ hooks/ lib/ stores/"
   },
   "dependencies": {
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@expo-google-fonts/manrope": "^0.4.2",
+    "@expo-google-fonts/outfit": "^0.4.3",
     "@react-navigation/native": "^7.1.33",
     "@tamagui/animations-css": "^2.0.0-rc.26",
     "@tamagui/babel-plugin": "^2.0.0-rc.26",

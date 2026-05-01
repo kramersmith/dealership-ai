@@ -1,11 +1,13 @@
 import { useEffect } from 'react'
-import { KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native'
-import { YStack, XStack, Text } from 'tamagui'
-import { ThemedSafeArea, RoleGuard } from '@/components/shared'
+import { KeyboardAvoidingView, Platform, View } from 'react-native'
+import { YStack } from 'tamagui'
+import { ChevronLeft } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { ArrowLeft } from '@tamagui/lucide-icons'
+import { CopilotPageHero, CopilotTopNav, RoleGuard, ThemedSafeArea } from '@/components/shared'
 import { useChatStore } from '@/stores/chatStore'
 import { ChatMessageList, ChatInput } from '@/components/chat'
+import { palette } from '@/lib/theme/tokens'
+import { PAGE_MAX_WIDTH, PAGE_PADDING_H, PAGE_PADDING_V } from '@/lib/constants'
 
 export default function SimulationChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -36,34 +38,31 @@ export default function SimulationChatScreen() {
           keyboardVerticalOffset={0}
         >
           <YStack flex={1} backgroundColor="$background">
-            {/* Header */}
-            <XStack
-              paddingHorizontal="$4"
-              paddingVertical="$3"
-              alignItems="center"
-              gap="$3"
-              borderBottomWidth={1}
-              borderBottomColor="$borderColor"
-              backgroundColor="$backgroundStrong"
-            >
-              <TouchableOpacity
-                onPress={() => router.back()}
-                activeOpacity={0.6}
-                style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-              >
-                <ArrowLeft size={22} color="$color" />
-              </TouchableOpacity>
-              <YStack flex={1}>
-                <Text fontSize={16} fontWeight="700" color="$color">
-                  Training Simulation
-                </Text>
-                <Text fontSize={12} color="$placeholderColor">
-                  You are the salesperson. The AI is the customer.
-                </Text>
-              </YStack>
-            </XStack>
+            <CopilotTopNav
+              leftIcon={<ChevronLeft size={20} color={palette.slate400} />}
+              onLeftPress={() => router.back()}
+              leftLabel="Back to scenarios"
+              paddingHorizontal={PAGE_PADDING_H}
+            />
 
-            {/* Chat */}
+            <View
+              style={{
+                width: '100%',
+                maxWidth: PAGE_MAX_WIDTH,
+                alignSelf: 'center',
+                paddingHorizontal: PAGE_PADDING_H,
+                paddingTop: PAGE_PADDING_V,
+              }}
+            >
+              <CopilotPageHero
+                leading="Run the"
+                accent="simulation"
+                description="You are the salesperson. The AI is the customer."
+                isDesktop={false}
+                caption={null}
+              />
+            </View>
+
             <YStack flex={1}>
               <ChatMessageList
                 messages={messages}
@@ -72,7 +71,6 @@ export default function SimulationChatScreen() {
               />
             </YStack>
 
-            {/* Input */}
             <ChatInput
               onSend={(content) => sendMessage(content)}
               disabled={false}

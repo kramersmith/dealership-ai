@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import { Modal, TouchableOpacity, Animated, Platform, View } from 'react-native'
 import { YStack, XStack, Text, Spinner } from 'tamagui'
 import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
+import { DISPLAY_FONT_FAMILY, MONO_FONT_FAMILY } from '@/lib/constants'
 import { palette } from '@/lib/theme/tokens'
-import { AppButton } from '@/components/shared'
+import { ModalGhostButton, ModalPrimaryButton } from '@/components/shared'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
 import { useChatStore } from '@/stores/chatStore'
@@ -147,11 +148,17 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
       <TouchableOpacity
         style={{
           flex: 1,
-          backgroundColor: palette.overlay,
+          backgroundColor: 'rgba(2, 6, 23, 0.72)',
           justifyContent: 'center',
           alignItems: 'center',
           paddingHorizontal: 16,
           ...modalWebFontFamilyStyle(),
+          ...(Platform.OS === 'web'
+            ? ({
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+              } as any)
+            : null),
         }}
         activeOpacity={1}
         onPress={() => {
@@ -161,22 +168,36 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
         <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{ width: '100%' }}>
           <Animated.View style={{ transform: [{ scale }], opacity: contentOpacity, width: '100%' }}>
             <YStack
-              backgroundColor="$backgroundStrong"
-              borderRadius="$4"
-              padding="$5"
+              backgroundColor="rgba(15, 23, 42, 0.92)"
+              borderRadius={20}
+              padding={24}
               width="100%"
-              maxWidth={340}
+              maxWidth={400}
               alignSelf="center"
-              gap="$4"
+              gap={20}
               borderWidth={1}
-              borderColor="$borderColor"
+              borderColor={palette.ghostBorder}
+              {...(Platform.OS === 'web'
+                ? ({
+                    style: {
+                      backdropFilter: 'blur(20px) saturate(1.15)',
+                      WebkitBackdropFilter: 'blur(20px) saturate(1.15)',
+                    },
+                  } as any)
+                : {})}
             >
               {/* Header */}
-              <YStack gap="$2">
-                <Text fontSize={18} fontWeight="700" color="$color">
+              <YStack gap={8}>
+                <Text
+                  fontSize={20}
+                  fontWeight="600"
+                  color={palette.slate50}
+                  letterSpacing={-0.3}
+                  fontFamily={DISPLAY_FONT_FAMILY}
+                >
                   {phase === 'decoded' ? 'Vehicle Identified' : 'VIN Detected'}
                 </Text>
-                <Text fontSize={14} color="$placeholderColor" lineHeight={20}>
+                <Text fontSize={14} color={palette.slate400} lineHeight={20}>
                   {phase === 'prompt' &&
                     'We found a VIN in your message. Decode it now so the AI can give you vehicle-specific advice from the start.'}
                   {phase === 'decoding' && 'Looking up vehicle details...'}
@@ -187,26 +208,58 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
               </YStack>
 
               {/* VIN display */}
-              <YStack gap="$1">
-                <Text fontSize={12} color="$placeholderColor">
+              <YStack
+                gap={4}
+                paddingHorizontal={12}
+                paddingVertical={10}
+                borderRadius={10}
+                backgroundColor="rgba(2, 6, 23, 0.65)"
+                borderWidth={1}
+                borderColor={palette.ghostBgHover}
+              >
+                <Text
+                  fontSize={11}
+                  color={palette.slate500}
+                  letterSpacing={0.6}
+                  textTransform="uppercase"
+                >
                   VIN
                 </Text>
-                <Text fontSize={14} fontWeight="600" color="$color">
+                <Text
+                  fontSize={14}
+                  fontWeight="600"
+                  color={palette.slate50}
+                  fontFamily={MONO_FONT_FAMILY}
+                  letterSpacing={0.4}
+                >
                   {vin}
                 </Text>
               </YStack>
 
               {/* Decoded vehicle display */}
               {decoded && phase === 'decoded' ? (
-                <YStack gap="$1" backgroundColor="$backgroundHover" padding="$3" borderRadius="$3">
-                  <Text fontSize={12} color="$placeholderColor">
+                <YStack
+                  gap={4}
+                  paddingHorizontal={12}
+                  paddingVertical={10}
+                  borderRadius={10}
+                  backgroundColor={palette.copilotEmeraldMuted}
+                  borderWidth={1}
+                  borderColor={palette.copilotEmeraldBorder25}
+                >
+                  <Text
+                    fontSize={11}
+                    color={palette.copilotEmerald}
+                    letterSpacing={0.6}
+                    textTransform="uppercase"
+                  >
                     Decoded Vehicle
                   </Text>
-                  <Text fontSize={16} fontWeight="700" color="$color">
+                  <Text fontSize={16} fontWeight="700" color={palette.slate50}>
                     {vehicleLabel}
                   </Text>
                   {decoded.partial ? (
-                    <Text fontSize={12} color="$placeholderColor">
+                    <Text fontSize={12} color={palette.slate400}>
                       Some details may be incomplete.
                     </Text>
                   ) : null}
@@ -216,8 +269,8 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
               {/* Loading spinner */}
               {phase === 'decoding' ? (
                 <XStack alignItems="center" gap="$2" justifyContent="center" paddingVertical="$3">
-                  <Spinner size="small" color="$brand" />
-                  <Text fontSize={13} color="$placeholderColor">
+                  <Spinner size="small" color={palette.copilotEmerald} />
+                  <Text fontSize={13} color={palette.slate400}>
                     Decoding VIN...
                   </Text>
                 </XStack>
@@ -225,54 +278,39 @@ export function VinInterceptModal({ visible, vin, onComplete, onSkip }: VinInter
 
               {/* Action buttons */}
               {phase === 'prompt' ? (
-                <YStack gap="$2">
-                  <AppButton
-                    compact
+                <XStack gap={12} justifyContent="flex-end">
+                  <ModalGhostButton onPress={handleSkip}>Skip</ModalGhostButton>
+                  <ModalPrimaryButton
                     onPress={handleDecode}
-                    {...(Platform.OS === 'web'
-                      ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
-                      : {})}
+                    webDomId={VIN_INTERCEPT_PRIMARY_DOM_ID}
                   >
                     Decode VIN
-                  </AppButton>
-                  <AppButton compact variant="outline" onPress={handleSkip}>
-                    Continue without decoding
-                  </AppButton>
-                </YStack>
+                  </ModalPrimaryButton>
+                </XStack>
               ) : null}
 
               {phase === 'decoded' ? (
-                <YStack gap="$2">
-                  <AppButton
-                    compact
+                <XStack gap={12} justifyContent="flex-end">
+                  <ModalGhostButton onPress={handleSkip}>No</ModalGhostButton>
+                  <ModalPrimaryButton
                     onPress={handleConfirm}
-                    {...(Platform.OS === 'web'
-                      ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
-                      : {})}
+                    webDomId={VIN_INTERCEPT_PRIMARY_DOM_ID}
                   >
-                    Yes, use this vehicle
-                  </AppButton>
-                  <AppButton compact variant="outline" onPress={handleSkip}>
-                    No, continue without decoding
-                  </AppButton>
-                </YStack>
+                    Yes, use this
+                  </ModalPrimaryButton>
+                </XStack>
               ) : null}
 
               {phase === 'failed' ? (
-                <YStack gap="$2">
-                  <AppButton
-                    compact
+                <XStack gap={12} justifyContent="flex-end">
+                  <ModalGhostButton onPress={handleSkip}>Skip</ModalGhostButton>
+                  <ModalPrimaryButton
                     onPress={handleDecode}
-                    {...(Platform.OS === 'web'
-                      ? ({ id: VIN_INTERCEPT_PRIMARY_DOM_ID } as any)
-                      : {})}
+                    webDomId={VIN_INTERCEPT_PRIMARY_DOM_ID}
                   >
-                    Retry Decode
-                  </AppButton>
-                  <AppButton compact variant="outline" onPress={handleSkip}>
-                    Continue without decoding
-                  </AppButton>
-                </YStack>
+                    Retry
+                  </ModalPrimaryButton>
+                </XStack>
               ) : null}
             </YStack>
           </Animated.View>

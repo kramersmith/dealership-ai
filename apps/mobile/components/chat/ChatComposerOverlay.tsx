@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Animated, View, type LayoutChangeEvent } from 'react-native'
+import { Animated, Platform, View, type LayoutChangeEvent } from 'react-native'
 import { YStack } from 'tamagui'
 import { useSlideIn } from '@/hooks/useAnimatedValue'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
@@ -10,24 +10,25 @@ const COMPOSER_TRAY_ENTRANCE_OFFSET_Y = 72
 
 interface ChatComposerOverlayProps {
   isDesktop: boolean
-  desktopLeftPx?: number
-  desktopRightPx?: number
   composerTrayStyle: any
   notices?: ReactNode
   queuePreview?: ReactNode
   composer: ReactNode
-  onDesktopComposerTrayHeightChange?: (height: number) => void
+  onComposerHeightChange?: (height: number) => void
 }
 
+/**
+ * Composer band — renders notices, queue preview, and the composer itself as
+ * normal flex content (NOT absolutely positioned). Designed to sit at the bottom
+ * of the FrostedChatRail as a sibling of the scrollable message list, matching
+ * the source's flex column layout.
+ */
 export function ChatComposerOverlay({
-  isDesktop,
-  desktopLeftPx = 0,
-  desktopRightPx = 0,
   composerTrayStyle,
   notices,
   queuePreview,
   composer,
-  onDesktopComposerTrayHeightChange,
+  onComposerHeightChange,
 }: ChatComposerOverlayProps) {
   const prefersReducedMotion = usePrefersReducedMotion()
   const traySlideMs = prefersReducedMotion ? 0 : COMPOSER_TRAY_ENTRANCE_MS
@@ -37,49 +38,21 @@ export function ChatComposerOverlay({
     COMPOSER_TRAY_ENTRANCE_OFFSET_Y
   )
 
-  const handleDesktopComposerTrayLayout = (layoutEvent: LayoutChangeEvent) => {
-    if (!onDesktopComposerTrayHeightChange) return
-    const nextHeight = Math.ceil(layoutEvent.nativeEvent.layout.height)
-    onDesktopComposerTrayHeightChange(nextHeight)
-  }
-
-  if (isDesktop) {
-    return (
-      <View
-        style={{
-          position: 'absolute',
-          left: desktopLeftPx,
-          right: desktopRightPx,
-          bottom: 0,
-          zIndex: 4,
-          pointerEvents: 'box-none',
-        }}
-      >
-        <YStack style={{ pointerEvents: 'box-none' } as any}>
-          {notices}
-          <View style={{ position: 'relative' }}>
-            {queuePreview}
-            <Animated.View
-              onLayout={handleDesktopComposerTrayLayout}
-              style={[
-                composerTrayStyle,
-                { opacity: trayOpacity, transform: [{ translateY: trayTranslateY }] },
-              ]}
-            >
-              {composer}
-            </Animated.View>
-          </View>
-        </YStack>
-      </View>
-    )
+  const handleLayout = (layoutEvent: LayoutChangeEvent) => {
+    if (!onComposerHeightChange) return
+    onComposerHeightChange(Math.ceil(layoutEvent.nativeEvent.layout.height))
   }
 
   return (
-    <>
+    <YStack
+      flexShrink={0}
+      {...(Platform.OS === 'web' ? ({ id: 'chat-composer-area' } as any) : {})}
+    >
       {notices}
       <View style={{ position: 'relative' }}>
         {queuePreview}
         <Animated.View
+          onLayout={handleLayout}
           style={[
             composerTrayStyle,
             { opacity: trayOpacity, transform: [{ translateY: trayTranslateY }] },
@@ -88,6 +61,6 @@ export function ChatComposerOverlay({
           {composer}
         </Animated.View>
       </View>
-    </>
+    </YStack>
   )
 }

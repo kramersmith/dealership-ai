@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import { TouchableOpacity, Modal, View, Animated, Platform, Dimensions } from 'react-native'
-import { YStack, XStack, Text, useTheme } from 'tamagui'
+import { YStack, XStack, Text } from 'tamagui'
 import { Menu, X, Settings, Swords, LogOut } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 import { modalWebFontFamilyStyle } from '@/lib/modalWebTypography'
-import { palette } from '@/lib/theme/tokens'
 import { focusDomElementByIdsAfterModalShow } from '@/lib/webModalFocus'
+import { palette } from '@/lib/theme/tokens'
 import { useAuthStore } from '@/stores/authStore'
 
 interface MenuItem {
@@ -20,7 +20,6 @@ export function HamburgerMenu() {
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
   const buttonRef = useRef<View>(null)
   const rotation = useRef(new Animated.Value(0)).current
-  const theme = useTheme()
   const router = useRouter()
   const role = useAuthStore((state) => state.role)
   const logout = useAuthStore((state) => state.logout)
@@ -81,7 +80,11 @@ export function HamburgerMenu() {
           style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
         >
           <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
-            {isOpen ? <X size={22} color="$color" /> : <Menu size={22} color="$color" />}
+            {isOpen ? (
+              <X size={20} color={palette.slate400} />
+            ) : (
+              <Menu size={20} color={palette.slate400} />
+            )}
           </Animated.View>
         </TouchableOpacity>
       </View>
@@ -119,58 +122,27 @@ export function HamburgerMenu() {
           activeOpacity={1}
           onPress={() => setIsOpen(false)}
         >
-          {/* Rotated square behind dropdown — peeks out as arrow nub */}
-          <View
-            style={{
-              position: 'absolute',
-              top: menuPosition.top - 7,
-              left: menuPosition.left + 12,
-              width: 14,
-              height: 14,
-              transform: [{ rotate: '45deg' }],
-              backgroundColor:
-                theme.backgroundStrong?.val ?? theme.background?.val ?? 'transparent',
-              borderWidth: 1,
-              borderColor: theme.borderColor?.val ?? 'transparent',
-              zIndex: 1,
-              ...(Platform.OS === 'web'
-                ? { boxShadow: `0 2px 8px ${theme.shadowColor?.val ?? palette.shadowOverlay}` }
-                : {
-                    shadowColor: theme.shadowColor?.val ?? palette.shadowOverlay,
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 1,
-                    shadowRadius: 4,
-                    elevation: 8,
-                  }),
-            }}
-          />
-
-          {/* Dropdown body — overlaps the bottom half of the nub square */}
+          {/* Dropdown body — frosted slate-900 panel matching the app's modal/card surfaces */}
           <YStack
             position="absolute"
             top={menuPosition.top}
             left={menuPosition.left}
-            backgroundColor="$backgroundStrong"
-            borderRadius="$3"
+            backgroundColor="rgba(15, 23, 42, 0.92)"
+            borderRadius={14}
             borderWidth={1}
-            borderColor="$borderColor"
-            paddingVertical="$2"
+            borderColor={palette.ghostBorder}
+            paddingVertical={6}
             minWidth={220}
             zIndex={2}
             {...(Platform.OS === 'web'
               ? {
                   style: {
                     ...modalWebFontFamilyStyle(),
-                    boxShadow: `0 4px 16px ${theme.shadowColor?.val ?? palette.shadowOverlay}`,
+                    backdropFilter: 'blur(20px) saturate(1.15)',
+                    WebkitBackdropFilter: 'blur(20px) saturate(1.15)',
                   },
                 }
-              : {
-                  shadowColor: '$shadowColor',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: 1,
-                  shadowRadius: 8,
-                  elevation: 9,
-                })}
+              : {})}
           >
             {/* Menu items */}
             {items.map((item, index) => (
@@ -180,12 +152,12 @@ export function HamburgerMenu() {
                   ? ({ id: 'hamburger-menu-first-item' } as any)
                   : {})}
                 onPress={() => navigate(item.route)}
-                activeOpacity={0.6}
+                activeOpacity={0.7}
                 style={{ height: 44, maxHeight: 44 }}
               >
-                <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal="$4">
-                  <item.Icon size={18} color="$color" />
-                  <Text fontSize={15} color="$color" fontWeight="500">
+                <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal={16}>
+                  <item.Icon size={16} color={palette.slate300} />
+                  <Text fontSize={14} color={palette.slate50} fontWeight="500">
                     {item.label}
                   </Text>
                 </XStack>
@@ -193,13 +165,18 @@ export function HamburgerMenu() {
             ))}
 
             {/* Divider */}
-            <YStack height={1} backgroundColor="$borderColor" marginVertical="$1" />
+            <YStack
+              height={1}
+              backgroundColor={palette.ghostBgHover}
+              marginVertical={4}
+              marginHorizontal={8}
+            />
 
             {/* Role label */}
-            <XStack paddingHorizontal="$4" paddingVertical="$2">
+            <XStack paddingHorizontal={16} paddingVertical={6}>
               <Text
                 fontSize={11}
-                color="$placeholderColor"
+                color={palette.slate500}
                 textTransform="uppercase"
                 letterSpacing={1}
               >
@@ -210,12 +187,12 @@ export function HamburgerMenu() {
             {/* Logout */}
             <TouchableOpacity
               onPress={handleLogout}
-              activeOpacity={0.6}
+              activeOpacity={0.7}
               style={{ height: 44, maxHeight: 44 }}
             >
-              <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal="$4">
-                <LogOut size={18} color="$danger" />
-                <Text fontSize={15} color="$danger" fontWeight="500">
+              <XStack gap="$3" alignItems="center" flex={1} paddingHorizontal={16}>
+                <LogOut size={16} color="#f87171" />
+                <Text fontSize={14} color="#f87171" fontWeight="500">
                   Sign Out
                 </Text>
               </XStack>

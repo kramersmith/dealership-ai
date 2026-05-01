@@ -3,7 +3,11 @@ import { Animated } from 'react-native'
 import type { DealState } from '@/lib/types'
 import { USE_NATIVE_DRIVER } from '@/lib/platform'
 
-export const DESKTOP_INSIGHTS_WIDTH = 360
+/**
+ * Default insights width when one isn't supplied. Kept as a fallback for callers
+ * that haven't yet wired the responsive `insightsWidth` prop.
+ */
+export const DESKTOP_INSIGHTS_WIDTH = 460
 const DESKTOP_ENTER_DURATION = 260
 const DESKTOP_EXIT_DURATION = 220
 const DESKTOP_FADE_IN_DURATION = 220
@@ -15,6 +19,8 @@ interface UseDesktopChatTransitionArgs {
   panelExpanded: boolean
   onBackComplete: () => void
   onResetComplete: () => void
+  /** Live insights panel width — drives both the chat-rail inset and the slide-in transform. */
+  insightsWidth?: number
 }
 
 export function useDesktopChatTransition({
@@ -23,6 +29,7 @@ export function useDesktopChatTransition({
   panelExpanded,
   onBackComplete,
   onResetComplete,
+  insightsWidth = DESKTOP_INSIGHTS_WIDTH,
 }: UseDesktopChatTransitionArgs) {
   const backTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -34,7 +41,7 @@ export function useDesktopChatTransition({
   const [scrollbarOpacity, setScrollbarOpacity] = useState(1)
 
   const insightsOpacity = useRef(new Animated.Value(0)).current
-  const insightsTranslateX = useRef(new Animated.Value(DESKTOP_INSIGHTS_WIDTH)).current
+  const insightsTranslateX = useRef(new Animated.Value(insightsWidth)).current
   const chatInset = useRef(new Animated.Value(0)).current
   const chatOpacity = useRef(new Animated.Value(1)).current
 
@@ -53,7 +60,7 @@ export function useDesktopChatTransition({
       chatOpacity.setValue(1)
       chatInset.setValue(0)
       insightsOpacity.setValue(0)
-      insightsTranslateX.setValue(DESKTOP_INSIGHTS_WIDTH)
+      insightsTranslateX.setValue(insightsWidth)
       setIsInsightsVisible(false)
       setInsightsDealState(null)
       setScrollbarOpacity(1)
@@ -61,13 +68,13 @@ export function useDesktopChatTransition({
     }
 
     const listenerId = chatInset.addListener(({ value }) => {
-      setScrollbarOpacity(Math.max(0, Math.min(1, value / DESKTOP_INSIGHTS_WIDTH)))
+      setScrollbarOpacity(Math.max(0, Math.min(1, value / Math.max(1, insightsWidth))))
     })
 
     return () => {
       chatInset.removeListener(listenerId)
     }
-  }, [chatInset, chatOpacity, enabled, insightsOpacity, insightsTranslateX])
+  }, [chatInset, chatOpacity, enabled, insightsOpacity, insightsTranslateX, insightsWidth])
 
   useEffect(() => {
     if (showInsights && dealState) {
@@ -94,7 +101,7 @@ export function useDesktopChatTransition({
       setIsInsightsVisible(true)
       chatOpacity.setValue(1)
       insightsOpacity.setValue(0)
-      insightsTranslateX.setValue(DESKTOP_INSIGHTS_WIDTH)
+      insightsTranslateX.setValue(insightsWidth)
       chatInset.setValue(0)
       Animated.parallel([
         Animated.timing(insightsOpacity, {
@@ -108,7 +115,7 @@ export function useDesktopChatTransition({
           useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.timing(chatInset, {
-          toValue: DESKTOP_INSIGHTS_WIDTH,
+          toValue: insightsWidth,
           duration: DESKTOP_ENTER_DURATION,
           useNativeDriver: false,
         }),
@@ -131,7 +138,7 @@ export function useDesktopChatTransition({
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(insightsTranslateX, {
-        toValue: DESKTOP_INSIGHTS_WIDTH,
+        toValue: insightsWidth,
         duration: DESKTOP_EXIT_DURATION,
         useNativeDriver: USE_NATIVE_DRIVER,
       }),

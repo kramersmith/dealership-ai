@@ -30,11 +30,8 @@ export function HoverLiftFrame({
   const style = {
     borderRadius,
     ...(layoutStyle ?? {}),
-    boxShadow: isHovered
-      ? `0 4px 12px ${shadowColor}, 0 2px 6px ${shadowColor}`
-      : `0 1px 3px ${shadowColor}, 0 1px 2px ${shadowColor}`,
-    transform: [{ translateY: allowHoverMotion && isHovered ? -2 : 0 }],
-    transition: prefersReducedMotion ? 'none' : 'transform 0.2s ease, box-shadow 0.2s ease',
+    transform: [{ translateY: allowHoverMotion && isHovered ? -1 : 0 }],
+    transition: prefersReducedMotion ? 'none' : 'transform 0.2s ease',
     cursor: interactive ? 'pointer' : 'default',
   } as any
 

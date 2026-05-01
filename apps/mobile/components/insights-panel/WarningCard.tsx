@@ -2,8 +2,10 @@ import { XStack, YStack, Text } from 'tamagui'
 import { AlertTriangle, AlertCircle } from '@tamagui/lucide-icons'
 import type { AiCardPriority } from '@/lib/types'
 import { AppCard } from '@/components/shared'
-import { insightCardBodyProps, insightCardEmphasisProps } from '@/lib/insightsPanelTypography'
+import { insightCardBodyProps } from '@/lib/insightsPanelTypography'
+import { palette } from '@/lib/theme/tokens'
 import { PanelMarkdown } from './PanelMarkdown'
+import { CardTitle } from './CardTitle'
 
 interface WarningCardProps {
   title: string
@@ -11,41 +13,39 @@ interface WarningCardProps {
   priority: AiCardPriority
 }
 
+const ACCENT_WARNING = palette.copilotWarning
+const ACCENT_DANGER = '#ef4444'
+
 export function WarningCard({ title, content, priority }: WarningCardProps) {
   const severity = (content.severity as 'critical' | 'warning') ?? 'warning'
   const message = (content.message as string) ?? ''
   const action = content.action as string | undefined
 
   const isCritical = severity === 'critical' || priority === 'critical'
-  const accentColor = isCritical ? '$danger' : '$warning'
+  const accent = isCritical ? ACCENT_DANGER : ACCENT_WARNING
   const Icon = isCritical ? AlertCircle : AlertTriangle
 
   return (
-    <AppCard compact borderTopWidth={2} borderTopColor={accentColor}>
+    <AppCard
+      header={
+        <CardTitle icon={<Icon size={12} color={accent} />} iconAccent={accent}>
+          {title}
+        </CardTitle>
+      }
+    >
       <YStack gap="$3">
-        {/* Title row */}
-        <XStack gap="$2" alignItems="center">
-          <Icon size={14} color={accentColor} />
-          <Text {...insightCardEmphasisProps} fontWeight="700" color={accentColor} flex={1}>
-            {title}
-          </Text>
-        </XStack>
-
-        {/* Description */}
         <PanelMarkdown>{message}</PanelMarkdown>
-
-        {/* Recommended action */}
         {action && (
           <XStack
-            backgroundColor="$backgroundHover"
+            backgroundColor={palette.ghostBg}
             borderRadius={8}
             borderLeftWidth={2}
-            borderLeftColor={accentColor}
-            paddingVertical="$2"
-            paddingLeft="$2.5"
-            paddingRight="$3"
+            borderLeftColor={accent}
+            paddingVertical={8}
+            paddingLeft={10}
+            paddingRight={12}
           >
-            <Text {...insightCardBodyProps} fontWeight="500" color="$placeholderColor" flex={1}>
+            <Text {...insightCardBodyProps} fontWeight="500" color={palette.slate400} flex={1}>
               {action}
             </Text>
           </XStack>

@@ -1,6 +1,7 @@
 import { StyleSheet } from 'react-native'
 
 import { palette } from '@/lib/theme/tokens'
+import { MONO_FONT_FAMILY, WEB_FONT_FAMILY } from '@/lib/constants'
 
 interface MarkdownColorParams {
   textColor: string
@@ -12,7 +13,27 @@ interface MarkdownColorParams {
   hrColor: string
 }
 
+/** Body font (Manrope) applied to every text-bearing markdown rule. */
+const MD_BODY_FONT = WEB_FONT_FAMILY
+const MD_MONO_FONT = MONO_FONT_FAMILY
+
+/**
+ * Vertical gap between markdown chunks and embedded tables in
+ * `markdownRenderer.tsx`'s outer `YStack`. (Paragraph-to-paragraph spacing
+ * inside a single chunk is driven by `paragraph.marginBottom` below.)
+ */
 export const CHAT_MARKDOWN_BLOCK_GAP_PX = 8
+
+/**
+ * Space between paragraphs inside an assistant chat bubble.
+ * `react-native-markdown-display` honors `marginBottom` on the `paragraph`
+ * rule — bumping it adds breathing room between successive paragraphs in a
+ * single LLM response. Containers (assistant bubble, streaming bubble,
+ * `CopyableBlock`) absorb the trailing paragraph margin via a negative
+ * `marginBottom` so the last line sits flush against the container's
+ * bottom padding instead of leaving stray whitespace.
+ */
+export const CHAT_MARKDOWN_PARAGRAPH_SPACING_PX = 12
 
 const CHAT_MARKDOWN_SECTION_SPACING_PX = 6
 const CHAT_MARKDOWN_HEADING_GAP_PX = 4
@@ -66,19 +87,37 @@ export function buildMarkdownStyles({
   hrColor,
 }: MarkdownColorParams) {
   return StyleSheet.create({
-    body: { color: bodyTextColor, fontSize: 15, lineHeight: 22, marginTop: 0, marginBottom: 0 },
-    text: { color: bodyTextColor, fontSize: 15, lineHeight: 22 },
-    textgroup: { color: bodyTextColor },
-    inline: { color: bodyTextColor },
-    span: { color: bodyTextColor },
-    paragraph: { color: bodyTextColor, marginTop: 0, marginBottom: 0 },
-    strong: { fontWeight: '700', color: textColor },
-    em: { fontStyle: 'italic' },
-    s: { textDecorationLine: 'line-through', color: bodyTextColor },
+    body: {
+      color: bodyTextColor,
+      fontSize: 14,
+      lineHeight: 22,
+      marginTop: 0,
+      marginBottom: 0,
+      fontFamily: MD_BODY_FONT,
+    },
+    text: {
+      color: bodyTextColor,
+      fontSize: 14,
+      lineHeight: 22,
+      fontFamily: MD_BODY_FONT,
+    },
+    textgroup: { color: bodyTextColor, fontFamily: MD_BODY_FONT },
+    inline: { color: bodyTextColor, fontFamily: MD_BODY_FONT },
+    span: { color: bodyTextColor, fontFamily: MD_BODY_FONT },
+    paragraph: {
+      color: bodyTextColor,
+      marginTop: 0,
+      marginBottom: CHAT_MARKDOWN_PARAGRAPH_SPACING_PX,
+      fontFamily: MD_BODY_FONT,
+    },
+    strong: { fontWeight: '600', color: textColor, fontFamily: MD_BODY_FONT },
+    em: { fontStyle: 'italic', fontFamily: MD_BODY_FONT },
+    s: { textDecorationLine: 'line-through', color: bodyTextColor, fontFamily: MD_BODY_FONT },
     heading1: {
       fontSize: 18,
       fontWeight: '700',
       color: textColor,
+      fontFamily: MD_BODY_FONT,
       marginBottom: CHAT_MARKDOWN_SECTION_SPACING_PX,
       marginTop: CHAT_MARKDOWN_HEADING_LARGE_TOP_SPACING_PX,
     },
@@ -86,6 +125,7 @@ export function buildMarkdownStyles({
       fontSize: 17,
       fontWeight: '700',
       color: textColor,
+      fontFamily: MD_BODY_FONT,
       marginBottom: CHAT_MARKDOWN_HEADING_GAP_PX,
       marginTop: CHAT_MARKDOWN_HEADING_MEDIUM_TOP_SPACING_PX,
     },
@@ -93,6 +133,7 @@ export function buildMarkdownStyles({
       fontSize: 16,
       fontWeight: '600',
       color: textColor,
+      fontFamily: MD_BODY_FONT,
       marginBottom: CHAT_MARKDOWN_HEADING_GAP_PX,
       marginTop: CHAT_MARKDOWN_HEADING_GAP_PX,
     },
@@ -100,6 +141,7 @@ export function buildMarkdownStyles({
       fontSize: 15,
       fontWeight: '600',
       color: textColor,
+      fontFamily: MD_BODY_FONT,
       marginBottom: CHAT_MARKDOWN_HEADING_GAP_PX,
       marginTop: CHAT_MARKDOWN_HEADING_GAP_PX,
     },
@@ -107,6 +149,7 @@ export function buildMarkdownStyles({
       fontSize: 14,
       fontWeight: '600',
       color: textColor,
+      fontFamily: MD_BODY_FONT,
       marginBottom: CHAT_MARKDOWN_HEADING_GAP_PX,
       marginTop: CHAT_MARKDOWN_HEADING_GAP_PX,
     },
@@ -114,11 +157,15 @@ export function buildMarkdownStyles({
       fontSize: 13,
       fontWeight: '600',
       color: textColor,
+      fontFamily: MD_BODY_FONT,
       marginBottom: CHAT_MARKDOWN_HEADING_GAP_PX,
       marginTop: CHAT_MARKDOWN_HEADING_GAP_PX,
     },
-    bullet_list: { marginBottom: 0 },
-    ordered_list: { marginBottom: 0 },
+    // Lists end with the same trailing margin as paragraphs so a paragraph
+    // following a list (e.g. "To sharpen the valuation, I need…") doesn't sit
+    // flush against the last bullet.
+    bullet_list: { marginBottom: CHAT_MARKDOWN_PARAGRAPH_SPACING_PX },
+    ordered_list: { marginBottom: CHAT_MARKDOWN_PARAGRAPH_SPACING_PX },
     list_item: { marginBottom: CHAT_MARKDOWN_LIST_ITEM_SPACING_PX },
     bullet_list_icon: {
       color: bodyTextColor,
@@ -143,14 +190,14 @@ export function buildMarkdownStyles({
       paddingVertical: 1,
       borderRadius: 3,
       fontSize: 13,
-      fontFamily: 'monospace',
+      fontFamily: MD_MONO_FONT,
     },
     fence: {
       backgroundColor: codeBg,
       padding: 10,
       borderRadius: 6,
       fontSize: 13,
-      fontFamily: 'monospace',
+      fontFamily: MD_MONO_FONT,
       marginVertical: CHAT_MARKDOWN_SECTION_SPACING_PX,
     },
     code_block: {
@@ -158,7 +205,7 @@ export function buildMarkdownStyles({
       padding: 10,
       borderRadius: 6,
       fontSize: 13,
-      fontFamily: 'monospace',
+      fontFamily: MD_MONO_FONT,
       marginVertical: CHAT_MARKDOWN_SECTION_SPACING_PX,
       color: textColor,
     },
@@ -216,14 +263,17 @@ export function buildMarkdownStyles({
       fontSize: 13,
       fontWeight: '700',
       lineHeight: 18,
+      fontFamily: MD_BODY_FONT,
     },
     tableBodyText: {
       color: bodyTextColor,
       fontSize: 13,
       lineHeight: 19,
+      fontFamily: MD_BODY_FONT,
     },
     tableLabelText: {
       fontWeight: '600',
+      fontFamily: MD_BODY_FONT,
     },
     th: {
       color: textColor,
@@ -234,6 +284,7 @@ export function buildMarkdownStyles({
       textAlign: 'left',
       lineHeight: 18,
       minWidth: 0,
+      fontFamily: MD_BODY_FONT,
     },
     td: {
       color: bodyTextColor,
@@ -242,6 +293,7 @@ export function buildMarkdownStyles({
       paddingVertical: CHAT_MARKDOWN_TABLE_CELL_PADDING_PX,
       lineHeight: 19,
       minWidth: 0,
+      fontFamily: MD_BODY_FONT,
     },
     hr: {
       height: 1,

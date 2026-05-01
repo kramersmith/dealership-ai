@@ -9,10 +9,14 @@ function readStoredDesktopPanelCollapsed(): boolean {
   }
 
   try {
-    return window.localStorage.getItem(DESKTOP_PANEL_STORAGE_KEY) === '1'
+    // Clear any stale preference so the panel always defaults to expanded.
+    // Earlier test runs may have collapsed it via the close button.
+    window.localStorage.removeItem(DESKTOP_PANEL_STORAGE_KEY)
   } catch {
-    return false
+    // ignore
   }
+
+  return false
 }
 
 export function useDesktopPanelPreference() {

@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react'
 import { Animated, Pressable, TouchableOpacity, Platform, View, Text as RNText } from 'react-native'
 import { Trash2 } from '@tamagui/lucide-icons'
-import { useTheme } from 'tamagui'
+import { useTheme, useThemeName } from 'tamagui'
 import type { DealPhase, DealSummary, Session } from '@/lib/types'
 import { DEAL_PHASES } from '@/lib/constants'
 import { formatCurrency, stripMarkdown } from '@/lib/utils'
@@ -157,12 +157,23 @@ export function SessionCard({
   const summaryLine = buildSummaryLine(session.dealSummary)
   const previewText = session.lastMessagePreview ? stripMarkdown(session.lastMessagePreview) : null
   const shadow = theme.shadowColor?.val ?? palette.overlay
-  const isDarkTheme = theme.background?.val === darkTheme.background
-  const dividerColor = isDarkTheme ? 'rgba(255,255,255,0.08)' : 'rgba(28,30,33,0.08)'
+  const themeName = useThemeName()
+  const isCopilotTheme = themeName === 'dark_copilot'
+  const isDarkTheme = isCopilotTheme || theme.background?.val === darkTheme.background
+  const dividerColor = isCopilotTheme
+    ? palette.ghostBgHover
+    : isDarkTheme
+      ? 'rgba(255,255,255,0.08)'
+      : 'rgba(28,30,33,0.08)'
   const placeholderVal = (theme.placeholderColor?.val as string | undefined) ?? '#888'
   const colorVal = (theme.color?.val as string | undefined) ?? '#1C1E21'
-  const bgStrong = (theme.backgroundStrong?.val as string | undefined) ?? '#fff'
-  const borderCol = (theme.borderColor?.val as string | undefined) ?? 'rgba(0,0,0,0.08)'
+  const bgStrong = isCopilotTheme
+    ? 'rgba(15, 23, 42, 0.60)'
+    : ((theme.backgroundStrong?.val as string | undefined) ?? '#fff')
+  const borderCol = isCopilotTheme
+    ? palette.ghostBorder
+    : ((theme.borderColor?.val as string | undefined) ?? 'rgba(0,0,0,0.08)')
+  const cardRadius = isCopilotTheme ? 20 : 18
 
   const accessibilityText = [
     session.title,
@@ -207,10 +218,16 @@ export function SessionCard({
   const cardStyle = {
     width: '100%' as const,
     backgroundColor: bgStrong,
-    borderRadius: 18,
+    borderRadius: cardRadius,
     borderWidth: 1,
     borderColor: borderCol,
     overflow: 'hidden' as const,
+    ...(Platform.OS === 'web' && isCopilotTheme
+      ? ({
+          backdropFilter: 'blur(20px) saturate(1.15)',
+          WebkitBackdropFilter: 'blur(20px) saturate(1.15)',
+        } as any)
+      : {}),
     ...(Platform.OS !== 'web'
       ? {
           shadowColor: (shadow as string) ?? palette.overlay,

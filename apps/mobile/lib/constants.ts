@@ -5,7 +5,16 @@ import type { BuyerContext, ChecklistItem, DealPhase, HealthStatus, Scorecard } 
 export const APP_NAME = 'DealershipAI'
 
 /** Web font stack used in contexts where Tamagui fonts don't cascade (e.g. RN Modal). */
-export const WEB_FONT_FAMILY = 'Inter, -apple-system, system-ui, sans-serif'
+export const WEB_FONT_FAMILY =
+  'Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+
+/** Display font (Outfit). Used for hero headlines, the wordmark, and card titles. */
+export const DISPLAY_FONT_FAMILY =
+  'Outfit, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+
+/** Monospaced font (JetBrains Mono). Used for prices, timer, comp distances, timestamps. */
+export const MONO_FONT_FAMILY =
+  '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
 
 // ─── Buyer Context ───
 
@@ -111,6 +120,13 @@ export const WEB_SCROLLBAR_GUTTER_PX = 10
 
 /** Shared minimum height for the desktop-aligned chat and insights footers. */
 export const PANEL_FOOTER_MIN_HEIGHT = 60
+
+/** Centered max width for non-chat screens (settings, simulations, sim/[id]). */
+export const PAGE_MAX_WIDTH = 720
+/** Horizontal page gutter shared by non-chat screens. */
+export const PAGE_PADDING_H = 24
+/** Vertical page gutter shared by non-chat screens. */
+export const PAGE_PADDING_V = 24
 
 // ─── Confirmation / Feedback Timing ───
 

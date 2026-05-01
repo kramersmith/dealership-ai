@@ -1,9 +1,15 @@
 import { useRef, useState, useEffect } from 'react'
-import { YStack, XStack, useTheme } from 'tamagui'
+import { YStack, XStack, useTheme, useThemeName } from 'tamagui'
+import { palette } from '@/lib/theme/tokens'
 import { CHAT_BUBBLE_MAX_WIDTH, DESKTOP_ASSISTANT_BUBBLE_MAX_WIDTH } from '@/lib/constants'
 import { useScreenWidth } from '@/hooks/useScreenWidth'
-import { buildMarkdownStyles, getAssistantMarkdownColors } from './markdownStyles'
+import {
+  buildMarkdownStyles,
+  CHAT_MARKDOWN_PARAGRAPH_SPACING_PX,
+  getAssistantMarkdownColors,
+} from './markdownStyles'
 import { ChatMarkdown } from './markdownRenderer'
+import { AssistantAvatar } from './AssistantAvatar'
 
 interface StreamingBubbleProps {
   text: string
@@ -22,6 +28,8 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
   const rafId = useRef<number>(0)
   const lastRender = useRef(0)
   const theme = useTheme()
+  const themeName = useThemeName()
+  const isCopilotChat = themeName === 'dark_copilot'
   const { isDesktop } = useScreenWidth()
   const useInlineAssistantLayout = !isDesktop
   const railHorizontalPadding = isDesktop ? '$0' : '$4'
@@ -72,18 +80,32 @@ export function StreamingBubble({ text }: StreamingBubbleProps) {
       justifyContent="flex-start"
       paddingHorizontal={railHorizontalPadding}
       paddingVertical="$0.5"
+      alignItems="flex-start"
     >
       <YStack
+        flex={isCopilotChat ? 1 : undefined}
         style={{ maxWidth: `min(100%, ${bubbleMaxWidth}px)` } as any}
-        backgroundColor={useInlineAssistantLayout ? 'transparent' : '$backgroundStrong'}
-        borderRadius={useInlineAssistantLayout ? 0 : '$4'}
-        borderBottomLeftRadius={useInlineAssistantLayout ? 0 : '$1'}
-        paddingHorizontal={useInlineAssistantLayout ? '$0' : '$4'}
-        paddingVertical={useInlineAssistantLayout ? '$2' : '$3'}
-        borderWidth={0}
-        borderColor="transparent"
+        backgroundColor={
+          useInlineAssistantLayout
+            ? 'transparent'
+            : isCopilotChat
+              ? (palette.copilotChatAssistantBg as any)
+              : '$backgroundStrong'
+        }
+        borderRadius={useInlineAssistantLayout ? 0 : 16}
+        borderBottomLeftRadius={useInlineAssistantLayout ? 0 : 4}
+        paddingHorizontal={useInlineAssistantLayout ? 0 : 14}
+        paddingVertical={useInlineAssistantLayout ? 8 : 12}
+        borderWidth={useInlineAssistantLayout ? 0 : isCopilotChat ? 1 : 0}
+        borderColor={
+          useInlineAssistantLayout
+            ? 'transparent'
+            : isCopilotChat
+              ? (palette.copilotChatAssistantBorder as any)
+              : 'transparent'
+        }
       >
-        <YStack>
+        <YStack marginBottom={-CHAT_MARKDOWN_PARAGRAPH_SPACING_PX}>
           <ChatMarkdown style={markdownStyles}>{visibleText}</ChatMarkdown>
         </YStack>
       </YStack>
